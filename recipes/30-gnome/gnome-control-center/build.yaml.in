@@ -18,6 +18,16 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_GNOME_CONTROL_CENTER@ --no-same-owner -C /build/src/gnome-control-center --strip-components=1
 
+# The patch series, applied in lexical order with no fuzz. A patch that applies
+# at an offset is a patch that no longer means what its author meant, and one
+# that silently does not apply would leave a Settings panel with no reset button
+# and a build that passed.
+- stage: Build
+  name: patch
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/gnome-control-center/patches /build/src/gnome-control-center
+
 - stage: Build
   name: configure
   dl_urls: null
