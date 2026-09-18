@@ -500,3 +500,39 @@ NVIDIA_OPEN:
   url: https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/580.95.05.tar.gz
   version: 580.95.05
   sha256: TODO
+
+# ---- fwupd and its stack -------------------------------------------------
+# Firmware updates, and the firmware half of the security report. The panel is
+# already in gnome-control-center and hides itself when org.freedesktop.fwupd
+# is not on the bus, so this stack is the whole of that half.
+#
+# Four libraries a 1.9-era fwupd needed are deliberately absent, because 2.0
+# dropped all four and adding them back would be adding dependencies nothing
+# links against: libgusb (2.0 talks to libusb directly), gcab (cabinets go
+# through libarchive now), efivar (a FreeBSD-only dependency here -- on Linux
+# fwupd reads efivarfs itself) and protobuf-c (wanted only by the Logitech
+# bulk-controller plugin, which this build disables).
+LIBUSB:
+  url: https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
+  version: 1.0.27
+  sha256: TODO
+
+LIBXMLB:
+  url: https://github.com/hughsie/libxmlb/releases/download/0.3.19/libxmlb-0.3.19.tar.xz
+  version: 0.3.19
+  sha256: TODO
+
+LIBJCAT:
+  url: https://github.com/hughsie/libjcat/releases/download/0.2.1/libjcat-0.2.1.tar.xz
+  version: 0.2.1
+  sha256: TODO
+
+SQLITE:
+  url: https://www.sqlite.org/2024/sqlite-autoconf-3470200.tar.gz
+  version: 3.47.2
+  sha256: TODO
+
+FWUPD:
+  url: https://github.com/fwupd/fwupd/releases/download/2.0.3/fwupd-2.0.3.tar.xz
+  version: 2.0.3
+  sha256: TODO

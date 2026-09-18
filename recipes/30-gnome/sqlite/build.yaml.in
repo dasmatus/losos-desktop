@@ -1,0 +1,56 @@
+# sqlite 3.47.2
+#
+# fwupd keeps its update history -- what was flashed, when, and whether it
+# came back -- in a sqlite database, and that history is what makes a failed
+# firmware update reportable rather than merely survivable. Nothing else in
+# this tree wants sqlite; it is here for that one consumer.
+#
+# The amalgamation tarball, not the source tree: it is one .c file and a
+# configure script, and the alternative needs tcl to generate the same thing.
+name: sqlite
+version:
+- '3'
+- '47'
+- '2'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_SQLITE@: '@SHA256_SQLITE@'
+  run:
+  - mkdir -p /build/src/sqlite /build/b/sqlite
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_SQLITE@ --no-same-owner -C /build/src/sqlite --strip-components=1
+
+# --disable-readline: the CLI shell is not installed here and linking it would
+# drag in readline, which nothing else in the tree builds.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/sqlite /build/src/sqlite/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ --disable-static --disable-readline
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/sqlite -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/sqlite install DESTDIR=/dest
+  - make -C /build/b/sqlite install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libsqlite3.so

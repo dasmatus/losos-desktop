@@ -1,0 +1,58 @@
+# libusb 1.0.27
+#
+# USB access, under libgusb and therefore under fwupd.
+name: libusb
+version:
+- '1'
+- '0'
+- '27'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBUSB@: '@SHA256_LIBUSB@'
+  run:
+  - mkdir -p /build/src/libusb /build/b/libusb
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBUSB@ --no-same-owner -C /build/src/libusb --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the toolchain and the sysroot are
+# reached without `env`.
+#
+# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
+# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
+# separate arguments and configure would reject the first it did not know.
+# The response file is one word, and clang expands it. Its contents come from
+# manifest/toolchain.yaml -- LTO and CFI included.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libusb /build/src/libusb/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --disable-udev
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/libusb -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/libusb install DESTDIR=/dest
+  - make -C /build/b/libusb install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libusb-1.0.so
