@@ -40,8 +40,27 @@ except ImportError:
 
 import compose as compose_lib
 from fnv import basename, download_path
+from toolchain import Toolchain
 
 UNRESOLVED = "TODO"
+
+
+def tool_path(*names):
+    """Absolute path of the first of `names` on the host PATH, symlink INTACT.
+
+    Deliberately not canonicalised, unlike `host_tool` below. The LLVM
+    binutils and the clang drivers are multi-call binaries that dispatch on
+    argv[0]: `clang++` is a symlink to `clang`, `llvm-ranlib` and `llvm-strip`
+    are symlinks to `llvm-ar` and `llvm-objcopy`. Resolving the link hands
+    meson a path whose basename says something different from what was meant,
+    and the tool then runs in the wrong mode -- C instead of C++, ar instead of
+    ranlib -- with no error anywhere.
+    """
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
+    return ""
 
 
 def host_tool(*names):
@@ -209,16 +228,17 @@ def main():
         )
         return 1
 
+    # The toolchain: one manifest, every flag in the tree. A recipe that
+    # spelled its own -O2 would be outside the CFI scheme with nothing saying
+    # so, which is what tools/gates/toolchain-report.py exists to catch.
+    toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
+    subs.update(toolchain.placeholders(tool_path))
+
     subs["@SRCDIR@"] = str(REPO)
     subs["@OUT@"] = str(out)
     subs["@PKGS@"] = str(out / "pkgs")
-    subs["@CC@"] = host_tool("cc", "gcc")
-    subs["@CXX@"] = host_tool("c++", "g++")
-    subs["@AR@"] = host_tool("ar")
-    subs["@NM@"] = host_tool("nm")
-    subs["@STRIP@"] = host_tool("strip")
-    subs["@PKGCONFIG@"] = host_tool("pkgconf", "pkg-config")
-    subs["@PYTHON@"] = host_tool("python3")
+    subs["@PKGCONFIG@"] = tool_path("pkgconf", "pkg-config")
+    subs["@PYTHON@"] = tool_path("python3")
     subs["@JOBS@"] = str(max(1, (__import__("os").cpu_count() or 2)))
 
     layers_file = REPO / "manifest" / "layers.yaml"
@@ -236,6 +256,9 @@ def main():
         # the jail mounts for this build file. Every helper path in every
         # member's steps resolves through it.
         local["@RECIPE@"] = str(recipe_out)
+        # The `@file` form clang expands. The leading @ is clang's, not ours.
+        local["@CFLAGS_RSP@"] = f"@{recipe_out}/cflags.rsp"
+        local["@LDFLAGS_RSP@"] = f"@{recipe_out}/ldflags.rsp"
 
         member_dirs = []
         members = []
@@ -254,6 +277,28 @@ def main():
         # already rendered above.
         text = substitute(yaml_dump(bundle), local)
         (recipe_out / "build.yaml").write_text(text)
+
+        # One native file per layer, from share/native.ini.in. Every meson
+        # package in the layer points at it; nothing else carries flags.
+        native = (REPO / "share" / "native.ini.in").read_text()
+        (recipe_out / "native.ini").write_text(substitute(native, local))
+
+        # Response files, for the build systems that take flags through the
+        # environment or through a VAR=value argument.
+        #
+        # This exists because pm splits a command on whitespace (C1), so a
+        # multi-word `CFLAGS=-O2 -flto=thin ...` would arrive as a dozen
+        # separate arguments and autotools would reject the first one it did
+        # not recognise. clang expands an `@file` argument anywhere on its
+        # command line, so the whole flag set travels as ONE whitespace-free
+        # word. No wrapper, no `env`, and the command stays readable in
+        # `pm explain`.
+        (recipe_out / "cflags.rsp").write_text(
+            "\n".join(toolchain.cflags()) + "\n"
+        )
+        (recipe_out / "ldflags.rsp").write_text(
+            "\n".join(toolchain.ldflags()) + "\n"
+        )
 
         stage_support(recipe_out, member_dirs, local)
 

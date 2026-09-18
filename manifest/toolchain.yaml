@@ -1,0 +1,146 @@
+# The toolchain every package is built with.
+#
+# One place, because a hardening flag that is applied to most of a system is
+# worth very little. CFI in particular is all-or-nothing in a way that is easy
+# to get wrong: an indirect call through a function pointer is only checked if
+# the *caller* was compiled with CFI, and a cross-DSO call is only checked if
+# both sides were. A single package built without these flags is a hole that
+# nothing reports.
+#
+# tools/configure turns this into @CC@, @CFLAGS@, @LDFLAGS@ and a meson
+# native file per layer, so a recipe never spells a flag itself.
+
+compiler:
+  # clang, not gcc: CFI is a clang feature. GCC has no equivalent -- -fcf-protection
+  # is a different and much weaker thing (hardware CET, coarse-grained), and
+  # -fvtable-verify covers C++ vtables only.
+  cc: clang
+  cxx: clang++
+  # The LLVM binutils. llvm-ar and llvm-nm understand LLVM bitcode; GNU ar does
+  # not, so an LTO build with GNU ar produces archives whose members the linker
+  # cannot see into, and the failure is a pile of undefined symbols rather than
+  # anything that mentions LTO.
+  ar: llvm-ar
+  nm: llvm-nm
+  ranlib: llvm-ranlib
+  strip: llvm-strip
+  objcopy: llvm-objcopy
+  # lld, because CFI needs the linker to understand the bitcode it is merging.
+  linker: lld
+
+target:
+  # musl rather than glibc. Smaller, simpler, and -- the reason that matters
+  # here -- statically analysable in a way glibc is not: no dlopen-based NSS,
+  # no lazy symbol interposition, far fewer indirect calls for CFI to have to
+  # be taught about.
+  #
+  # postmarketOS demonstrates musl with systemd in production, so this is not
+  # speculative. It is also not free: see docs/musl.md for the patch set.
+  triple: x86_64-linux-musl
+  sysroot: /build/sysroot
+
+lto:
+  # ThinLTO, not full LTO. Full LTO on a package the size of mesa or gtk4 needs
+  # more RAM than a build host reliably has and serialises the link; ThinLTO
+  # keeps the cross-module optimisation that CFI requires while staying
+  # parallel and incremental.
+  mode: thin
+  # CFI requires LTO. That is not a recommendation -- clang errors out without
+  # it, because the type-id metadata CFI checks against is computed at LTO time.
+  required_by_cfi: true
+
+cfi:
+  enable: true
+  # Every CFI scheme clang offers except cast-strict (which is advisory) and
+  # the C++-only ones we would only get from libadwaita and gjs.
+  schemes:
+    - cfi-icall        # indirect calls match the callee's declared type
+    - cfi-vcall        # C++ virtual calls
+    - cfi-nvcall       # C++ non-virtual calls through a base pointer
+    - cfi-derived-cast
+    - cfi-unrelated-cast
+  # Cross-DSO is the one that makes this worth doing on a distribution. Without
+  # it, a call from libfoo.so into libbar.so is unchecked, which on a desktop
+  # is most of the calls there are. It costs a __cfi_check export per library
+  # and a slower check at the boundary.
+  cross_dso: true
+  # Diagnose rather than trap, so a violation names the call site in the
+  # journal instead of raising SIGILL with no context. systemd-coredump then
+  # has something to record. Trap mode is smaller and faster; switch to it once
+  # the system has actually booted more than once.
+  trap: false
+  # -fvisibility=hidden is mandatory, not stylistic: CFI can only reason about
+  # a function's type if it can see every definition, and a default-visible
+  # symbol may be interposed at load time by something it never checked.
+  visibility: hidden
+
+hardening:
+  # The ordinary set, which is cheap and which CFI does not replace.
+  cflags:
+    - -O2
+    - -g1
+    - -fstack-protector-strong
+    - -fstack-clash-protection
+    - -D_FORTIFY_SOURCE=3
+    - -fPIC
+    - -fno-plt
+  ldflags:
+    - -Wl,-z,relro
+    - -Wl,-z,now
+    - -Wl,-z,noexecstack
+    - -Wl,--as-needed
+    - -pie
+
+rust:
+  # The Rust side of the same argument. Rust's own CFI implementation is the
+  # same LLVM feature, so a Rust library linked into a C program participates
+  # in the same checks -- but only if both were built with it.
+  #
+  # -Zsanitizer needs nightly. On stable these are dropped and the Rust
+  # packages are built with LTO alone; tools/gates/toolchain-report.py says so
+  # rather than letting it pass unnoticed.
+  flags:
+    - -Cembed-bitcode=yes
+    - -Clto=thin
+    - -Ccodegen-units=1
+    - -Crelocation-model=pic
+  nightly_flags:
+    - -Zsanitizer=cfi
+    - -Zsanitizer-cfi-cross-dso
+
+# Packages that cannot take the full flag set, and exactly what each drops.
+#
+# This list is the honest part of the CFI claim. A scheme that is "on" for a
+# distribution always has exceptions; the difference between a real one and a
+# marketing one is whether the exceptions are written down and counted.
+# tools/gates/toolchain-report.py prints them every run, and tools/configure
+# emits a separate response file per exception so a package cannot silently
+# take the default set.
+exceptions:
+  - package: musl
+    drops: [cfi]
+    why: >
+      libc is the one library CFI cannot cover from the outside. musl's
+      dynamic linker resolves and calls functions before any CFI runtime
+      exists, and its internal dispatch (syscall wrappers, locale callbacks,
+      the stdio vtable) is type-punned in ways cfi-icall rejects by design.
+      Android ships CFI across its userspace and exempts bionic for the same
+      reason. musl keeps LTO and every hardening flag; it does not get CFI,
+      and every call INTO musl from a CFI-built caller is therefore unchecked
+      at the callee side.
+  - package: linux
+    drops: [cfi, lto, hardening]
+    why: >
+      The kernel supplies its own: CONFIG_CFI_CLANG is kernel CFI, built with
+      the kernel's own LTO and its own flag discipline. Userspace
+      --target/--sysroot/-fPIC/-pie applied to a kernel build produces
+      something that does not link, and -D_FORTIFY_SOURCE fights the kernel's
+      own string routines. The kernel's config fragment turns on the kernel's
+      equivalents instead.
+  - package: gjs
+    drops: [cfi-vcall, cfi-nvcall, cfi-derived-cast, cfi-unrelated-cast]
+    why: >
+      SpiderMonkey's JIT generates code at runtime and calls into it through
+      pointers no compiler saw, and its C++ uses the cast patterns the
+      non-icall schemes reject. cfi-icall is kept: the JIT entry points are
+      the interesting attack surface and they are ordinary indirect calls.
