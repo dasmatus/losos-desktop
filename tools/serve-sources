@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Serve out/sources over loopback HTTP, for pm to fetch from.
+
+pm's downloader trusts only the Mozilla roots compiled into it and reads no CA
+configuration (see tools/fetch-sources), so on a host that re-terminates TLS it
+cannot fetch over HTTPS at all. Plain HTTP on 127.0.0.1 has no certificate to
+verify, and the SHA-256 in sources.lock is what was guaranteeing the content
+anyway.
+
+Bound to loopback only, on purpose: this serves a directory of tarballs and has
+no business being reachable from anywhere else.
+
+    tools/serve-sources --port 8730          # foreground
+    tools/serve-sources --port 8730 --check  # exit 0 if already serving
+"""
+
+import argparse
+import http.server
+import socket
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+ROOT = REPO / "out" / "sources"
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(ROOT), **kwargs)
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("serve-sources: " + (fmt % args) + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--port", type=int, default=8730)
+    parser.add_argument("--check", action="store_true",
+                        help="exit 0 if something is already listening")
+    args = parser.parse_args()
+
+    if args.check:
+        with socket.socket() as probe:
+            return 0 if probe.connect_ex(("127.0.0.1", args.port)) == 0 else 1
+
+    if not ROOT.is_dir():
+        sys.exit(
+            f"serve-sources: {ROOT} does not exist; run tools/fetch-sources first"
+        )
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    print(f"serve-sources: serving {ROOT} on http://127.0.0.1:{args.port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

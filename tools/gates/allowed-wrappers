@@ -1,0 +1,7 @@
+# Scripts that may stand between pm's fingerprint check and the program that
+# actually runs. Everything here is a hole in the guarantee `pm explain` gives,
+# so the list is short, and tools/gates/fingerprint-lint.py re-applies pm's own
+# table to whatever each one wraps.
+#
+# `env` is deliberately NOT here and never will be; the lint rejects it by name.
+in-dir.sh

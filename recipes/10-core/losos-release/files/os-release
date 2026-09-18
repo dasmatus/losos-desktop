@@ -1,0 +1,12 @@
+NAME="LosOS Desktop"
+PRETTY_NAME="LosOS Desktop"
+ID=losos-desktop
+ID_LIKE=losos
+VERSION="0.1.0"
+VERSION_ID=0.1.0
+BUILD_ID=pm
+HOME_URL="https://github.com/dichhead/losos-desktop"
+DOCUMENTATION_URL="https://github.com/dichhead/losos-desktop"
+SUPPORT_URL="https://github.com/dichhead/losos-desktop"
+BUG_REPORT_URL="https://github.com/dichhead/losos-desktop/issues"
+DEFAULT_HOSTNAME=losos
