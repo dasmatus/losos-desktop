@@ -1,0 +1,46 @@
+# gdk-pixbuf 2.42.12
+#
+# Image loading for gtk.
+name: gdk-pixbuf
+version:
+- '2'
+- '42'
+- '12'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_GDK_PIXBUF@: '@SHA256_GDK_PIXBUF@'
+  run:
+  - mkdir -p /build/src/gdk-pixbuf /build/b/gdk-pixbuf
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_GDK_PIXBUF@ --no-same-owner -C /build/src/gdk-pixbuf --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gdk-pixbuf /build/src/gdk-pixbuf --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=false -Dman=false -Dintrospection=disabled
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/gdk-pixbuf -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/gdk-pixbuf --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/gdk-pixbuf --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libgdk_pixbuf-2.0.so

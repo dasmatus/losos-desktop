@@ -1,0 +1,45 @@
+# gnome-control-center 47.2
+#
+# Settings. Several panels reach for daemons this OS does not ship; see docs/limits.md.
+name: gnome-control-center
+version:
+- '47'
+- '2'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_GNOME_CONTROL_CENTER@: '@SHA256_GNOME_CONTROL_CENTER@'
+  run:
+  - mkdir -p /build/src/gnome-control-center /build/b/gnome-control-center
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_GNOME_CONTROL_CENTER@ --no-same-owner -C /build/src/gnome-control-center --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-control-center /build/src/gnome-control-center --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Ddocumentation=false -Dtests=false -Dmalcontent=false -Dibus=false -Dsnap=false
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/gnome-control-center -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/gnome-control-center --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/gnome-control-center --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/bin/gnome-control-center

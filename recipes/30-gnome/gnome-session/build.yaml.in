@@ -1,0 +1,46 @@
+# gnome-session 47.0.1
+#
+# systemd_session=enabled is the option that matters most in this repo: the session becomes a tree of systemd user units under graphical-session.target instead of gnome-session's own process supervision.
+name: gnome-session
+version:
+- '47'
+- '0'
+- '1'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_GNOME_SESSION@: '@SHA256_GNOME_SESSION@'
+  run:
+  - mkdir -p /build/src/gnome-session /build/b/gnome-session
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_GNOME_SESSION@ --no-same-owner -C /build/src/gnome-session --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-session /build/src/gnome-session --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dsystemd_session=enabled -Dsystemd_journal=true -Ddocbook=false
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/gnome-session -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/gnome-session --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/gnome-session --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/libexec/gnome-session-binary

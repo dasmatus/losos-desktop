@@ -1,0 +1,46 @@
+# p11-kit 0.25.5
+#
+# PKCS#11, for systemd-cryptenroll's smartcard unlock path.
+name: p11-kit
+version:
+- '0'
+- '25'
+- '5'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_P11_KIT@: '@SHA256_P11_KIT@'
+  run:
+  - mkdir -p /build/src/p11-kit /build/b/p11-kit
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_P11_KIT@ --no-same-owner -C /build/src/p11-kit --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/p11-kit -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/p11-kit --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/p11-kit --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libp11-kit.so

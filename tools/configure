@@ -114,11 +114,20 @@ def stage_support(recipe_out, member_dirs, subs):
         if files.is_dir():
             dest = recipe_out / "files" / package
             shutil.copytree(files, dest, dirs_exist_ok=True)
+            # A member's helper scripts get the same substitution its build
+            # file does, so a script can name an absolute path too.
             for script in dest.rglob("*.sh"):
                 script.write_text(substitute(script.read_text(), subs))
                 script.chmod(0o755)
             for script in dest.rglob("*.py"):
                 script.write_text(substitute(script.read_text(), subs))
+            # Anything ending .in is a template -- native.ini.in is the reason
+            # this exists: meson's [binaries] section has to name the host
+            # toolchain and the sysroot by absolute path (C3).
+            for template in sorted(dest.rglob("*.in")):
+                rendered = substitute(template.read_text(), subs)
+                template.with_suffix("").write_text(rendered)
+                template.unlink()
 
         manifest = source / "include"
         if manifest.exists():

@@ -1,0 +1,44 @@
+# polkit 125
+#
+# Privilege decisions. session_tracking=logind is the load-bearing option: it makes polkit ask systemd-logind whether a session is local and active.
+name: polkit
+version:
+- '125'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_POLKIT@: '@SHA256_POLKIT@'
+  run:
+  - mkdir -p /build/src/polkit /build/b/polkit
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_POLKIT@ --no-same-owner -C /build/src/polkit --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/polkit /build/src/polkit --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=false -Dman=false -Dintrospection=false -Dsession_tracking=logind
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/polkit -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/polkit --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/polkit --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libpolkit-gobject-1.so

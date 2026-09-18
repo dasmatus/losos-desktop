@@ -1,0 +1,46 @@
+# zstd 1.5.6
+#
+# systemd's default journal and coredump compressor since v246.
+name: zstd
+version:
+- '1'
+- '5'
+- '6'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_ZSTD@: '@SHA256_ZSTD@'
+  run:
+  - mkdir -p /build/src/zstd /build/b/zstd
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_ZSTD@ --no-same-owner -C /build/src/zstd --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - cmake -S /build/src/zstd -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=Release -DZSTD_BUILD_STATIC=OFF
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cmake --build /build/b/zstd -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - cmake --install /build/b/zstd
+  - cmake --install /build/b/zstd --prefix /build/sysroot/usr
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libzstd.so

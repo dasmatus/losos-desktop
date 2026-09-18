@@ -1,0 +1,57 @@
+# What goes into the initrd.
+#
+# systemd is PID 1 here too (-Dinitrd=true), so the initrd carries the same
+# binaries and the same unit semantics as the booted system. Everything listed
+# is something the initrd phase genuinely runs: mount the ESP, find and grow
+# the root partition with systemd-repart, unlock it, verify it, switch root.
+
+# PID 1 and its machinery.
+usr/lib/systemd/systemd
+usr/lib/systemd/systemd-executor
+usr/lib/systemd/systemd-shutdown
+usr/lib/systemd/systemd-journald
+usr/lib/systemd/systemd-sysctl
+usr/lib/systemd/systemd-modules-load
+usr/lib/systemd/systemd-vconsole-setup
+usr/bin/systemctl
+usr/bin/journalctl
+
+# Devices. Without udev nothing finds a disk.
+usr/lib/systemd/systemd-udevd
+usr/bin/udevadm
+usr/lib/udev
+
+# The reason the initrd exists on this OS: repart creates and grows the
+# partitions on first boot, so there is no disk image to write.
+usr/bin/systemd-repart
+usr/lib/repart.d
+
+# Integrity and encryption, all driven from the initrd.
+usr/lib/systemd/systemd-cryptsetup
+usr/lib/systemd/systemd-veritysetup
+usr/lib/systemd/systemd-integritysetup
+usr/lib/systemd/systemd-makefs
+usr/lib/systemd/systemd-growfs
+usr/lib/systemd/systemd-fsck
+usr/lib/systemd/systemd-volatile-root
+
+# Generators that decide what the initrd mounts.
+usr/lib/systemd/system-generators
+
+# The initrd unit set. -Dinitrd=true is what installs these.
+usr/lib/systemd/system
+
+# Identity, for the .osrel section and for systemd-firstboot later.
+usr/lib/os-release
+
+# Kernel modules. @KVER@ is substituted by mkinitrd.py so the version is
+# written in exactly one place, sources.lock.
+usr/lib/modules/@KVER@/kernel/drivers/block
+usr/lib/modules/@KVER@/kernel/drivers/nvme
+usr/lib/modules/@KVER@/kernel/drivers/scsi
+usr/lib/modules/@KVER@/kernel/drivers/usb
+usr/lib/modules/@KVER@/kernel/drivers/md
+usr/lib/modules/@KVER@/kernel/fs
+usr/lib/modules/@KVER@/kernel/crypto
+usr/lib/modules/@KVER@/modules.dep
+usr/lib/modules/@KVER@/modules.alias

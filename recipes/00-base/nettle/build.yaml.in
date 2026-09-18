@@ -1,0 +1,50 @@
+# nettle 3.10
+#
+# Under gnutls.
+name: nettle
+version:
+- '3'
+- '10'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_NETTLE@: '@SHA256_NETTLE@'
+  run:
+  - mkdir -p /build/src/nettle /build/b/nettle
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_NETTLE@ --no-same-owner -C /build/src/nettle --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the sysroot is reached without `env`.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/nettle /build/src/nettle/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --disable-static
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/nettle -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/nettle install DESTDIR=/dest
+  - make -C /build/b/nettle install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libnettle.so
