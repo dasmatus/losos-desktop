@@ -1,0 +1,25 @@
+# https://editorconfig.org — keeps whitespace consistent across the three
+# languages in this tree (YAML recipes, POSIX sh helpers, Python tooling).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+# Recipe templates are YAML, and pm's serde reader is whitespace-sensitive in
+# the ordinary YAML way. Two spaces, never tabs.
+[*.{yaml,yaml.in,yml}]
+indent_size = 2
+
+[*.py]
+indent_size = 4
+
+[*.sh]
+indent_size = 2
+
+[*.md]
+# Markdown uses trailing double-space for hard line breaks.
+trim_trailing_whitespace = false

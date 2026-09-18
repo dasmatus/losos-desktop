@@ -1,0 +1,17 @@
+# REUSE compliance metadata (https://reuse.software, spec 3.3).
+# The entire tree is AGPL-3.0-or-later; the license text lives in
+# LICENSES/AGPL-3.0-or-later.txt. `precedence = "closest"` means any
+# per-file SPDX header added later wins over this blanket annotation.
+#
+# Deliberately no per-file SPDX headers, matching the losos sibling: a
+# recipe's header comment is scarce space and is spent on what the recipe
+# does and why, not on repeating a license that covers the whole tree.
+version = 1
+SPDX-PackageName = "losos-desktop"
+SPDX-PackageDownloadLocation = "https://github.com/dichhead/losos-desktop"
+
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Matus Mastena"
+SPDX-License-Identifier = "AGPL-3.0-or-later"

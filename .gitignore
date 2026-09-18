@@ -1,0 +1,15 @@
+# Everything tools/configure generates. The `.in` templates and sources.lock
+# are the tracked truth; out/ is reproducible from them and is never committed.
+/out/
+
+# The repo-local pm trust store `tools/sign-all` creates. It holds a throwaway
+# signing key that exists only so `pm explain` and `pm build` can verify this
+# tree; it must never be confused with the developer's real ~/.config/pm.
+/.pm-config/
+
+# pm writes archives and detached signatures into its process working
+# directory, which for this repo is out/ — but a stray invocation from the
+# repo root would drop them here.
+*.cpkg
+*.sig
+*.sig.stale
