@@ -64,6 +64,12 @@ cmd_lint() {
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
   python3 "$repo/tools/gates/test-image.py"
+  # The release names and the shipped sysupdate MatchPatterns are one contract
+  # written in two files. A mismatch does not fail an update -- sysupdate
+  # reports "no update available", which is indistinguishable from being up to
+  # date -- so it has to be caught here.
+  python3 "$repo/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
+  python3 "$repo/tools/gates/plugins.py"
   "$repo/tools/gates/explain-all"
 }
 

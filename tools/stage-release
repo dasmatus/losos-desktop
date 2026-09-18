@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Rename the built artifacts into the names systemd-sysupdate expects.
+
+The image layer produces `losos.efi` and `losos-rootfs.tar.xz`, which say what
+they are. sysupdate needs names that say what *version* they are, because the
+version is parsed out of the filename by the `@v` in a `MatchPattern=` -- there
+is no metadata anywhere else. So the last step before publishing is a rename,
+and getting it wrong produces an update server that serves files no client
+matches, reports "no update available", and looks exactly like being up to date.
+
+The patterns here and the `MatchPattern=` lines in
+overlay/usr/lib/sysupdate.d/*.conf.in are the same contract written twice, so
+`--check` re-derives the expected names from the rendered overlay and compares.
+CI runs it, and tools/gates/release-naming.py runs it offline.
+
+    tools/stage-release --arch x86_64 --version 20260918.7 --out release
+"""
+
+import argparse
+import re
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+import yaml  # noqa: E402
+
+
+def architecture(name):
+    architectures = yaml.safe_load(
+        (REPO / "manifest" / "architectures.yaml").read_text()
+    )
+    if name not in architectures:
+        sys.exit(f"stage-release: unknown architecture {name}")
+    return architectures[name]
+
+
+def expected_names(arch_name, arch, version):
+    return {
+        "uki": f"losos-desktop_{version}_{arch_name}.efi",
+        "root": f"losos-desktop_{version}_{arch['sysupdate_root']}.raw.xz",
+    }
+
+
+def patterns_from_overlay():
+    """The MatchPattern= lines the image actually ships, for cross-checking.
+
+    Read from the GENERATED overlay, not from overlay/*.in: the templates still
+    contain @ARCH@, and comparing against those would check the contract
+    against itself rather than against what the image will carry. This is the
+    rendered copy the image recipe stages, so it is arch-specific and channel-
+    specific exactly as the running system's will be.
+    """
+    rendered = (
+        REPO / "out" / "recipes" / "losos-90-image" / "files" / "losos-image"
+        / "overlay" / "usr" / "lib" / "sysupdate.d"
+    )
+    if not rendered.is_dir():
+        sys.exit(
+            f"stage-release: {rendered} does not exist.\n"
+            "  Run tools/configure --arch <arch> first: the contract is checked\n"
+            "  against the rendered overlay, because the templates still say @ARCH@."
+        )
+    found = []
+    for conf in sorted(rendered.glob("*.conf")):
+        for line in conf.read_text().splitlines():
+            if line.startswith("MatchPattern="):
+                found.append(line.split("=", 1)[1].strip())
+    return found
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--arch", required=True)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--out", default="release")
+    parser.add_argument("--artifacts", default="out/pkgs/artifacts",
+                        help="where the image layer left its output")
+    parser.add_argument("--check", action="store_true",
+                        help="only verify the naming contract, move nothing")
+    args = parser.parse_args()
+
+    arch = architecture(args.arch)
+    names = expected_names(args.arch, arch, args.version)
+
+    # The contract check: every name we are about to produce must be matched by
+    # a MatchPattern in the overlay, with @v standing in for the version.
+    problems = []
+    for kind, name in names.items():
+        # Turn the produced name back into the pattern it should match.
+        as_pattern = name.replace(args.version, "@v")
+        if as_pattern not in patterns_from_overlay():
+            problems.append(
+                f"{kind}: would publish {name!r}, which no MatchPattern in "
+                f"overlay/usr/lib/sysupdate.d matches.\n"
+                f"    expected a pattern of {as_pattern!r}\n"
+                f"    found: {patterns_from_overlay()}"
+            )
+    if problems:
+        print("stage-release: naming contract broken", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+
+    if args.check:
+        print(f"stage-release: naming agrees with the shipped sysupdate patterns")
+        for name in names.values():
+            print(f"  {name}")
+        return 0
+
+    artifacts = Path(args.artifacts)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    moves = [
+        (artifacts / "losos.efi", out / names["uki"]),
+        (artifacts / "losos-rootfs.tar.xz", out / names["root"]),
+    ]
+    missing = [str(src) for src, _ in moves if not src.exists()]
+    if missing:
+        print("stage-release: these artifacts are missing:", file=sys.stderr)
+        for name in missing:
+            print(f"  {name}", file=sys.stderr)
+        return 1
+
+    for src, dest in moves:
+        shutil.copy2(src, dest)
+        print(f"stage-release: {src.name} -> {dest.name}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

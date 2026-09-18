@@ -208,6 +208,8 @@ def main():
                         help="target architecture from manifest/architectures.yaml")
     parser.add_argument("--channel", default="stable", choices=["stable", "nightly"],
                         help="which sysupdate channel the overlay points at")
+    parser.add_argument("--ota-port", type=int, default=8731,
+                        help="loopback port tools/vm-test offers a release on")
     parser.add_argument("--mirror", metavar="URL",
                         help="fetch sources from a local mirror instead of "
                              "upstream, keeping the same SHA-256 pins")
@@ -255,6 +257,9 @@ def main():
         subs[f"@ARCH_{key.upper()}@"] = str(value)
     subs["@ARCH@"] = args.arch
     subs["@CHANNEL@"] = args.channel
+    # The loopback port tools/vm-test serves a test release on. Written here
+    # rather than in the unit so the harness and the guest cannot disagree.
+    subs["@OTA_PORT@"] = str(args.ota_port)
 
     # The toolchain: one manifest, every flag in the tree. A recipe that
     # spelled its own -O2 would be outside the CFI scheme with nothing saying
