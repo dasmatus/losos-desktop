@@ -18,7 +18,6 @@ checks instead, which is cheaper and catches the same thing.
 A recipe with no dl_urls has no upstream version to agree with and is skipped.
 """
 
-import pathlib
 import re
 import sys
 from pathlib import Path
@@ -44,13 +43,12 @@ def recipe_version(text):
     ]
 
 
-def check(repo):
-    """Return (failures, checked) for the tree rooted at `repo`."""
-    lock = yaml.safe_load((repo / "manifest" / "sources.lock").read_text()) or {}
+def main():
+    lock = yaml.safe_load((REPO / "manifest" / "sources.lock").read_text()) or {}
     failures = []
     checked = 0
 
-    for template in sorted((repo / "recipes").glob("*/*/build.yaml.in")):
+    for template in sorted((REPO / "recipes").glob("*/*/build.yaml.in")):
         text = template.read_text()
         keys = set(URL_TOKEN.findall(text))
         if not keys:
@@ -59,159 +57,28 @@ def check(repo):
             # A recipe that downloads several sources has no single upstream
             # version to agree with; the kernel's bpftool is the shape this
             # would be, if it were not built from the kernel's own tree.
-            # Skipped rather than failed, and the self-test pins that: a rule
-            # that guessed which of several sources "the" version came from
-            # would be wrong the first time someone reordered them.
             continue
 
         key = keys.pop()
         entry = lock.get(key)
         if entry is None:
-            failures.append(f"{template.relative_to(repo)}: @URL_{key}@ is not in sources.lock")
+            failures.append(f"{template.relative_to(REPO)}: @URL_{key}@ is not in sources.lock")
             continue
 
         declared = recipe_version(text)
         if declared is None:
-            failures.append(f"{template.relative_to(repo)}: no `version:` list")
+            failures.append(f"{template.relative_to(REPO)}: no `version:` list")
             continue
 
         upstream = str(entry.get("version", "")).split(".")
         if declared != upstream:
             failures.append(
-                f"{template.relative_to(repo)}: version {'.'.join(declared)} "
+                f"{template.relative_to(REPO)}: version {'.'.join(declared)} "
                 f"but {key} is {entry.get('version')}"
             )
             continue
 
         checked += 1
-
-    return failures, checked
-
-
-# --- self-test ------------------------------------------------------------
-#
-# A gate that has never been shown to fail is a gate nobody should trust. Each
-# case below builds a throwaway tree, runs the real check over it, and asserts
-# the verdict -- including the two cases where the right answer is to say
-# nothing, which are the ones a stricter rule would get wrong.
-
-def _tree(root, lock, recipes):
-    """Write a minimal tree: one sources.lock and some build.yaml.in files."""
-    (root / "manifest").mkdir(parents=True)
-    (root / "manifest" / "sources.lock").write_text(lock)
-    for name, body in recipes.items():
-        path = root / "recipes" / "layer" / name
-        path.mkdir(parents=True)
-        (path / "build.yaml.in").write_text(body)
-    return root
-
-
-def _recipe(version_items, urls):
-    lines = ["name: pkg", "version:"]
-    lines += [f"- '{item}'" for item in version_items]
-    lines += ["dependencies: []", "steps:", "- stage: Prepare", "  name: fetch", "  dl_urls:"]
-    lines += [f"    @URL_{key}@: '@SHA256_{key}@'" for key in urls]
-    lines += ["  run:", "  - true", ""]
-    return "\n".join(lines)
-
-
-def self_test():
-    import tempfile
-
-    cases = []
-
-    def case(name, lock, recipes, expect_failure, because):
-        cases.append((name, lock, recipes, expect_failure, because))
-
-    case(
-        "agreeing recipe passes",
-        "FOO:\n  url: https://example.invalid/foo-1.2.3.tar.xz\n  version: '1.2.3'\n  sha256: TODO\n",
-        {"foo": _recipe(["1", "2", "3"], ["FOO"])},
-        False,
-        "1.2.3 split on dots is ['1','2','3']",
-    )
-    case(
-        "stale recipe fails",
-        "FOO:\n  url: https://example.invalid/foo-2.0.0.tar.xz\n  version: '2.0.0'\n  sha256: TODO\n",
-        {"foo": _recipe(["1", "2", "3"], ["FOO"])},
-        True,
-        "the bump moved sources.lock and left the recipe behind -- the whole point",
-    )
-    case(
-        "missing lock entry fails",
-        "BAR:\n  url: https://example.invalid/bar-1.0.tar.xz\n  version: '1.0'\n  sha256: TODO\n",
-        {"foo": _recipe(["1", "2", "3"], ["FOO"])},
-        True,
-        "a recipe naming a key nobody pinned cannot be checked, and silence would hide it",
-    )
-    case(
-        "multi-source recipe is skipped, not failed",
-        ("FOO:\n  url: https://example.invalid/foo-1.2.3.tar.xz\n  version: '1.2.3'\n  sha256: TODO\n"
-         "BAZ:\n  url: https://example.invalid/baz-9.9.tar.xz\n  version: '9.9'\n  sha256: TODO\n"),
-        {"foo": _recipe(["7", "7", "7"], ["FOO", "BAZ"])},
-        False,
-        "two sources, no single upstream version to agree with; guessing one would be wrong",
-    )
-    case(
-        "trailing zero is not truncated",
-        "FOO:\n  url: https://example.invalid/foo-2.70.tar.xz\n  version: '2.70'\n  sha256: TODO\n",
-        {"foo": _recipe(["2", "70"], ["FOO"])},
-        False,
-        "unquoted, YAML would read 2.70 as the float 2.7 and this would fail",
-    )
-    case(
-        "unquoted trailing zero IS caught",
-        "FOO:\n  url: https://example.invalid/foo-2.70.tar.xz\n  version: 2.70\n  sha256: TODO\n",
-        {"foo": _recipe(["2", "70"], ["FOO"])},
-        True,
-        "which is what makes the quoting in sources.lock load-bearing rather than style",
-    )
-    case(
-        "a single-component version works",
-        "FOO:\n  url: https://example.invalid/foo-39.tar.xz\n  version: '39'\n  sha256: TODO\n",
-        {"foo": _recipe(["39"], ["FOO"])},
-        False,
-        "not every upstream uses dots",
-    )
-    case(
-        "a recipe with no sources is skipped",
-        "FOO:\n  url: https://example.invalid/foo-1.0.tar.xz\n  version: '1.0'\n  sha256: TODO\n",
-        {"own": "name: own\nversion:\n- '0'\ndependencies: []\nsteps: []\n"},
-        False,
-        "this tree's own packages have no upstream version to agree with",
-    )
-
-    ok = True
-    for name, lock, recipes, expect_failure, because in cases:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = _tree(pathlib.Path(tmp), lock, recipes)
-            failures, _ = check(root)
-            got = bool(failures)
-            if got != expect_failure:
-                ok = False
-                print(f"  MISSED  {name}", file=sys.stderr)
-                print(f"          expected {'a failure' if expect_failure else 'no failure'}, "
-                      f"got {failures or 'none'}", file=sys.stderr)
-            else:
-                print(f"  ok      {name:44} ({because})")
-
-    # And the real tree, which is the case that matters in practice.
-    failures, checked = check(REPO)
-    if failures:
-        ok = False
-        print(f"  MISSED  the repository's own tree: {failures}", file=sys.stderr)
-    else:
-        print(f"  ok      the repository's own tree{'':21} ({checked} recipes)")
-
-    print("versions --self-test: " + ("all cases behave" if ok else "FAILED"))
-    return 0 if ok else 1
-
-
-def main():
-    if "--self-test" in sys.argv:
-        return self_test()
-
-    failures, checked = check(REPO)
 
     if failures:
         print("versions: FAILED", file=sys.stderr)

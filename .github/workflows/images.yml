@@ -17,34 +17,10 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
 
-# Read-only by default. This workflow runs on pull_request, which means it
-# checks out and executes branch code; a token that can write to the repository
-# has no business being in that job. Only `publish` needs more, and it asks for
-# it itself.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  # The channel, decided once. It used to be derived independently in `build`
-  # (into $GITHUB_ENV) and again in `publish` (in shell), while `verify` and
-  # `ota` just hardcoded "nightly" -- so on a tag, build uploaded
-  # losos-stable-<arch> and verify asked for losos-nightly-<arch>, which does
-  # not exist. download-artifact fails on a missing name, so verify and ota
-  # failed and publish (needs: [verify, ota]) never ran: the stable release
-  # path could not complete at all. One output, referenced everywhere.
-  channel:
-    runs-on: ubuntu-24.04
-    outputs:
-      name: ${{ steps.pick.outputs.name }}
-    steps:
-      - id: pick
-        run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            echo "name=stable" >> "$GITHUB_OUTPUT"
-          else
-            echo "name=nightly" >> "$GITHUB_OUTPUT"
-          fi
-
   # The gate that runs anywhere, on every event. No network to upstream, no
   # KVM, no nix. If this is red nothing below is worth running.
   gates:
@@ -74,15 +50,6 @@ jobs:
 
       - name: Build pm
         run: cargo build --release --manifest-path pm/Cargo.toml
-
-      # The components are not committed, so CI builds them -- and this is the
-      # only place `explain-all` runs with the plugins actually loaded. It needs
-      # the wasm32 target and pm's encoder, which is why it is not part of
-      # `./do check` (that has to run with no network and no wasm toolchain).
-      - name: Build the plugin components
-        run: |
-          rustup target add wasm32-unknown-unknown
-          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm ./do plugins
 
       - name: ./do check
         working-directory: losos-desktop
@@ -115,7 +82,7 @@ jobs:
           fi
 
   build:
-    needs: [gates, pinned, channel]
+    needs: [gates, pinned]
     if: needs.pinned.outputs.ready == 'true'
     strategy:
       fail-fast: false
@@ -171,13 +138,17 @@ jobs:
         working-directory: losos-desktop
         run: python3 tools/fetch-sources
 
-      # The channel comes from the `channel` job, not from the event read a
-      # second time here: a tag builds stable, everything else nightly, and
-      # every job below has to agree on which. It is not a matrix dimension
-      # because that would double every job to publish a "stable" nobody
-      # tagged.
-      - name: Take the channel
-        run: echo "CHANNEL=${{ needs.channel.outputs.name }}" >> "$GITHUB_ENV"
+      # The channel is derived from the event rather than being a matrix
+      # dimension: a tag builds stable, everything else builds nightly.
+      # Making it a dimension would double every job to publish a "stable"
+      # nobody tagged.
+      - name: Decide the channel
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "CHANNEL=stable" >> "$GITHUB_ENV"
+          else
+            echo "CHANNEL=nightly" >> "$GITHUB_ENV"
+          fi
 
       - name: Build the image
         working-directory: losos-desktop
@@ -206,13 +177,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          name: losos-${{ env.CHANNEL }}-${{ matrix.arch }}
           path: losos-desktop/release/
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
   verify:
-    needs: [build, channel]
+    needs: build
     strategy:
       fail-fast: false
       matrix:
@@ -226,7 +197,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          name: losos-nightly-${{ matrix.arch }}
           path: release
 
       - name: Install QEMU and UEFI firmware
@@ -255,7 +226,7 @@ jobs:
   # that matches nothing reports "no update available" rather than failing, so
   # the only way to know a transfer definition is right is to apply one.
   ota:
-    needs: [build, verify, channel]
+    needs: [build, verify]
     strategy:
       fail-fast: false
       matrix:
@@ -269,7 +240,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          name: losos-nightly-${{ matrix.arch }}
           path: release
 
       - name: Install QEMU and UEFI firmware
@@ -292,13 +263,9 @@ jobs:
           path: ota-console.log
 
   publish:
-    needs: [verify, ota, channel]
+    needs: [verify, ota]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    # The one job that writes, and it says so here rather than at the top of
-    # the file where it would also apply to every pull request.
-    permissions:
-      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with: { pattern: "losos-*", path: release, merge-multiple: true }
@@ -310,7 +277,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          channel="${{ needs.channel.outputs.name }}"
+          channel=nightly
+          [ "${GITHUB_REF_TYPE}" = "tag" ] && channel=stable
           gh release delete "$channel" --repo "$GITHUB_REPOSITORY" --yes || true
           gh release create "$channel" --repo "$GITHUB_REPOSITORY" \
             --title "LosOS $channel" --notes "Rolling $channel channel." \

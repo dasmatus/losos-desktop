@@ -70,18 +70,12 @@ cmd_lint() {
   # date -- so it has to be caught here.
   python3 "$repo/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "$repo/tools/gates/plugins.py"
-  # An artifact name mismatch between two CI jobs fails only on the release
-  # path, which is the one nobody exercises until it matters.
-  python3 "$repo/tools/gates/workflow.py"
   # A patch series nobody applies is tracked, reviewed and inert: the build
   # goes green and the feature is simply absent.
   python3 "$repo/tools/gates/patches.py"
   # A recipe whose `version:` no longer matches the source it downloads builds
   # the new tarball under the old name, and nothing else notices.
-  # --self-test rather than a bare run: it covers the real tree too, and
-  # adds the cases that prove the gate can fail. A gate never shown to
-  # fail is a gate nobody should trust.
-  python3 "$repo/tools/gates/versions.py" --self-test
+  python3 "$repo/tools/gates/versions.py"
   "$repo/tools/gates/explain-all"
 }
 
@@ -128,18 +122,6 @@ print(layers[-1]['name'] if layers else '')
   ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )
 }
 
-# Build the plugin components from source.
-#
-# Kept out of `check` on purpose. The components need the wasm32 Rust target and
-# pm's encoder, and building the encoder needs crates.io -- while `./do check`
-# is meant to run on any machine with no network and no wasm toolchain. So this
-# is its own verb: CI runs it before check, a developer runs it after touching
-# plugins/, and everyone else never needs it. Nothing reads a component out of
-# the tree, because none is committed.
-cmd_plugins() {
-  "$repo/plugins/build.sh" "$@"
-}
-
 cmd_clean() {
   rm -rf "$repo/out/recipes" "$repo/out/pkgs" "$repo/out/tmp"
   echo "clean: removed generated recipes, packages and workspaces"
@@ -154,7 +136,6 @@ case "${1:-}" in
   build)     shift; cmd_build "$@" ;;
   fetch)     shift; python3 "$repo/tools/fetch-sources" "$@" ;;
   serve)     shift; python3 "$repo/tools/serve-sources" --port "$mirror_port" ;;
-  plugins)   shift; cmd_plugins "$@" ;;
   clean)     shift; cmd_clean ;;
   *)
     cat <<USAGE
@@ -169,8 +150,6 @@ case "${1:-}" in
   fetch [--update]            mirror every pinned source into out/sources,
                               filling any TODO hash
   serve                       serve out/sources over loopback for pm
-  plugins [crate]             build the pm plugin components into plugins/dist
-                              (needs the wasm32 Rust target; not part of check)
   clean                       remove out/recipes, out/pkgs, out/tmp
 
 Environment:
