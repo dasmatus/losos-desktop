@@ -1,0 +1,58 @@
+# meson, vendored.
+#
+# Every other recipe in this tree configures with meson, and not one of them
+# invokes `meson`. pm resolves a step's first word against the HOST PATH and
+# canonicalises it there (C3 in docs/pm-constraints.md), so a build system
+# installed into the sysroot can never be a step's first word -- and meson is
+# not installed on the build hosts this repo targets either. It is therefore
+# run as `python3 <path>/meson.py`, where `python3` is the first word and
+# resolves on the host, and meson.py is just an argument.
+#
+# That also means meson needs no compilation: the sdist is a Python tree, and
+# "building" it is placing meson.py and mesonbuild/ where later layers can
+# reach them. The two install targets are the standard pair -- /dest is the
+# shipped tree, /build/sysroot is what this layer's later members use.
+name: meson
+version:
+- '1'
+- '12'
+- '0'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_MESON@: '@SHA256_MESON@'
+  run:
+  - mkdir -p /build/src/meson
+  # @DL_MESON@ is the path tools/configure computed from the URL; there is no
+  # shell here to discover it and no glob to find it with.
+  #
+  # --no-same-owner is not optional anywhere in this tree. pm's jail is a user
+  # namespace in which only uid 0 is mapped, so a tarball recording any other
+  # uid makes tar fail with "Cannot change ownership to uid N: Invalid
+  # argument" -- and it fails at the END, after extracting, so the error looks
+  # like a permissions problem with the destination rather than with the
+  # archive's metadata.
+  - tar -xf @DL_MESON@ --no-same-owner -C /build/src/meson --strip-components=1
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - mkdir -p /dest/usr/lib/meson /build/sysroot/usr/lib/meson
+  - install -Dm755 /build/src/meson/meson.py /dest/usr/lib/meson/meson.py
+  - cp -a /build/src/meson/mesonbuild /dest/usr/lib/meson/
+  - install -Dm755 /build/src/meson/meson.py /build/sysroot/usr/lib/meson/meson.py
+  - cp -a /build/src/meson/mesonbuild /build/sysroot/usr/lib/meson/
+
+# Cheap assertions about the staged tree. `Test` steps run as part of
+# `pm build` (C11), so this is for shape checks, never an upstream suite.
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -f /dest/usr/lib/meson/meson.py
+  - test -d /dest/usr/lib/meson/mesonbuild
+  - test -f /build/sysroot/usr/lib/meson/meson.py

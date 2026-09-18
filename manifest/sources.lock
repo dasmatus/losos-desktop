@@ -1,0 +1,16 @@
+# Upstream sources, pinned by SHA-256.
+#
+# pm verifies a dl_urls hash BEFORE it parses the build file, so a wrong value
+# presents as a compromised mirror -- which is why nothing here is ever guessed.
+# `TODO` is a sentinel meaning "not yet fetched"; tools/fetch-hashes fills it in
+# on a machine that can reach the host, and tools/configure refuses to generate
+# while any remain unless you pass --allow-unresolved.
+#
+# The URL is hashed by pm as rust-url's NORMALISED form (C9), so every URL here
+# must already be in that form: https, lowercase host, no default port, no
+# dot-segments, no query, no fragment. tools/gates/url-canonical.py enforces it.
+
+MESON:
+  url: https://files.pythonhosted.org/packages/48/91/d58a3eb45ed54bf32b96806dd2f4efd407f7a9675953e15e8ef257840a0d/meson-1.12.0.tar.gz
+  version: 1.12.0
+  sha256: 88afe0c20e52030218924ac37d0c81c59b4b5f3ae3752c8c6d7470c7d365886c
