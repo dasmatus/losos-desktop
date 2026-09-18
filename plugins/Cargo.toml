@@ -1,0 +1,26 @@
+# The distribution's pm plugins.
+#
+# A workspace of its own, exactly as pm's plugins/ is, and for the same reason:
+# these crates compile to wasm32-unknown-unknown rather than to the host, and
+# nothing else in this repository depends on them. pm loads the *components*
+# they are encoded into, at run time, from a directory.
+[workspace]
+resolver = "3"
+members = ["losos-image", "losos-systemd"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+wit-bindgen = { version = "0.51.0", default-features = false, features = ["macros", "realloc"] }
+
+# wasmtime compiles a plugin on every pm invocation that consults it, so size is
+# latency rather than disk. These are pm's own plugin profile settings.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
