@@ -1,0 +1,38 @@
+[Unit]
+# Drive systemd-sysupdate from inside the VM, for CI only.
+#
+# An OTA test cannot be run from outside: there is no shell and no SSH to log
+# into, and the update has to happen in the running system's own context so
+# that sysupdate sees the real ESP and the real partition table. So the guest
+# updates itself when the kernel command line asks it to, and tools/vm-test
+# reads the result off the serial console after the reboot.
+#
+# ConditionKernelCommandLine means an installed system never does this, however
+# the unit is enabled.
+Description=Apply a sysupdate from the CI host, then reboot
+Documentation=man:systemd-sysupdate(8)
+ConditionKernelCommandLine=losos.ota-test
+After=network-online.target systemd-sysusers.service
+Wants=network-online.target
+Before=losos-selftest.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardOutput=journal+console
+
+# The shipped definitions point at GitHub. The test server is the QEMU host,
+# which is always 10.0.2.2 under user-mode networking, so a copy is written to
+# /run with the Path rewritten and sysupdate is pointed at that directory.
+# /run rather than /etc because the change must not survive the reboot it is
+# about to trigger.
+ExecStart=/usr/bin/mkdir -p /run/losos-ota.d
+ExecStart=/usr/bin/sh -c 'for f in /usr/lib/sysupdate.d/*.conf; do sed "s|^Path=https://.*|Path=http://10.0.2.2:@OTA_PORT@/|" "$f" > "/run/losos-ota.d/$(basename "$f")"; done'
+ExecStart=/usr/lib/systemd/systemd-sysupdate --definitions=/run/losos-ota.d --verify=no update
+
+# A reboot is the point: sysupdate writes the new UKI beside the running one,
+# and only the next boot proves systemd-boot picked it and that it came up.
+ExecStart=/usr/bin/systemctl reboot
+
+[Install]
+WantedBy=multi-user.target
