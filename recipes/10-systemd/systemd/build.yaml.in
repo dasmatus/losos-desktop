@@ -1,0 +1,69 @@
+# systemd, with as much of it turned on as upstream allows.
+#
+# This is the point of the repository, so the option list below is exhaustive
+# rather than pragmatic: every component upstream can build is built, and the
+# few that are off are off for a stated reason, not by omission.
+#
+# The executable half of that claim is the `inventory` step at the bottom. It
+# checks a list of ~150 paths that these options are supposed to produce, so
+# "as many systemd components as possible" is a thing that can fail rather than
+# a sentence in a README. docs/systemd-inventory.md is the same list with the
+# reasoning attached.
+#
+# meson is run as `python3 <meson.py>` and the build-time helpers reach it
+# through files/systemd/native.ini, because pm resolves a step's first word on
+# the host and these live only in the jail (C3).
+name: systemd
+version:
+- '257'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_SYSTEMD@: '@SHA256_SYSTEMD@'
+  run:
+  - mkdir -p /build/src/systemd /build/b/systemd
+  - tar -xf @DL_SYSTEMD@ --no-same-owner -C /build/src/systemd --strip-components=1
+
+# The helpers systemd's meson looks up for itself. Asserting they exist here
+# turns a missing host tool into one clear line, instead of a meson probe
+# failure four hundred lines into a configure log.
+- stage: Build
+  name: check-tools
+  dl_urls: null
+  run:
+  - test -x /build/sysroot/usr/bin/gperf
+  - test -x /build/sysroot/usr/bin/msgfmt
+  - test -x /build/sysroot/usr/bin/bpftool
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/systemd /build/src/systemd --native-file @RECIPE@/files/systemd/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dmode=release -Dtests=false -Dinstall-tests=false -Dslow-tests=false -Dman=disabled -Dhtml=disabled -Dtranslations=true -Dsplit-bin=true -Ddefault-hierarchy=unified -Dstatus-unit-format=combined -Dfallback-hostname=losos -Ddefault-locale=C.UTF-8 -Ddefault-keymap=us -Dutmp=false -Dhibernate=true -Dldconfig=true -Dinitrd=true -Dcreate-log-dirs=true -Dxdg-autostart=true -Denvironment-d=true -Dbinfmt=true -Dvconsole=true -Dquotacheck=true -Dtmpfiles=true -Dsysusers=true -Dfirstboot=true -Drandomseed=true -Dbacklight=true -Drfkill=true -Dhwdb=true -Dkernel-install=true -Danalyze=true -Dlink-udev-shared=true -Dlink-systemctl-shared=true -Dlogind=true -Dhostnamed=true -Dlocaled=true -Dtimedated=true -Dtimesyncd=true -Dnetworkd=true -Dresolve=true -Dnspawn=true -Dmachined=true -Dportabled=true -Dimportd=true -Dvmspawn=true -Duserdb=true -Dhomed=enabled -Doomd=true -Dcoredump=true -Dpstore=true -Drepart=true -Dsysupdate=enabled -Dsysext=true -Dstoragetm=true -Dnss-systemd=true -Dnss-myhostname=true -Dnss-mymachines=true -Dnss-resolve=true -Dnscd=false -Dremote=enabled -Dbootloader=true -Dukify=enabled -Dpolkit=true -Dsysv-compat=false -Dtpm=true -Dtpm2=enabled -Dopenssl=enabled -Dgcrypt=enabled -Dgnutls=enabled -Dp11kit=enabled -Dlibfido2=enabled -Dlibcryptsetup=enabled -Dlibcryptsetup-plugins=enabled -Ddefault-dnssec=no -Ddns-over-tls=openssl -Ddefault-dns-over-tls=opportunistic -Ddefault-mdns=yes -Ddefault-llmnr=yes -Dseccomp=enabled -Dselinux=disabled -Dapparmor=disabled -Dsmack=false -Daudit=enabled -Dblkid=enabled -Dfdisk=enabled -Dacl=enabled -Dkmod=enabled -Dpam=enabled -Dpwquality=enabled -Dlibcurl=enabled -Dlibidn2=enabled -Dlibidn=disabled -Dmicrohttpd=enabled -Dqrencode=enabled -Dlibarchive=enabled -Delfutils=enabled -Dzlib=enabled -Dbzip2=enabled -Dlz4=enabled -Dxz=enabled -Dzstd=enabled -Dxkbcommon=enabled -Dpcre2=enabled -Dglib=enabled -Ddbus=enabled -Dbpf-framework=enabled -Dbpf-compiler=clang -Dlibiptc=disabled -Dadm-group=true -Dwheel-group=true -Dnobody-user=nobody -Dnobody-group=nobody -Dsystem-uid-max=999 -Dsystem-gid-max=999
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/systemd -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/systemd --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/systemd --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+# The inventory assertion. This is what makes the option list above a claim
+# rather than an aspiration: if an option silently stops producing a component
+# -- renamed upstream, quietly disabled because a dependency probe failed --
+# the build goes red here and names the missing path.
+- stage: Test
+  name: inventory
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/files/systemd/assert-inventory.sh /dest @RECIPE@/files/systemd/inventory.txt

@@ -1,0 +1,51 @@
+# libidn2 2.3.7
+#
+# IDN, for systemd-resolved's handling of internationalised domain names.
+name: libidn2
+version:
+- '2'
+- '3'
+- '7'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBIDN2@: '@SHA256_LIBIDN2@'
+  run:
+  - mkdir -p /build/src/libidn2 /build/b/libidn2
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBIDN2@ --no-same-owner -C /build/src/libidn2 --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the sysroot is reached without `env`.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libidn2 /build/src/libidn2/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --disable-static
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/libidn2 -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/libidn2 install DESTDIR=/dest
+  - make -C /build/b/libidn2 install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libidn2.so

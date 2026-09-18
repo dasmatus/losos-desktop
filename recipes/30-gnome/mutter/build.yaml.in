@@ -1,0 +1,45 @@
+# mutter 47.1
+#
+# The compositor. native_backend is the KMS/libinput path; it takes its DRM device and input fds from systemd-logind, which is what lets it run without root.
+name: mutter
+version:
+- '47'
+- '1'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_MUTTER@: '@SHA256_MUTTER@'
+  run:
+  - mkdir -p /build/src/mutter /build/b/mutter
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_MUTTER@ --no-same-owner -C /build/src/mutter --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/mutter /build/src/mutter --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=disabled -Dwayland=true -Dx11=false -Dxwayland=false -Dnative_backend=true -Dintrospection=false -Dprofiler=false
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/mutter -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/mutter --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/mutter --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libmutter-15.so

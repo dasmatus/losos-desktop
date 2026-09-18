@@ -1,0 +1,50 @@
+# libgpg-error 1.50
+#
+# Under libgcrypt.
+name: libgpg-error
+version:
+- '1'
+- '50'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBGPG_ERROR@: '@SHA256_LIBGPG_ERROR@'
+  run:
+  - mkdir -p /build/src/libgpg-error /build/b/libgpg-error
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBGPG_ERROR@ --no-same-owner -C /build/src/libgpg-error --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the sysroot is reached without `env`.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libgpg-error /build/src/libgpg-error/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --disable-static
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/libgpg-error -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/libgpg-error install DESTDIR=/dest
+  - make -C /build/b/libgpg-error install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libgpg-error.so

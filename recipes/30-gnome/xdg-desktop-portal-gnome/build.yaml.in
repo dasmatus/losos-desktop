@@ -1,0 +1,45 @@
+# xdg-desktop-portal-gnome 47.1
+#
+# The GNOME implementation of the portal interfaces.
+name: xdg-desktop-portal-gnome
+version:
+- '47'
+- '1'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_XDG_DESKTOP_PORTAL_GNOME@: '@SHA256_XDG_DESKTOP_PORTAL_GNOME@'
+  run:
+  - mkdir -p /build/src/xdg-desktop-portal-gnome /build/b/xdg-desktop-portal-gnome
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_XDG_DESKTOP_PORTAL_GNOME@ --no-same-owner -C /build/src/xdg-desktop-portal-gnome --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/xdg-desktop-portal-gnome /build/src/xdg-desktop-portal-gnome --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dsystemduserunitdir=/usr/lib/systemd/user
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/xdg-desktop-portal-gnome -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/xdg-desktop-portal-gnome --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/xdg-desktop-portal-gnome --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/libexec/xdg-desktop-portal-gnome

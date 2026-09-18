@@ -1,0 +1,45 @@
+# json-c 0.18
+#
+# Under cryptsetup's LUKS2 header handling.
+name: json-c
+version:
+- '0'
+- '18'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_JSON_C@: '@SHA256_JSON_C@'
+  run:
+  - mkdir -p /build/src/json-c /build/b/json-c
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_JSON_C@ --no-same-owner -C /build/src/json-c --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - cmake -S /build/src/json-c -B /build/b/json-c -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=Release -DBUILD_STATIC_LIBS=OFF
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cmake --build /build/b/json-c -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - cmake --install /build/b/json-c
+  - cmake --install /build/b/json-c --prefix /build/sysroot/usr
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libjson-c.so
