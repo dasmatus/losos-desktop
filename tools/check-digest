@@ -107,12 +107,36 @@ def main() -> int:
         result = run("build", str(recipe / "build.yaml"))
 
         if result.returncode != 0:
-            sys.stderr.write(result.stdout)
-            sys.stderr.write(result.stderr)
+            combined = result.stdout + result.stderr
+
+            # Distinguish "the jail never started" from "the file was not
+            # there". Both surface as a failed `test -f`, and blaming the
+            # digest for a sandbox that could not start sends the reader to
+            # exactly the wrong file -- which is what this gate did on its
+            # first CI run.
+            #
+            # Ubuntu 24.04 and derivatives ship
+            # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
+            # uid_map write hakoniwa needs. GitHub's runners inherit it.
+            if "uid_map" in combined or "Operation not permitted" in combined:
+                sys.stderr.write(combined)
+                sys.exit(
+                    "check-digest: INCONCLUSIVE -- pm could not create a user\n"
+                    "  namespace, so the jail never started and nothing was\n"
+                    "  proved about the download path.\n"
+                    "\n"
+                    "  This is the host, not the digest. On Ubuntu 24.04 and\n"
+                    "  derivatives:\n"
+                    "      sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\n"
+                    "  or run as root in a container that allows user namespaces."
+                )
+
+            sys.stderr.write(combined)
             sys.exit(
                 "check-digest: FAILED.\n"
                 f"  tools/configure predicted {predicted}\n"
-                "  and the file was not there inside the jail.\n"
+                "  and the file was not there inside the jail, although the\n"
+                "  jail did start and the download was verified.\n"
                 "  pm's Step::url_digest has almost certainly changed; fix\n"
                 "  tools/configure.url_digest to match pm's src/step.rs."
             )

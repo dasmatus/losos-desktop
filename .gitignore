@@ -13,3 +13,12 @@
 *.cpkg
 *.sig
 *.sig.stale
+
+# Rust build output. `plugins/` is a cargo workspace, and cargo puts both the
+# wasm32 core modules and the host-side encoder artifacts here -- 137 MB of it,
+# all reproducible from the sources beside it.
+#
+# The COMPONENTS are tracked, at plugins/dist/*.wasm: pm loads those, they are
+# what gets signed, and tools/gates/plugins.py checks none is older than its
+# source. The intermediates are not.
+target/
