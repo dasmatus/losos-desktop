@@ -34,21 +34,53 @@ wired into a job that the design actually needs:
 | Containers & VMs | `systemd-nspawn`, `systemd-vmspawn`, `systemd-machined`, `systemd-portabled`, `systemd-importd` |
 
 `docs/systemd-inventory.md` is the full list: every component, the meson option
-that enables it, the units it ships, and where this OS wires it in.
+that enables it, the units it ships, and where this OS wires it in. Its rows are
+the same paths a `Test` step in the systemd recipe asserts, so the document and
+the build cannot drift apart — 149 of them, and a missing one fails the build.
 
 ## Building
 
 ```sh
-cd ../pm && cargo build --release      # the pm binary this repo drives
-cd ../losos-desktop && ./do check      # generate, validate, sign, lint, smoke-build
-./do build                             # the real thing; needs network and hours
+cd ../pm && cargo build --release   # the pm binary this repo drives
+cd ../losos-desktop
+
+./do check              # the gate: generate, sign, prove the digest, lint
+./do fetch --update     # mirror the upstream sources, pinning any TODO hash
+./do build              # the real build
 ```
 
-`./do check` is the gate that runs anywhere: it needs no network, no KVM and no
-root beyond working user namespaces. `./do build` needs to reach the upstream
-source hosts.
+`./do check` runs anywhere: no network, no KVM, no nix, no root beyond working
+user namespaces. It validates every generated build file against pm's schema,
+checks that every source URL is in the normal form pm hashes, re-applies pm's
+fingerprint table past the one permitted wrapper, tests the initramfs and UKI
+writers, proves the download-path derivation against a real `pm build`, and
+runs `pm explain` over all 800-odd commands in the tree.
 
-Run `./do` with no arguments for the full list of subcommands.
+`./do build` needs the sources mirrored first. It does **not** fetch through
+pm: pm's downloader compiles Mozilla's roots in and reads no CA setting, so it
+cannot fetch over HTTPS on a host that re-terminates TLS. `./do fetch` mirrors
+the tarballs with a tool that can, and `./do build` serves them over loopback
+with the SHA-256 pins unchanged.
+
+Run `./do` with no arguments for the full list.
+
+## What has actually been built
+
+Honesty matters more here than ambition, so: the environment this was developed
+in cannot reach kernel.org, gnome.org, freedesktop.org or github.com/systemd, so
+**no upstream package in this tree has been compiled**.
+
+What pm *has* built end to end, in the jail: `losos-00-hosttools` (meson, from a
+pinned sdist) and `losos-05-core` (`losos-release`, compiled from this
+repository's own C by that meson, packaged, and run back out of its own
+archive). Everything above that is validated by `./do check` — which proves the
+tree is executable-in-principle by pm, and proves nothing about whether each
+package configures.
+
+`manifest/sources.lock` ships `sha256: TODO` for every source that could not be
+fetched. That is a sentinel, not a placeholder to fill in by guessing: pm
+verifies a hash before it parses a build file, so a wrong value presents as a
+compromised mirror.
 
 ## Honest limits
 
@@ -62,12 +94,12 @@ Read `docs/limits.md` before trusting anything here. The short version:
   into the dependent at `/dest/deps/`, and nothing unpacks it. The sysroot
   pattern in `tools/lib/sysroot.sh` is this repo's workaround, not a `pm`
   feature.
-- **`sources.lock` ships unresolved hashes.** Populate it with
-  `tools/fetch-hashes` on a machine that can reach the upstream hosts. Nothing
-  here invents a SHA-256: `pm` verifies the hash *before* it parses a build
-  file, so a wrong value presents as a compromised mirror.
+- **Nothing here has booted.** No VM, no EFI firmware, no loop devices. The UKI
+  is verified structurally — it is a PE carrying the six sections systemd-stub
+  looks for — and that is the whole claim.
 - **The GNOME layer is the long tail** and is the least complete part of the
-  tree by construction.
+  tree by construction; several control-centre panels will be inert because
+  this OS runs `systemd-networkd` rather than NetworkManager.
 
 ## Licence
 

@@ -104,7 +104,13 @@ print(layers[-1]['name'] if layers else '')
   [ -n "$target" ] || { echo "nothing to build" >&2; exit 1; }
 
   start_mirror || echo "do: no local source mirror; pm will fetch upstream" >&2
-  cmd_configure
+  # Generate the whole tree, then insist only that the layers this build
+  # actually walks are pinned. Refusing because some unrelated upper layer has
+  # an unfetched source would make a partial tree unbuildable for no reason --
+  # and a partial tree is the normal state while a distribution is being
+  # brought up.
+  cmd_configure --allow-unresolved
+  python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
   echo "== building $target"
   ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )
