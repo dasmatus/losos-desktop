@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """Check the plugins against the contract they were compiled with.
 
-Two failure modes, both silent:
+**Contract drift** is the failure this exists for. `plugins/wit/plugin.wit` is a
+copy of pm's. If pm's changes and this one does not, a component still builds
+and still loads, and then answers with a record the host reads differently --
+or, once a field is added, stops loading at all with "expected record of 7
+fields, found 6" and takes every recipe in the tree down with it. Comparing the
+bytes is cheap and turns that into one line. It is not something pm can catch:
+from pm's side a plugin built against an older contract is simply a plugin.
 
-  * **Contract drift.** `plugins/wit/plugin.wit` is a copy of pm's. If pm's
-    changes and this one does not, the plugins still build and still load, and
-    then answer with a layout the host reads differently. Comparing the bytes
-    is cheap and turns that into one line.
-  * **A stale component.** `dist/*.wasm` is a build artifact of `plugins/`. If
-    the source moved on and nobody re-ran build.sh, pm loads yesterday's
-    behaviour while the source says otherwise.
-
-Neither is something pm can catch: from pm's side a stale plugin is simply a
-plugin.
+There is deliberately **no staleness check**, because there is nothing to go
+stale. `plugins/dist/` is build output and is not tracked: `./do plugins`
+produces it from the sources beside it, and `tools/sign-all` installs whatever
+is there into pm's trust store. An earlier version of this file compared the
+component's mtime against `src/lib.rs`'s, which was wrong twice over -- git
+does not record mtimes, so in a fresh clone the comparison decided by whichever
+order the checkout wrote the two files in, and it only ever looked at
+`lib.rs`. Both bugs existed only because a compiled artifact was committed.
 """
 
 import hashlib
-import subprocess
 import sys
 from pathlib import Path
 
@@ -41,7 +44,7 @@ def main():
         if digest(vendored) != digest(upstream):
             failures.append(
                 f"contract drift: {vendored.relative_to(REPO)} differs from "
-                f"{upstream}\n    re-copy it and rebuild the plugins"
+                f"{upstream}\n    re-copy it and run ./do plugins"
             )
         else:
             print(f"  contract    matches {upstream}")
@@ -52,17 +55,14 @@ def main():
     crates = sorted(p.parent.parent.name for p in PLUGINS.glob("*/src/lib.rs"))
     for crate in crates:
         component = PLUGINS / "dist" / f"{crate}.wasm"
-        if not component.exists():
-            failures.append(f"{crate}: not built -- run plugins/build.sh")
-            continue
-        source = PLUGINS / crate / "src" / "lib.rs"
-        if source.stat().st_mtime > component.stat().st_mtime:
-            failures.append(
-                f"{crate}: {source.relative_to(REPO)} is newer than its "
-                f"component -- run plugins/build.sh"
-            )
-            continue
-        print(f"  {crate:15} {component.stat().st_size:>7} bytes, current")
+        if component.exists():
+            print(f"  {crate:15} {component.stat().st_size:>7} bytes, built")
+        else:
+            # Informational, not a failure. `./do check` is meant to run on a
+            # machine with no wasm toolchain and no network; requiring a built
+            # component here would take that away for no gain, since pm simply
+            # runs without a plugin it does not have.
+            print(f"  {crate:15} not built (./do plugins)")
 
     if failures:
         print("plugins: FAILED", file=sys.stderr)
@@ -70,7 +70,7 @@ def main():
             print(f"  {failure}", file=sys.stderr)
         return 1
 
-    print(f"plugins: {len(crates)} plugin(s) built against the current contract")
+    print(f"plugins: {len(crates)} plugin(s) against the current contract")
     return 0
 
 
