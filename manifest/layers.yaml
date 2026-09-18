@@ -105,6 +105,7 @@
   # builds before systemd, which needs it for -Dbpf-framework.
   members:
     - linux
+    - nvidia-open
     - systemd
 
 - name: losos-30-graphics

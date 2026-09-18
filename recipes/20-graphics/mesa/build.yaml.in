@@ -1,6 +1,18 @@
 # mesa 24.2.5
 #
-# The GL and Vulkan implementation. Mutter will not start without a working GBM and EGL.
+# The GL and Vulkan implementation. Mutter will not start without a working GBM
+# and EGL.
+#
+# `nouveau` appears in BOTH driver lists, and that is the whole of this
+# distribution's NVIDIA userspace. The gallium entry is OpenGL; the vulkan one
+# is NVK. There is no proprietary userspace here: libcuda and
+# libnvidia-glcore are prebuilt blobs linked against glibc, so our toolchain
+# never touches them and they cannot load into a musl process at all -- two
+# libcs cannot coexist in one address space. NVK is source-built, musl-clean
+# and takes the same CFI and LTO flags as everything else.
+#
+# The trade is real and belongs in docs/limits.md rather than in a footnote:
+# no CUDA, and NVK is behind the proprietary driver on raw performance.
 name: mesa
 version:
 - '24'
@@ -23,7 +35,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/mesa /build/src/mesa --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dgallium-drivers=iris,radeonsi,nouveau,virgl,swrast -Dvulkan-drivers=intel,amd -Dplatforms=wayland -Dglx=disabled -Dglvnd=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/mesa /build/src/mesa --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dgallium-drivers=iris,radeonsi,nouveau,virgl,swrast -Dvulkan-drivers=intel,amd,nouveau -Dplatforms=wayland -Dglx=disabled -Dglvnd=disabled
 
 - stage: Build
   name: compile
