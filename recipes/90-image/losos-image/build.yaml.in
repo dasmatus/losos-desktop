@@ -8,12 +8,21 @@
 #   artifacts/losos-rootfs.tar.xz   the OS tree
 #   artifacts/initrd.img            systemd-as-PID-1 initramfs, newc + xz
 #   artifacts/losos.efi             the UKI: stub + kernel + initrd + cmdline
+#   artifacts/losos-installer.efi   the same, with `losos.install` on the
+#                                   command line, which starts
+#                                   systemd-sysinstall on boot
 #
-# There is no disk image and no installer, on purpose. systemd-repart creates
-# and grows the partitions on first boot from /usr/lib/repart.d, so the thing
-# that would normally need loop devices, mkfs and root on the BUILD host is
-# done by the OS itself on the target. None of mkfs, losetup, dd or mount is in
-# pm's fingerprint table anyway (C2), so the alternative was never available.
+# Two UKIs and ONE root filesystem. The installer is not a separate image: it
+# is this image, booted with one extra word on its command line, and installing
+# is systemd-sysinstall copying the root partition it is running from onto the
+# target disk (CopyBlocks=auto in /usr/lib/repart.sysinstall.d). So there is
+# nothing that can drift between "the installer" and "what it installs".
+#
+# There is still no disk image built here. systemd-repart creates and grows the
+# partitions, so the work that would normally need loop devices, mkfs and root
+# on the BUILD host is done by the OS itself on the target. None of mkfs,
+# losetup, dd or mount is in pm's fingerprint table anyway (C2), so the
+# alternative was never available.
 name: losos-image
 version:
 - '0'
@@ -67,6 +76,12 @@ steps:
   # Where systemd-boot looks for it, so the ESP can be populated by copying
   # this subtree straight across.
   - install -Dm644 /build/uki/losos.efi /dest/artifacts/EFI/Linux/losos-desktop_@ARCH@.efi
+  # The installer UKI: same stub, same kernel, same initrd, same os-release --
+  # only the .cmdline section differs, and only by the word systemd-sysinstall's
+  # drop-in conditions on. Built from the same inputs in the same step so the
+  # two cannot be built from different ones.
+  - python3 @RECIPE@/files/losos-image/mkuki.py --stub /build/uki/stub.efi --linux /build/uki/vmlinuz --initrd /build/uki/initrd.cpio.xz --osrel /build/uki/osrel --cmdline @RECIPE@/files/losos-image/installer-cmdline --uname @VERSION_LINUX@ --sbat @RECIPE@/files/losos-image/sbat.csv --output /build/uki/losos-installer.efi
+  - install -Dm644 /build/uki/losos-installer.efi /dest/artifacts/losos-installer.efi
 
 - stage: Build
   name: rootfs-tar
@@ -83,6 +98,12 @@ steps:
   dl_urls: null
   run:
   - test -f /dest/artifacts/losos.efi
+  - test -f /dest/artifacts/losos-installer.efi
   - test -f /dest/artifacts/initrd.img
   - test -f /dest/artifacts/losos-rootfs.tar.xz
   - /bin/sh @RECIPE@/files/losos-image/assert-uki.sh /dest/artifacts/losos.efi
+  - /bin/sh @RECIPE@/files/losos-image/assert-uki.sh /dest/artifacts/losos-installer.efi
+  # The one difference between the two, asserted rather than assumed: without
+  # this word the installer UKI boots to a desktop and installs nothing, which
+  # is a failure nobody notices until they have written the USB stick.
+  - grep -q losos.install /dest/artifacts/losos-installer.efi
