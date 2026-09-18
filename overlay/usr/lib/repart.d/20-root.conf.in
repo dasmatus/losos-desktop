@@ -4,7 +4,7 @@
 # filesystem by GPT type UUID, which is why this OS needs no /etc/fstab and no
 # root= on the kernel command line.
 [Partition]
-Type=root-x86-64
+Type=@ARCH_GPT_ROOT@
 Format=ext4
 # Grows to fill whatever disk it lands on, leaving room for /home below.
 SizeMinBytes=8G

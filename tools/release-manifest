@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Write the SHA256SUMS file systemd-sysupdate needs to discover versions.
+
+`Type=url-file` does not list a directory and does not guess filenames. It
+fetches `SHA256SUMS` from the source `Path=`, matches each line against the
+transfer's `MatchPattern=`, and takes the highest version it finds. So the
+manifest is not a checksum convenience -- it *is* the version index, and an
+update server without one offers nothing at all.
+
+That also means the manifest is the integrity boundary for an OTA: sysupdate
+verifies each downloaded file against the digest here. Signing it
+(`SHA256SUMS.gpg`, alongside) is what stops whoever serves the files from
+serving different ones; this tool writes the manifest, and CI signs it when a
+key is configured.
+
+    tools/release-manifest --version 20260918 --arch x86_64 out/pkgs/artifacts
+
+Naming has to agree with overlay/usr/lib/sysupdate.d/*.conf.in, which is
+generated from the same manifest/architectures.yaml, so the pattern below and
+the MatchPattern there cannot drift apart by hand.
+"""
+
+import argparse
+import hashlib
+import re
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+CHUNK = 1 << 20
+
+# Exactly what the MatchPattern= lines in overlay/usr/lib/sysupdate.d expect,
+# with @v standing in for the version.
+UKI = "losos-desktop_{version}_{arch}.efi"
+ROOT = "losos-desktop_{version}_{gpt_root}.raw.xz"
+
+# sysupdate takes the version from where @v sits in the pattern, so a version
+# containing an underscore or a dot in the wrong place silently splits wrong.
+VERSION = re.compile(r"^[0-9][0-9A-Za-z.]*$")
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(CHUNK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("directory", help="directory holding the artifacts")
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--arch", required=True)
+    parser.add_argument("--check", action="store_true",
+                        help="verify an existing manifest instead of writing one")
+    args = parser.parse_args()
+
+    if not VERSION.match(args.version):
+        sys.exit(
+            f"release-manifest: version {args.version!r} must start with a digit "
+            "and contain only digits, letters and dots -- sysupdate splits the "
+            "filename on the pattern, and an underscore here lands in the wrong field"
+        )
+
+    import yaml
+
+    architectures = yaml.safe_load(
+        (REPO / "manifest" / "architectures.yaml").read_text()
+    )
+    if args.arch not in architectures:
+        sys.exit(f"release-manifest: unknown architecture {args.arch}")
+    arch = architectures[args.arch]
+
+    directory = Path(args.directory)
+    expected = [
+        UKI.format(version=args.version, arch=args.arch),
+        ROOT.format(version=args.version, gpt_root=arch["sysupdate_root"]),
+    ]
+
+    missing = [name for name in expected if not (directory / name).exists()]
+    if missing:
+        sys.exit(
+            "release-manifest: these artifacts are not in "
+            f"{directory}:\n  " + "\n  ".join(missing)
+        )
+
+    manifest = directory / "SHA256SUMS"
+
+    if args.check:
+        if not manifest.exists():
+            sys.exit(f"release-manifest: no {manifest}")
+        problems = []
+        for line in manifest.read_text().splitlines():
+            if not line.strip():
+                continue
+            recorded, name = line.split(maxsplit=1)
+            name = name.lstrip("*").strip()
+            target = directory / name
+            if not target.exists():
+                problems.append(f"{name}: listed but absent")
+            elif sha256(target) != recorded:
+                problems.append(f"{name}: digest does not match")
+        if problems:
+            print("release-manifest: FAILED", file=sys.stderr)
+            for problem in problems:
+                print(f"  {problem}", file=sys.stderr)
+            return 1
+        print(f"release-manifest: {manifest} verifies")
+        return 0
+
+    # Two spaces and no `*`: the format sysupdate parses is the coreutils
+    # sha256sum text format, and the binary-mode asterisk is not part of it.
+    lines = [f"{sha256(directory / name)}  {name}" for name in expected]
+    manifest.write_text("\n".join(lines) + "\n")
+
+    print(f"release-manifest: {manifest}")
+    for line in lines:
+        print(f"  {line}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

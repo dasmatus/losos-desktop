@@ -140,13 +140,6 @@ def stage_support(recipe_out, member_dirs, subs):
                 script.chmod(0o755)
             for script in dest.rglob("*.py"):
                 script.write_text(substitute(script.read_text(), subs))
-            # Anything ending .in is a template -- native.ini.in is the reason
-            # this exists: meson's [binaries] section has to name the host
-            # toolchain and the sysroot by absolute path (C3).
-            for template in sorted(dest.rglob("*.in")):
-                rendered = substitute(template.read_text(), subs)
-                template.with_suffix("").write_text(rendered)
-                template.unlink()
 
         manifest = source / "include"
         if manifest.exists():
@@ -165,6 +158,19 @@ def stage_support(recipe_out, member_dirs, subs):
                     shutil.copytree(src, dest, dirs_exist_ok=True)
                 else:
                     shutil.copy2(src, dest)
+
+    # Render every template in the staged tree, AFTER includes have been
+    # copied. Doing it before would leave an included overlay's .in files
+    # unsubstituted, and an unsubstituted @ARCH_GPT_ROOT@ in a repart.d file
+    # is a partition type systemd will not match -- an image that builds and
+    # does not boot.
+    staged = recipe_out / "files"
+    if staged.is_dir():
+        for template in sorted(staged.rglob("*.in")):
+            template.with_suffix("").write_text(
+                substitute(template.read_text(), subs)
+            )
+            template.unlink()
 
 
 def render_member(path, subs):
@@ -198,6 +204,10 @@ def main():
     parser.add_argument("--out", default=str(REPO / "out"))
     parser.add_argument("--allow-unresolved", action="store_true",
                         help="generate even while sources.lock has TODO hashes")
+    parser.add_argument("--arch", default="x86_64",
+                        help="target architecture from manifest/architectures.yaml")
+    parser.add_argument("--channel", default="stable", choices=["stable", "nightly"],
+                        help="which sysupdate channel the overlay points at")
     parser.add_argument("--mirror", metavar="URL",
                         help="fetch sources from a local mirror instead of "
                              "upstream, keeping the same SHA-256 pins")
@@ -228,10 +238,31 @@ def main():
         )
         return 1
 
+    # The architecture. Everything that differs between targets lives in
+    # manifest/architectures.yaml, so no recipe spells a kernel image path or
+    # an EFI stub name -- each of which builds cleanly at its x86 value and
+    # then fails to boot on the other architecture.
+    architectures = yaml.safe_load(
+        (REPO / "manifest" / "architectures.yaml").read_text()
+    )
+    if args.arch not in architectures:
+        raise SystemExit(
+            f"configure: unknown architecture {args.arch!r}; "
+            f"known: {', '.join(sorted(architectures))}"
+        )
+    arch = architectures[args.arch]
+    for key, value in arch.items():
+        subs[f"@ARCH_{key.upper()}@"] = str(value)
+    subs["@ARCH@"] = args.arch
+    subs["@CHANNEL@"] = args.channel
+
     # The toolchain: one manifest, every flag in the tree. A recipe that
     # spelled its own -O2 would be outside the CFI scheme with nothing saying
     # so, which is what tools/gates/toolchain-report.py exists to catch.
     toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
+    # The triple is the architecture's, not the toolchain manifest's: writing
+    # it in both places is how they come to disagree.
+    toolchain.target["triple"] = arch["triple"]
     subs.update(toolchain.placeholders(tool_path))
 
     subs["@SRCDIR@"] = str(REPO)
@@ -299,6 +330,23 @@ def main():
         (recipe_out / "ldflags.rsp").write_text(
             "\n".join(toolchain.ldflags()) + "\n"
         )
+
+        # A separate response file per exempt package. manifest/toolchain.yaml
+        # lists what each drops and why -- musl cannot take --sysroot (it is
+        # creating it), -D_FORTIFY_SOURCE (circular against its own __*_chk),
+        # or CFI (its loader calls functions before any CFI runtime exists).
+        #
+        # Emitted as its own file rather than by editing the shared one so a
+        # package has to NAME its exemption to get it, and a reader of the
+        # recipe sees @CFLAGS_RSP_MUSL@ and goes looking for why.
+        for package in toolchain.exceptions:
+            token = package.upper().replace("-", "_")
+            cflags = recipe_out / f"cflags-{package}.rsp"
+            ldflags = recipe_out / f"ldflags-{package}.rsp"
+            cflags.write_text("\n".join(toolchain.cflags(package)) + "\n")
+            ldflags.write_text("\n".join(toolchain.ldflags(package)) + "\n")
+            local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
+            local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
 
         stage_support(recipe_out, member_dirs, local)
 

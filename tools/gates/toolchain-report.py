@@ -191,6 +191,16 @@ def main():
     )
     print(f"  schemes      {', '.join(tc.cfi.get('schemes') or []) or 'none'}")
 
+    # Printed every run, because the exceptions ARE the honest part of a CFI
+    # claim. A scheme applied to a distribution always has them; the difference
+    # between a real claim and a marketing one is whether they are counted.
+    if tc.exceptions:
+        print(f"  exceptions   {len(tc.exceptions)} package(s) outside the full set:")
+        for name, entry in tc.exceptions.items():
+            print(f"    {name:12} drops {', '.join(entry.get('drops') or [])}")
+    else:
+        print("  exceptions   none")
+
     ok = True
     with tempfile.TemporaryDirectory(prefix="losos-toolchain-") as tmp:
         work = Path(tmp)
