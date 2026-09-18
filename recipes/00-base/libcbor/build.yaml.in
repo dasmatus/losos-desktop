@@ -1,0 +1,46 @@
+# libcbor 0.11.0
+#
+# Under libfido2.
+name: libcbor
+version:
+- '0'
+- '11'
+- '0'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBCBOR@: '@SHA256_LIBCBOR@'
+  run:
+  - mkdir -p /build/src/libcbor /build/b/libcbor
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBCBOR@ --no-same-owner -C /build/src/libcbor --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cmake --build /build/b/libcbor -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - cmake --install /build/b/libcbor
+  - cmake --install /build/b/libcbor --prefix /build/sysroot/usr
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libcbor.so

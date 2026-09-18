@@ -1,0 +1,7 @@
+# Repo-relative paths copied into this recipe's generated directory.
+#
+# The jail mounts a recipe's own directory and nothing above it (C7), so
+# overlay/ cannot be reached by path from a build step -- it has to be copied
+# in. Mounting the repository root instead would hand every build step the
+# whole tree, which is exactly what pm's own examples avoid.
+overlay

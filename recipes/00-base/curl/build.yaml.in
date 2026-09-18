@@ -1,0 +1,51 @@
+# curl 8.10.1
+#
+# systemd-importd and systemd-sysupdate fetch over HTTP with it.
+name: curl
+version:
+- '8'
+- '10'
+- '1'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_CURL@: '@SHA256_CURL@'
+  run:
+  - mkdir -p /build/src/curl /build/b/curl
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_CURL@ --no-same-owner -C /build/src/curl --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the sysroot is reached without `env`.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/curl /build/src/curl/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --disable-static --with-openssl --without-libpsl
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/curl -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/curl install DESTDIR=/dest
+  - make -C /build/b/curl install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libcurl.so

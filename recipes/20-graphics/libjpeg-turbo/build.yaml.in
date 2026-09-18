@@ -1,0 +1,46 @@
+# libjpeg-turbo 3.0.4
+#
+# Under gdk-pixbuf.
+name: libjpeg-turbo
+version:
+- '3'
+- '0'
+- '4'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBJPEG_TURBO@: '@SHA256_LIBJPEG_TURBO@'
+  run:
+  - mkdir -p /build/src/libjpeg-turbo /build/b/libjpeg-turbo
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBJPEG_TURBO@ --no-same-owner -C /build/src/libjpeg-turbo --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - cmake -S /build/src/libjpeg-turbo -B /build/b/libjpeg-turbo -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=Release -DENABLE_STATIC=OFF -DWITH_JPEG8=ON
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cmake --build /build/b/libjpeg-turbo -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - cmake --install /build/b/libjpeg-turbo
+  - cmake --install /build/b/libjpeg-turbo --prefix /build/sysroot/usr
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libjpeg.so

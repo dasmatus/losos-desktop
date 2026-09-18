@@ -63,13 +63,17 @@ cmd_lint() {
   python3 "$repo/tools/gates/url-canonical.py"
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
+  python3 "$repo/tools/gates/test-image.py"
   "$repo/tools/gates/explain-all"
 }
 
 cmd_check() {
   have_pm
   echo "== configure"
-  cmd_configure "$@"
+  # The gate runs with unresolved hashes tolerated: it lints the shape of the
+  # tree, and an unpinned source is a fetch problem, not a recipe problem.
+  # `./do build` still refuses to start with any TODO left.
+  cmd_configure --allow-unresolved "$@"
   echo "== sign"
   "$repo/tools/sign-all" >/dev/null
   echo "== digest agreement with pm"

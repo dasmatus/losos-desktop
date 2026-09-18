@@ -1,0 +1,51 @@
+# libtasn1 4.19.0
+#
+# Under gnutls and p11-kit.
+name: libtasn1
+version:
+- '4'
+- '19'
+- '0'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBTASN1@: '@SHA256_LIBTASN1@'
+  run:
+  - mkdir -p /build/src/libtasn1 /build/b/libtasn1
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBTASN1@ --no-same-owner -C /build/src/libtasn1 --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the sysroot is reached without `env`.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libtasn1 /build/src/libtasn1/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --disable-static --disable-doc
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/libtasn1 -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/libtasn1 install DESTDIR=/dest
+  - make -C /build/b/libtasn1 install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libtasn1.so

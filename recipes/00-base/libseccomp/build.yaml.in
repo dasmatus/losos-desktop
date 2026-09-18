@@ -1,0 +1,51 @@
+# libseccomp 2.5.5
+#
+# Syscall filtering: systemd -Dseccomp=enabled, which is what SystemCallFilter= in every shipped unit depends on.
+name: libseccomp
+version:
+- '2'
+- '5'
+- '5'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBSECCOMP@: '@SHA256_LIBSECCOMP@'
+  run:
+  - mkdir -p /build/src/libseccomp /build/b/libseccomp
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBSECCOMP@ --no-same-owner -C /build/src/libseccomp --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the sysroot is reached without `env`.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libseccomp /build/src/libseccomp/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --disable-static
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/libseccomp -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/libseccomp install DESTDIR=/dest
+  - make -C /build/b/libseccomp install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libseccomp.so

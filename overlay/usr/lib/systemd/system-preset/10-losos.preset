@@ -1,0 +1,45 @@
+# What is enabled on a system with an empty /etc.
+#
+# systemd-repart writes a blank root filesystem, so nothing is enabled until
+# `systemctl preset-all` runs on first boot. This file is therefore the entire
+# statement of what this OS runs -- and it is where "as much systemd as
+# possible" stops being a build-time claim and becomes a running one.
+
+# The graphical session.
+enable gdm.service
+
+# Identity and accounts. homed and userdbd are how users exist at all here:
+# there is no useradd in the image.
+enable systemd-homed.service
+enable systemd-userdbd.service
+
+# Network.
+enable systemd-networkd.service
+enable systemd-networkd-wait-online.service
+enable systemd-resolved.service
+enable systemd-timesyncd.service
+
+# Resource control and observability.
+enable systemd-oomd.service
+enable systemd-journald.service
+enable systemd-pstore.service
+
+# Containers and portable services, available but not started until asked.
+enable systemd-machined.service
+enable systemd-portabled.service
+
+# Boot bookkeeping: bless-boot marks a boot good so an A/B update can be
+# rolled back automatically if it is not.
+enable systemd-boot-update.service
+enable systemd-bless-boot.service
+enable systemd-boot-check-no-failures.service
+
+# System extensions and configuration extensions, applied at boot if present.
+enable systemd-sysext.service
+enable systemd-confext.service
+
+# A/B updates.
+enable systemd-sysupdate.timer
+
+# Everything not named here stays disabled.
+disable *

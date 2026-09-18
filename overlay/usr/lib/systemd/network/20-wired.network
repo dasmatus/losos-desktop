@@ -1,0 +1,20 @@
+# Wired networking, handled by systemd-networkd rather than NetworkManager.
+#
+# GNOME's network panel talks to NetworkManager and will therefore be inert;
+# that trade is stated in docs/limits.md. What this buys is one network stack
+# that is already present, already a systemd unit, and already configured by
+# the same .d mechanism as everything else.
+[Match]
+Kind=!*
+Type=ether
+
+[Network]
+DHCP=yes
+# Hand resolution to systemd-resolved, which is what makes DNS-over-TLS and
+# mDNS work without another daemon.
+DNSOverTLS=opportunistic
+MulticastDNS=yes
+LLMNR=yes
+
+[DHCPv4]
+UseDomains=yes

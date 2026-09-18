@@ -1,0 +1,50 @@
+# pcre2 10.44
+#
+# glib's regex engine, and systemd's -Dpcre2=enabled for journal matching.
+name: pcre2
+version:
+- '10'
+- '44'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_PCRE2@: '@SHA256_PCRE2@'
+  run:
+  - mkdir -p /build/src/pcre2 /build/b/pcre2
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_PCRE2@ --no-same-owner -C /build/src/pcre2 --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the sysroot is reached without `env`.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/pcre2 /build/src/pcre2/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --enable-pcre2-16 --enable-pcre2-32 --disable-static
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/pcre2 -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/pcre2 install DESTDIR=/dest
+  - make -C /build/b/pcre2 install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libpcre2-8.so
