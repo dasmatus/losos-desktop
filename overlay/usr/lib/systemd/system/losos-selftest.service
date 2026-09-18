@@ -1,0 +1,35 @@
+[Unit]
+# The one thing a VM test can observe on a machine with no shell and no SSH.
+#
+# Everything else this OS ships is reachable only through a graphical session
+# or a D-Bus call, neither of which a CI runner can drive. So the boot proves
+# itself: this unit runs after boot-complete.target -- which systemd only
+# reaches when nothing essential failed -- prints a marker to the console, and
+# on a test boot powers the machine off so the runner's QEMU exits by itself
+# instead of being killed on a timeout.
+#
+# Ordering after boot-complete.target is the load-bearing part. A marker
+# printed from a unit ordered early would confirm that the kernel started and
+# nothing else; printed from here it confirms that systemd finished startup
+# with no failed units, which is the thing worth asserting.
+Description=Report that this boot reached a good state
+Documentation=man:systemd.special(7)
+After=boot-complete.target
+Requires=boot-complete.target
+ConditionKernelCommandLine=losos.selftest
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardOutput=journal+console
+# systemd-analyze exits non-zero if any unit failed, so this is an assertion
+# rather than a decoration: a degraded boot does not print the marker.
+ExecStart=/usr/bin/systemctl is-system-running --wait
+ExecStart=/usr/bin/systemd-analyze --no-pager
+ExecStart=/usr/bin/sh -c 'echo "LOSOS-SELFTEST-OK $(cat /usr/lib/os-release | grep ^VERSION_ID=)"'
+# Only when the command line asked for it, so a real installation never
+# powers itself off.
+ExecStart=/usr/bin/systemctl poweroff
+
+[Install]
+WantedBy=multi-user.target

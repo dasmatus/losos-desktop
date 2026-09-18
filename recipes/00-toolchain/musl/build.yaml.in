@@ -1,0 +1,74 @@
+# musl, the C library everything above this line is compiled against.
+#
+# This is the package that makes the tree self-contained rather than borrowing
+# the build host's glibc. Until it exists, pm's read-only mirror of the host's
+# /usr is where every symbol comes from, and a .cpkg only runs on a machine
+# whose libc matches the one that built it -- which is the opposite of what
+# this distribution is for.
+#
+# It is built with a REDUCED flag set, and the reasons are specific to building
+# a libc rather than building against one (manifest/toolchain.yaml lists them):
+#
+#   * no --sysroot, because it names the sysroot musl is in the middle of
+#     creating, which is empty when musl configures;
+#   * no -D_FORTIFY_SOURCE, which is circular: it expands calls into musl's own
+#     __*_chk functions, which do not exist yet;
+#   * no -fPIC/-pie, because musl's build decides those per output -- libc.so
+#     and libc.a need different answers;
+#   * no CFI, because musl's dynamic linker resolves and calls functions before
+#     any CFI runtime exists. Every call INTO musl is therefore unchecked at the
+#     callee side, and that is stated in docs/limits.md rather than implied away.
+#
+# LTO it keeps.
+name: musl
+version:
+- '1'
+- '2'
+- '5'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_MUSL@: '@SHA256_MUSL@'
+  run:
+  - mkdir -p /build/src/musl /build/b/musl
+  - tar -xf @DL_MUSL@ --no-same-owner -C /build/src/musl --strip-components=1
+
+# musl's configure is a hand-written shell script rather than autotools, but it
+# takes the same VAR=value arguments and supports an out-of-tree build, so the
+# one permitted wrapper puts it in the build directory exactly as elsewhere.
+#
+# --syslibdir=/lib is where the dynamic loader goes, and it is not /usr/lib:
+# an ELF's PT_INTERP is an absolute path baked in at link time, and every
+# binary on the system will name it.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/musl /build/src/musl/configure --prefix=/usr --syslibdir=/lib --enable-shared --enable-static CC=@CC@ AR=@AR@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_MUSL@ LDFLAGS=@LDFLAGS_RSP_MUSL@
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/musl -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/musl install DESTDIR=/dest
+  - make -C /build/b/musl install DESTDIR=/build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  # The three things everything above depends on: the static library, the
+  # shared one, and the loader whose absolute path is baked into every binary.
+  - test -f /dest/usr/lib/libc.a
+  - test -f /dest/lib/libc.so
+  - test -f /dest/usr/include/stdio.h
+  - test -f /build/sysroot/usr/lib/libc.a

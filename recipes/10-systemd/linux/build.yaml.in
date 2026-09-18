@@ -8,6 +8,11 @@
 # The config is a defconfig plus files/linux/losos.config merged with the
 # kernel's own merge_config.sh -- never a hand-maintained .config, which goes
 # stale silently on every version bump.
+#
+# `all` rather than `bzImage`: only x86 produces a bzImage. arm64's bootable
+# output is an uncompressed Image with the EFI stub built in, at a different
+# path entirely, so both the target and the path come from
+# manifest/architectures.yaml.
 name: linux
 version:
 - '6'
@@ -28,7 +33,7 @@ steps:
   name: config
   dl_urls: null
   run:
-  - make -C /build/src/linux O=/build/b/linux defconfig
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ @ARCH_KERNEL_DEFCONFIG@
   # merge_config.sh is a shell script in the kernel tree, and the wrapper puts
   # it in the build directory because it writes .config relative to $PWD.
   #
@@ -39,7 +44,7 @@ steps:
   # unclassified program past `pm explain`. tools/gates/fingerprint-lint.py
   # catches exactly that, and caught exactly this.
   - /bin/sh @RECIPE@/in-dir.sh /build/b/linux /bin/sh /build/src/linux/scripts/kconfig/merge_config.sh -m -O /build/b/linux /build/b/linux/.config @RECIPE@/files/linux/losos.config
-  - make -C /build/src/linux O=/build/b/linux olddefconfig
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ olddefconfig
 
 - stage: Build
   name: compile
@@ -47,7 +52,7 @@ steps:
   run:
   # LEX/YACC are named explicitly: flex comes from the sysroot and cannot be
   # found on the jail's fixed PATH.
-  - make -C /build/src/linux O=/build/b/linux LEX=/build/sysroot/usr/bin/flex YACC=/usr/bin/bison -j @JOBS@ bzImage modules
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LEX=/build/sysroot/usr/bin/flex YACC=/usr/bin/bison -j @JOBS@ all modules
 
 - stage: Build
   name: bpftool
@@ -61,12 +66,12 @@ steps:
   name: install
   dl_urls: null
   run:
-  - make -C /build/src/linux O=/build/b/linux INSTALL_MOD_PATH=/dest/usr modules_install
-  - make -C /build/src/linux O=/build/b/linux INSTALL_MOD_PATH=/build/sysroot/usr modules_install
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ INSTALL_MOD_PATH=/dest/usr modules_install
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ INSTALL_MOD_PATH=/build/sysroot/usr modules_install
   # The UKI needs the kernel image at a stable path; @VERSION_LINUX@ is the
   # only place the version is written, and it comes from sources.lock.
-  - install -Dm644 /build/b/linux/arch/x86/boot/bzImage /dest/usr/lib/modules/@VERSION_LINUX@/vmlinuz
-  - install -Dm644 /build/b/linux/arch/x86/boot/bzImage /build/sysroot/usr/lib/modules/@VERSION_LINUX@/vmlinuz
+  - install -Dm644 /build/b/linux/@ARCH_KERNEL_IMAGE@ /dest/usr/lib/modules/@VERSION_LINUX@/vmlinuz
+  - install -Dm644 /build/b/linux/@ARCH_KERNEL_IMAGE@ /build/sysroot/usr/lib/modules/@VERSION_LINUX@/vmlinuz
 
 - stage: Test
   name: staged
