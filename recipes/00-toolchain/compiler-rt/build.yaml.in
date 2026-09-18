@@ -1,0 +1,63 @@
+# compiler-rt, built for the musl target.
+#
+# This is what makes the CFI claim true rather than aspirational. clang's CFI
+# emits calls into a runtime -- __cfi_slowpath, and the diagnostic handlers
+# that turn a violation into a named report rather than SIGILL -- and that
+# runtime ships as libclang_rt.cfi*.a, compiled for a specific target triple.
+# The host's clang package carries one built for glibc. Nothing links it into
+# an x86_64-linux-musl binary, so without this recipe every CFI-enabled link
+# in the tree fails on undefined runtime symbols, and the obvious "fix" is to
+# drop -fsanitize=cfi and never notice what was lost.
+#
+# Version-locked to the host clang deliberately: compiler-rt and the compiler
+# that emits calls into it are one implementation split across two tarballs,
+# and a mismatched pair fails at link time on a good day.
+name: compiler-rt
+version:
+- '18'
+- '1'
+- '8'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_COMPILER_RT@: '@SHA256_COMPILER_RT@'
+  run:
+  - mkdir -p /build/src/compiler-rt /build/b/compiler-rt
+  - tar -xf @DL_COMPILER_RT@ --no-same-owner -C /build/src/compiler-rt --strip-components=1
+
+# COMPILER_RT_BUILD_* is mostly off: this is not a sanitizer distribution, it
+# is the handful of objects CFI and the stack protector need. Building the
+# whole of asan/tsan/msan for a target we do not test them on would multiply
+# the build time and ship libraries nothing links.
+#
+# COMPILER_RT_STANDALONE_BUILD is what lets this be built without the rest of
+# the LLVM tree present, which is the only reason a single tarball is enough.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF -DLLVM_CONFIG_PATH=
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cmake --build /build/b/compiler-rt -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - cmake --install /build/b/compiler-rt
+  - cmake --install /build/b/compiler-rt --prefix /build/sysroot/usr
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  # If this directory is empty the CFI flags in every later layer are a lie
+  # that only shows up as an undefined symbol at the first link.
+  - test -d /dest/usr/lib/@ARCH_TRIPLE@

@@ -6,19 +6,25 @@
 # entry without anything having to detect the failure. That is the whole
 # rollback story, and it needs no update agent and no A/B partition pair --
 # only two files in the ESP.
+#
+# The source is a GitHub release whose tag is the channel name, which CI moves
+# rather than creates anew, so this URL is stable across releases.
+# systemd-sysupdate discovers what versions exist by fetching SHA256SUMS from
+# this directory, which is why tools/release-manifest writes one and why CI
+# uploads it alongside the artifacts.
 [Transfer]
 ProtectVersion=%A
 
 [Source]
 Type=url-file
-Path=https://example.invalid/losos-desktop/
-MatchPattern=losos-desktop_@v.efi
+Path=https://github.com/dichhead/losos-desktop/releases/download/@CHANNEL@/
+MatchPattern=losos-desktop_@v_@ARCH@.efi
 
 [Target]
 Type=regular-file
 Path=/EFI/Linux
 PathRelativeTo=esp
-MatchPattern=losos-desktop_@v.efi
+MatchPattern=losos-desktop_@v_@ARCH@.efi
 Mode=0444
 TriesLeft=3
 TriesDone=0

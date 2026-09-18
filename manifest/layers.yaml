@@ -11,7 +11,21 @@
 # links against the sysroot the earlier ones populated.
 
 
-- name: losos-00-meson
+- name: losos-00-toolchain
+  dir: 00-toolchain
+  # The C library, and the two things that have to exist around it.
+  #
+  # First, and before meson, because everything compiled above this line is
+  # compiled against musl rather than against the build host's glibc -- which
+  # is what makes a package runnable on a machine other than the one that
+  # built it. Order within the layer is forced: musl needs the kernel's
+  # userspace headers to compile, and compiler-rt needs musl to link against.
+  members:
+    - linux-headers
+    - musl
+    - compiler-rt
+
+- name: losos-01-meson
   dir: 00-meson
   # meson alone, and at the very bottom, because every layer above configures
   # with it. It is not installed on any build host we target and cannot be:
