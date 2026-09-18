@@ -73,6 +73,9 @@ cmd_lint() {
   # A patch series nobody applies is tracked, reviewed and inert: the build
   # goes green and the feature is simply absent.
   python3 "$repo/tools/gates/patches.py"
+  # A recipe whose `version:` no longer matches the source it downloads builds
+  # the new tarball under the old name, and nothing else notices.
+  python3 "$repo/tools/gates/versions.py"
   "$repo/tools/gates/explain-all"
 }
 

@@ -9,490 +9,496 @@
 # The URL is hashed by pm as rust-url's NORMALISED form (C9), so every URL here
 # must already be in that form: https, lowercase host, no default port, no
 # dot-segments, no query, no fragment. tools/gates/url-canonical.py enforces it.
+#
+# Every `version:` is QUOTED, and must stay quoted. Unquoted, YAML reads 2.70
+# as the float 2.7 and 1.50 as 1.5, so @VERSION_LIBCAP@ rendered "2.7" -- a
+# directory name that does not exist, in a recipe that looked correct.
+# tools/gates/versions.py compares these against each recipe's own `version:`
+# list and would report the truncation as a mismatch.
 
 MESON:
   url: https://files.pythonhosted.org/packages/48/91/d58a3eb45ed54bf32b96806dd2f4efd407f7a9675953e15e8ef257840a0d/meson-1.12.0.tar.gz
-  version: 1.12.0
+  version: '1.12.0'
   sha256: 88afe0c20e52030218924ac37d0c81c59b4b5f3ae3752c8c6d7470c7d365886c
 
 ZLIB:
   url: https://zlib.net/zlib-1.3.1.tar.xz
-  version: 1.3.1
+  version: '1.3.1'
   sha256: TODO
 
 XZ:
   url: https://github.com/tukaani-project/xz/releases/download/v5.6.3/xz-5.6.3.tar.xz
-  version: 5.6.3
+  version: '5.6.3'
   sha256: TODO
 
 ZSTD:
   url: https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz
-  version: 1.5.6
+  version: '1.5.6'
   sha256: TODO
 
 LZ4:
   url: https://github.com/lz4/lz4/releases/download/v1.10.0/lz4-1.10.0.tar.gz
-  version: 1.10.0
+  version: '1.10.0'
   sha256: TODO
 
 BZIP2:
   url: https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
-  version: 1.0.8
+  version: '1.0.8'
   sha256: TODO
 
 LIBFFI:
   url: https://github.com/libffi/libffi/releases/download/v3.4.6/libffi-3.4.6.tar.gz
-  version: 3.4.6
+  version: '3.4.6'
   sha256: TODO
 
 PCRE2:
   url: https://github.com/PCRE2Project/pcre2/releases/download/pcre2-10.44/pcre2-10.44.tar.bz2
-  version: 10.44
+  version: '10.44'
   sha256: TODO
 
 LIBCAP:
   url: https://www.kernel.org/pub/linux/libs/security/linux-privs/libcap2/libcap-2.70.tar.xz
-  version: 2.70
+  version: '2.70'
   sha256: TODO
 
 LIBXCRYPT:
   url: https://github.com/besser82/libxcrypt/releases/download/v4.4.36/libxcrypt-4.4.36.tar.xz
-  version: 4.4.36
+  version: '4.4.36'
   sha256: TODO
 
 UTIL_LINUX:
   url: https://www.kernel.org/pub/linux/utils/util-linux/v2.40/util-linux-2.40.2.tar.xz
-  version: 2.40.2
+  version: '2.40.2'
   sha256: TODO
 
 KMOD:
   url: https://www.kernel.org/pub/linux/utils/kernel/kmod/kmod-33.tar.xz
-  version: 33
+  version: '33'
   sha256: TODO
 
 EXPAT:
   url: https://github.com/libexpat/libexpat/releases/download/R_2_6_3/expat-2.6.3.tar.xz
-  version: 2.6.3
+  version: '2.6.3'
   sha256: TODO
 
 DBUS:
   url: https://dbus.freedesktop.org/releases/dbus/dbus-1.14.10.tar.xz
-  version: 1.14.10
+  version: '1.14.10'
   sha256: TODO
 
 ATTR:
   url: https://download.savannah.nongnu.org/releases/attr/attr-2.5.2.tar.xz
-  version: 2.5.2
+  version: '2.5.2'
   sha256: TODO
 
 ACL:
   url: https://download.savannah.nongnu.org/releases/acl/acl-2.3.2.tar.xz
-  version: 2.3.2
+  version: '2.3.2'
   sha256: TODO
 
 LIBSECCOMP:
   url: https://github.com/seccomp/libseccomp/releases/download/v2.5.5/libseccomp-2.5.5.tar.gz
-  version: 2.5.5
+  version: '2.5.5'
   sha256: TODO
 
 LIBUNISTRING:
   url: https://ftp.gnu.org/gnu/libunistring/libunistring-1.2.tar.xz
-  version: 1.2
+  version: '1.2'
   sha256: TODO
 
 LIBIDN2:
   url: https://ftp.gnu.org/gnu/libidn/libidn2-2.3.7.tar.gz
-  version: 2.3.7
+  version: '2.3.7'
   sha256: TODO
 
 CURL:
   url: https://curl.se/download/curl-8.10.1.tar.xz
-  version: 8.10.1
+  version: '8.10.1'
   sha256: TODO
 
 LIBMICROHTTPD:
   url: https://ftp.gnu.org/gnu/libmicrohttpd/libmicrohttpd-1.0.1.tar.gz
-  version: 1.0.1
+  version: '1.0.1'
   sha256: TODO
 
 LIBQRENCODE:
   url: https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.gz
-  version: 4.1.1
+  version: '4.1.1'
   sha256: TODO
 
 LIBGPG_ERROR:
   url: https://gnupg.org/ftp/gcrypt/libgpg-error/libgpg-error-1.50.tar.bz2
-  version: 1.50
+  version: '1.50'
   sha256: TODO
 
 LIBGCRYPT:
   url: https://gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-1.11.0.tar.bz2
-  version: 1.11.0
+  version: '1.11.0'
   sha256: TODO
 
 JSON_C:
   url: https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz
-  version: 0.18
+  version: '0.18'
   sha256: TODO
 
 POPT:
   url: https://ftp.osuosl.org/pub/rpm/popt/releases/popt-1.x/popt-1.19.tar.gz
-  version: 1.19
+  version: '1.19'
   sha256: TODO
 
 CRYPTSETUP:
   url: https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-2.7.5.tar.xz
-  version: 2.7.5
+  version: '2.7.5'
   sha256: TODO
 
 TPM2_TSS:
   url: https://github.com/tpm2-software/tpm2-tss/releases/download/4.1.3/tpm2-tss-4.1.3.tar.gz
-  version: 4.1.3
+  version: '4.1.3'
   sha256: TODO
 
 LIBCBOR:
   url: https://github.com/PJK/libcbor/archive/refs/tags/v0.11.0.tar.gz
-  version: 0.11.0
+  version: '0.11.0'
   sha256: TODO
 
 LIBFIDO2:
   url: https://developers.yubico.com/libfido2/Releases/libfido2-1.15.0.tar.gz
-  version: 1.15.0
+  version: '1.15.0'
   sha256: TODO
 
 LINUX_PAM:
   url: https://github.com/linux-pam/linux-pam/releases/download/v1.6.1/Linux-PAM-1.6.1.tar.xz
-  version: 1.6.1
+  version: '1.6.1'
   sha256: TODO
 
 OPENSSL:
   url: https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz
-  version: 3.3.2
+  version: '3.3.2'
   sha256: TODO
 
 NETTLE:
   url: https://ftp.gnu.org/gnu/nettle/nettle-3.10.tar.gz
-  version: 3.10
+  version: '3.10'
   sha256: TODO
 
 LIBTASN1:
   url: https://ftp.gnu.org/gnu/libtasn1/libtasn1-4.19.0.tar.gz
-  version: 4.19.0
+  version: '4.19.0'
   sha256: TODO
 
 GNUTLS:
   url: https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.7.tar.xz
-  version: 3.8.7
+  version: '3.8.7'
   sha256: TODO
 
 LIBARCHIVE:
   url: https://github.com/libarchive/libarchive/releases/download/v3.7.4/libarchive-3.7.4.tar.xz
-  version: 3.7.4
+  version: '3.7.4'
   sha256: TODO
 
 ELFUTILS:
   url: https://sourceware.org/elfutils/ftp/0.191/elfutils-0.191.tar.bz2
-  version: 0.191
+  version: '0.191'
   sha256: TODO
 
 LIBBPF:
   url: https://github.com/libbpf/libbpf/archive/refs/tags/v1.4.6.tar.gz
-  version: 1.4.6
+  version: '1.4.6'
   sha256: TODO
 
 LIBPWQUALITY:
   url: https://github.com/libpwquality/libpwquality/releases/download/libpwquality-1.4.5/libpwquality-1.4.5.tar.bz2
-  version: 1.4.5
+  version: '1.4.5'
   sha256: TODO
 
 P11_KIT:
   url: https://github.com/p11-glue/p11-kit/releases/download/0.25.5/p11-kit-0.25.5.tar.xz
-  version: 0.25.5
+  version: '0.25.5'
   sha256: TODO
 
 LIBXML2:
   url: https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.4.tar.xz
-  version: 2.13.4
+  version: '2.13.4'
   sha256: TODO
 
 GPERF:
   url: https://ftp.gnu.org/gnu/gperf/gperf-3.1.tar.gz
-  version: 3.1
+  version: '3.1'
   sha256: TODO
 
 FLEX:
   url: https://github.com/westes/flex/releases/download/v2.6.4/flex-2.6.4.tar.gz
-  version: 2.6.4
+  version: '2.6.4'
   sha256: TODO
 
 GETTEXT:
   url: https://ftp.gnu.org/gnu/gettext/gettext-0.22.5.tar.xz
-  version: 0.22.5
+  version: '0.22.5'
   sha256: TODO
 
 LINUX:
-  url: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.1.tar.xz
-  version: 6.12.1
+  url: https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.6.tar.xz
+  version: '7.2.6'
   sha256: TODO
 
 SYSTEMD:
   url: https://github.com/systemd/systemd/archive/refs/tags/v261.tar.gz
-  version: 261
+  version: '261'
   sha256: TODO
 
 WAYLAND:
   url: https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.23.1/downloads/wayland-1.23.1.tar.xz
-  version: 1.23.1
+  version: '1.23.1'
   sha256: TODO
 
 WAYLAND_PROTOCOLS:
   url: https://gitlab.freedesktop.org/wayland/wayland-protocols/-/releases/1.38/downloads/wayland-protocols-1.38.tar.xz
-  version: 1.38
+  version: '1.38'
   sha256: TODO
 
 LIBDRM:
   url: https://dri.freedesktop.org/libdrm/libdrm-2.4.123.tar.xz
-  version: 2.4.123
+  version: '2.4.123'
   sha256: TODO
 
 MESA:
   url: https://archive.mesa3d.org/mesa-24.2.5.tar.xz
-  version: 24.2.5
+  version: '24.2.5'
   sha256: TODO
 
 MTDEV:
   url: https://bitmath.org/code/mtdev/mtdev-1.1.7.tar.bz2
-  version: 1.1.7
+  version: '1.1.7'
   sha256: TODO
 
 LIBEVDEV:
   url: https://www.freedesktop.org/software/libevdev/libevdev-1.13.3.tar.xz
-  version: 1.13.3
+  version: '1.13.3'
   sha256: TODO
 
 LIBINPUT:
   url: https://gitlab.freedesktop.org/libinput/libinput/-/archive/1.26.1/libinput-1.26.1.tar.gz
-  version: 1.26.1
+  version: '1.26.1'
   sha256: TODO
 
 XKEYBOARD_CONFIG:
   url: https://www.x.org/archive/individual/data/xkeyboard-config/xkeyboard-config-2.42.tar.xz
-  version: 2.42
+  version: '2.42'
   sha256: TODO
 
 LIBXKBCOMMON:
   url: https://xkbcommon.org/download/libxkbcommon-1.7.0.tar.xz
-  version: 1.7.0
+  version: '1.7.0'
   sha256: TODO
 
 PIXMAN:
   url: https://www.cairographics.org/releases/pixman-0.43.4.tar.gz
-  version: 0.43.4
+  version: '0.43.4'
   sha256: TODO
 
 FREETYPE:
   url: https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.xz
-  version: 2.13.3
+  version: '2.13.3'
   sha256: TODO
 
 FONTCONFIG:
   url: https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.15.0.tar.xz
-  version: 2.15.0
+  version: '2.15.0'
   sha256: TODO
 
 HARFBUZZ:
   url: https://github.com/harfbuzz/harfbuzz/releases/download/10.0.1/harfbuzz-10.0.1.tar.xz
-  version: 10.0.1
+  version: '10.0.1'
   sha256: TODO
 
 FRIBIDI:
   url: https://github.com/fribidi/fribidi/releases/download/v1.0.15/fribidi-1.0.15.tar.xz
-  version: 1.0.15
+  version: '1.0.15'
   sha256: TODO
 
 CAIRO:
   url: https://www.cairographics.org/releases/cairo-1.18.2.tar.xz
-  version: 1.18.2
+  version: '1.18.2'
   sha256: TODO
 
 LIBPNG:
   url: https://download.sourceforge.net/libpng/libpng-1.6.44.tar.xz
-  version: 1.6.44
+  version: '1.6.44'
   sha256: TODO
 
 LIBJPEG_TURBO:
   url: https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.0.4/libjpeg-turbo-3.0.4.tar.gz
-  version: 3.0.4
+  version: '3.0.4'
   sha256: TODO
 
 GRAPHENE:
   url: https://download.gnome.org/sources/graphene/1.10/graphene-1.10.8.tar.xz
-  version: 1.10.8
+  version: '1.10.8'
   sha256: TODO
 
 LIBEPOXY:
   url: https://github.com/anholt/libepoxy/archive/refs/tags/1.5.10.tar.gz
-  version: 1.5.10
+  version: '1.5.10'
   sha256: TODO
 
 GDK_PIXBUF:
   url: https://download.gnome.org/sources/gdk-pixbuf/2.42/gdk-pixbuf-2.42.12.tar.xz
-  version: 2.42.12
+  version: '2.42.12'
   sha256: TODO
 
 PANGO:
   url: https://download.gnome.org/sources/pango/1.54/pango-1.54.0.tar.xz
-  version: 1.54.0
+  version: '1.54.0'
   sha256: TODO
 
 GLIB:
   url: https://download.gnome.org/sources/glib/2.82/glib-2.82.1.tar.xz
-  version: 2.82.1
+  version: '2.82.1'
   sha256: TODO
 
 GOBJECT_INTROSPECTION:
   url: https://download.gnome.org/sources/gobject-introspection/1.82/gobject-introspection-1.82.0.tar.xz
-  version: 1.82.0
+  version: '1.82.0'
   sha256: TODO
 
 JSON_GLIB:
   url: https://download.gnome.org/sources/json-glib/1.10/json-glib-1.10.0.tar.xz
-  version: 1.10.0
+  version: '1.10.0'
   sha256: TODO
 
 LIBSOUP:
   url: https://download.gnome.org/sources/libsoup/3.6/libsoup-3.6.0.tar.xz
-  version: 3.6.0
+  version: '3.6.0'
   sha256: TODO
 
 ATSPI2_CORE:
   url: https://download.gnome.org/sources/at-spi2-core/2.54/at-spi2-core-2.54.0.tar.xz
-  version: 2.54.0
+  version: '2.54.0'
   sha256: TODO
 
 GTK4:
   url: https://download.gnome.org/sources/gtk/4.16/gtk-4.16.3.tar.xz
-  version: 4.16.3
+  version: '4.16.3'
   sha256: TODO
 
 LIBADWAITA:
   url: https://download.gnome.org/sources/libadwaita/1.6/libadwaita-1.6.1.tar.xz
-  version: 1.6.1
+  version: '1.6.1'
   sha256: TODO
 
 DCONF:
   url: https://download.gnome.org/sources/dconf/0.40/dconf-0.40.0.tar.xz
-  version: 0.40.0
+  version: '0.40.0'
   sha256: TODO
 
 GSETTINGS_DESKTOP_SCHEMAS:
   url: https://download.gnome.org/sources/gsettings-desktop-schemas/47/gsettings-desktop-schemas-47.1.tar.xz
-  version: 47.1
+  version: '47.1'
   sha256: TODO
 
 POLKIT:
   url: https://gitlab.freedesktop.org/polkit/polkit/-/archive/125/polkit-125.tar.gz
-  version: 125
+  version: '125'
   sha256: TODO
 
 ACCOUNTSSERVICE:
   url: https://www.freedesktop.org/software/accountsservice/accountsservice-23.13.9.tar.xz
-  version: 23.13.9
+  version: '23.13.9'
   sha256: TODO
 
 UPOWER:
   url: https://gitlab.freedesktop.org/upower/upower/-/archive/v1.90.6/upower-v1.90.6.tar.gz
-  version: 1.90.6
+  version: '1.90.6'
   sha256: TODO
 
 LIBSECRET:
   url: https://download.gnome.org/sources/libsecret/0.21/libsecret-0.21.4.tar.xz
-  version: 0.21.4
+  version: '0.21.4'
   sha256: TODO
 
 LIBNOTIFY:
   url: https://download.gnome.org/sources/libnotify/0.8/libnotify-0.8.3.tar.xz
-  version: 0.8.3
+  version: '0.8.3'
   sha256: TODO
 
 GCR:
   url: https://download.gnome.org/sources/gcr/4.3/gcr-4.3.0.tar.xz
-  version: 4.3.0
+  version: '4.3.0'
   sha256: TODO
 
 GNOME_KEYRING:
   url: https://download.gnome.org/sources/gnome-keyring/46/gnome-keyring-46.2.tar.xz
-  version: 46.2
+  version: '46.2'
   sha256: TODO
 
 GNOME_DESKTOP:
   url: https://download.gnome.org/sources/gnome-desktop/44/gnome-desktop-44.1.tar.xz
-  version: 44.1
+  version: '44.1'
   sha256: TODO
 
 GJS:
   url: https://download.gnome.org/sources/gjs/1.82/gjs-1.82.1.tar.xz
-  version: 1.82.1
+  version: '1.82.1'
   sha256: TODO
 
 MUTTER:
   url: https://download.gnome.org/sources/mutter/47/mutter-47.1.tar.xz
-  version: 47.1
+  version: '47.1'
   sha256: TODO
 
 GNOME_SHELL:
   url: https://download.gnome.org/sources/gnome-shell/47/gnome-shell-47.1.tar.xz
-  version: 47.1
+  version: '47.1'
   sha256: TODO
 
 GDM:
   url: https://download.gnome.org/sources/gdm/47/gdm-47.0.tar.xz
-  version: 47.0
+  version: '47.0'
   sha256: TODO
 
 GNOME_SESSION:
   url: https://download.gnome.org/sources/gnome-session/47/gnome-session-47.0.1.tar.xz
-  version: 47.0.1
+  version: '47.0.1'
   sha256: TODO
 
 GNOME_SETTINGS_DAEMON:
   url: https://download.gnome.org/sources/gnome-settings-daemon/47/gnome-settings-daemon-47.1.tar.xz
-  version: 47.1
+  version: '47.1'
   sha256: TODO
 
 GNOME_CONTROL_CENTER:
   url: https://download.gnome.org/sources/gnome-control-center/47/gnome-control-center-47.2.tar.xz
-  version: 47.2
+  version: '47.2'
   sha256: TODO
 
 NAUTILUS:
   url: https://download.gnome.org/sources/nautilus/47/nautilus-47.1.tar.xz
-  version: 47.1
+  version: '47.1'
   sha256: TODO
 
 XDG_DESKTOP_PORTAL:
   url: https://github.com/flatpak/xdg-desktop-portal/releases/download/1.18.4/xdg-desktop-portal-1.18.4.tar.xz
-  version: 1.18.4
+  version: '1.18.4'
   sha256: TODO
 
 XDG_DESKTOP_PORTAL_GNOME:
   url: https://download.gnome.org/sources/xdg-desktop-portal-gnome/47/xdg-desktop-portal-gnome-47.1.tar.xz
-  version: 47.1
+  version: '47.1'
   sha256: TODO
 
 MUSL:
   url: https://musl.libc.org/releases/musl-1.2.5.tar.gz
-  version: 1.2.5
+  version: '1.2.5'
   sha256: TODO
 
 COMPILER_RT:
   url: https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/compiler-rt-18.1.8.src.tar.xz
-  version: 18.1.8
+  version: '18.1.8'
   sha256: TODO
 
 NVIDIA_OPEN:
   url: https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/580.95.05.tar.gz
-  version: 580.95.05
+  version: '580.95.05'
   sha256: TODO
 
 # ---- fwupd and its stack -------------------------------------------------
@@ -508,25 +514,25 @@ NVIDIA_OPEN:
 # bulk-controller plugin, which this build disables).
 LIBUSB:
   url: https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
-  version: 1.0.27
+  version: '1.0.27'
   sha256: TODO
 
 LIBXMLB:
   url: https://github.com/hughsie/libxmlb/releases/download/0.3.19/libxmlb-0.3.19.tar.xz
-  version: 0.3.19
+  version: '0.3.19'
   sha256: TODO
 
 LIBJCAT:
   url: https://github.com/hughsie/libjcat/releases/download/0.2.1/libjcat-0.2.1.tar.xz
-  version: 0.2.1
+  version: '0.2.1'
   sha256: TODO
 
 SQLITE:
   url: https://www.sqlite.org/2024/sqlite-autoconf-3470200.tar.gz
-  version: 3.47.2
+  version: '3.47.2'
   sha256: TODO
 
 FWUPD:
   url: https://github.com/fwupd/fwupd/releases/download/2.0.3/fwupd-2.0.3.tar.xz
-  version: 2.0.3
+  version: '2.0.3'
   sha256: TODO
