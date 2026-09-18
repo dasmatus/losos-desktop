@@ -1,0 +1,46 @@
+# meson native file. Generated per layer by tools/configure.
+#
+# Two jobs. [binaries] answers C3: pm canonicalises a step's first word on the
+# HOST, so a program that lives only in the jail can never be one -- but meson
+# execs these itself, from inside the jail, where the paths exist. That is the
+# only way a pm-built gperf or bpftool reaches a build.
+#
+# [built-in options] is where manifest/toolchain.yaml lands. No recipe spells a
+# compiler flag; tools/gates/toolchain-report.py fails the build if one tries.
+[binaries]
+c          = '@CC@'
+cpp        = '@CXX@'
+ar         = '@AR@'
+nm         = '@NM@'
+ranlib     = '@RANLIB@'
+strip      = '@STRIP@'
+objcopy    = '@OBJCOPY@'
+pkg-config = '@PKGCONFIG@'
+python3    = '@PYTHON@'
+# Built into the sysroot by an earlier layer. Absent until then, which is why
+# the systemd recipe asserts they exist before it configures.
+gperf      = '@SYSROOT@/usr/bin/gperf'
+msgfmt     = '@SYSROOT@/usr/bin/msgfmt'
+msgmerge   = '@SYSROOT@/usr/bin/msgmerge'
+xgettext   = '@SYSROOT@/usr/bin/xgettext'
+flex       = '@SYSROOT@/usr/bin/flex'
+bpftool    = '@SYSROOT@/usr/bin/bpftool'
+wayland-scanner = '@SYSROOT@/usr/bin/wayland-scanner'
+glib-compile-resources = '@SYSROOT@/usr/bin/glib-compile-resources'
+g-ir-scanner = '@SYSROOT@/usr/bin/g-ir-scanner'
+
+[built-in options]
+prefix          = '/usr'
+libdir          = 'lib'
+sysconfdir      = '/etc'
+localstatedir   = '/var'
+pkg_config_path = '@SYSROOT@/usr/lib/pkgconfig:@SYSROOT@/usr/share/pkgconfig'
+c_args          = @MESON_C_ARGS@
+cpp_args        = @MESON_C_ARGS@
+c_link_args     = @MESON_LINK_ARGS@
+cpp_link_args   = @MESON_LINK_ARGS@
+# b_lto is deliberately NOT set here. meson's own LTO switch would add its idea
+# of -flto on top of the one already in c_args, and the two disagree about
+# ThinLTO's flags often enough to be worth avoiding.
+b_lto           = false
+b_pie           = true

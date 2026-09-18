@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Scaffold a package recipe from its build system.
 
-Most of a recipe is the same three shapes repeated: unpack, configure, compile,
-install twice, assert. Writing that by hand ninety times invites the kind of
-typo that only surfaces two hours into a build, so it is generated from a
-template and then edited where the package is unusual.
+The skeleton comes from `pm generate`, not from a string in this file. pm owns
+the build-file schema, so asking pm for a blank one means a schema change shows
+up here as a diff in the scaffold rather than as a parse error in ninety
+recipes. It is also the tool dogfooding itself, which is the point of this
+repository.
+
+What `pm generate` writes is deliberately minimal -- name, version, empty
+dependencies, one `fetch` step -- so everything below fills that skeleton in
+for a particular build system. Most of a recipe is the same three shapes
+repeated: unpack, configure, compile, install twice, assert.
 
 The templates encode the decisions in docs/pm-constraints.md so that a new
 recipe starts out correct:
@@ -23,10 +29,51 @@ recipe starts out correct:
 """
 
 import argparse
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+def pm_skeleton():
+    """Ask pm for a blank build file, and return it as text.
+
+    Falls back to nothing if pm is not built: the scaffold below supplies every
+    field anyway, and refusing to scaffold because a binary is missing would be
+    unhelpful. The point of going through pm is that when it IS present, a
+    schema change is visible here.
+    """
+    pm = os.environ.get("PM", str(REPO.parent / "pm" / "target" / "release" / "pm"))
+    if not Path(pm).exists():
+        return None
+    with tempfile.TemporaryDirectory(prefix="losos-skeleton-") as tmp:
+        target = Path(tmp) / "build.yaml"
+        result = subprocess.run(
+            [pm, "generate", str(target), "--force"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            return None
+        return target.read_text()
+
+
+def check_schema(skeleton):
+    """Warn if pm's skeleton no longer has the fields this scaffold fills in."""
+    if skeleton is None:
+        return
+    expected = ("name:", "version:", "dependencies:", "steps:", "stage:", "dl_urls:", "run:")
+    missing = [field for field in expected if field not in skeleton]
+    if missing:
+        print(
+            "new-recipe: WARNING pm generate no longer emits: "
+            + ", ".join(missing)
+            + "\n            the templates in this file may be out of date",
+            file=sys.stderr,
+        )
 
 HEADER = """\
 # {name} {version_note}
@@ -74,12 +121,19 @@ MESON = """
 AUTOTOOLS = """
 # ./configure has no -C and there is no `cd` in a build step (C1), so the one
 # permitted wrapper puts it in the build directory. configure takes VAR=value
-# as positional arguments, which is how the sysroot is reached without `env`.
+# as positional arguments, which is how the toolchain and the sysroot are
+# reached without `env`.
+#
+# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
+# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
+# separate arguments and configure would reject the first it did not know.
+# The response file is one word, and clang expands it. Its contents come from
+# manifest/toolchain.yaml -- LTO and CFI included.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/{name} /build/src/{name}/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib{options}
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/{name} /build/src/{name}/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig{options}
 
 - stage: Build
   name: compile
@@ -103,7 +157,7 @@ CMAKE = """
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/{name} -B /build/b/{name} -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=Release{options}
+  - cmake -S /build/src/{name} -B /build/b/{name} -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@{options}
 
 - stage: Build
   name: compile
@@ -133,6 +187,8 @@ BODIES = {"meson": MESON, "autotools": AUTOTOOLS, "cmake": CMAKE}
 
 def render(name, key, version, buildsys, strip, options, assertions, note):
     version_list = "\n".join(f"- '{part}'" for part in version.split("."))
+    skeleton = pm_skeleton()
+    check_schema(skeleton)
     text = HEADER.format(
         name=name,
         key=key,
