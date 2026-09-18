@@ -6,7 +6,8 @@ A systemd-native GNOME desktop operating system, built from source by
 This repository is a **distribution**: a signed DAG of `pm` recipes that
 compiles systemd with essentially every component upstream can enable, stacks a
 GNOME session on top of it, and assembles a rootfs tarball, a
-systemd-in-initramfs cpio archive and a unified kernel image.
+systemd-in-initramfs cpio archive, a unified kernel image, a bootable disk
+image as QCOW2 and an installer ISO.
 
 It is the desktop counterpart to [`losos`](https://codeberg.org/dasmatus/losos),
 which is a deliberately headless appliance — no desktop, no graphical session,
@@ -23,7 +24,7 @@ wired into a job that the design actually needs:
 | Boot | `systemd-boot`, `systemd-stub` (UKI), `ukify`, `kernel-install`, `bless-boot`, `boot-check-no-failures` |
 | Measured boot | `systemd-pcrlock`, `systemd-measure`, `systemd-pcrextend`, `systemd-cryptenroll` |
 | Installation | `systemd-sysinstall`, started by the installer UKI's command line — it copies the root partition it booted from onto the target |
-| Self-installation | `systemd-repart` partitions and grows the disk on first boot — which is why this repo ships no disk-image tool |
+| Self-installation | `systemd-repart` partitions and grows the disk on first boot — the shipped images carry an ESP and a root partition and nothing else |
 | First boot | `systemd-firstboot`, `systemd-creds`, `systemd-machine-id-setup` |
 | Immutable `/usr` | `systemd-veritysetup` (dm-verity), `systemd-sysext` / `systemd-confext` for layering |
 | Updates | `systemd-sysupdate` A/B, and `fwupd` for firmware |
@@ -101,12 +102,39 @@ Read `docs/limits.md` before trusting anything here. The short version:
   into the dependent at `/dest/deps/`, and nothing unpacks it. The sysroot
   pattern in `tools/lib/sysroot.sh` is this repo's workaround, not a `pm`
   feature.
-- **Nothing here has booted.** No VM, no EFI firmware, no loop devices. The UKI
-  is verified structurally — it is a PE carrying the six sections systemd-stub
-  looks for — and that is the whole claim.
+- **Nothing here has booted.** No VM and no EFI firmware in the environment
+  this was developed in. The UKI is verified structurally — it is a PE carrying
+  the six sections systemd-stub looks for — and the ISO and QCOW2 are verified
+  the same way: every filesystem, partition table and container this repository
+  writes is parsed back by a second implementation in
+  `tools/gates/test-disk.py`, and `e2fsck` agrees the root filesystem is clean
+  where it is installed. No firmware has been asked to boot any of it.
+  `tools/vm-test disk` is the test that would, and it needs a machine with KVM
+  and OVMF.
 - **The GNOME layer is the long tail** and is the least complete part of the
   tree by construction; several control-centre panels will be inert because
   this OS runs `systemd-networkd` rather than NetworkManager.
+
+## Installation media
+
+`./do build` produces, with no tool outside this repository and none on the
+build host:
+
+| Artifact | What it is |
+|---|---|
+| `losos.iso` | the installer. One file that boots from a DVD through El Torito and from a `dd`-written USB stick through its GPT, over the same bytes |
+| `losos.qcow2` | a whole disk that boots to the desktop, for QEMU and libvirt |
+| `losos-root.raw.xz` | the root filesystem as a partition image: what `systemd-sysupdate` writes and what the installer copies block for block |
+| `losos.efi`, `losos-installer.efi` | the two unified kernel images |
+| `losos-rootfs.tar.xz` | the same tree as an archive |
+| `initrd.img` | the initramfs, on its own |
+
+There is no `mkfs`, no `losetup`, no `xorriso` and no `qemu-img` behind any of
+that. None of them is in pm's fingerprint table and the build jail has no
+privilege to use most of them in any case, so the formats are written directly,
+by the writers in `recipes/90-image/losos-image/files/` — the same reason the
+initramfs is written by `mkcpio.py` rather than by `cpio`. See
+[`docs/images.md`](docs/images.md).
 
 ## Licence
 

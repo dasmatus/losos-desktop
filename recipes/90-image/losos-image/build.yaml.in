@@ -1,16 +1,22 @@
-# The top of the chain: the whole OS, as three artifacts.
+# The top of the chain: the whole OS, as a set of artifacts.
 #
 # This is the only recipe that materialises the full dependency closure into
 # DESTDIR, because here the closure IS the product. Everything below it staged
 # into /dest so that this layer could untar it all back out.
 #
-# Three outputs, all achievable inside pm's jail:
+# The outputs, all achievable inside pm's jail:
 #   artifacts/losos-rootfs.tar.xz   the OS tree
 #   artifacts/initrd.img            systemd-as-PID-1 initramfs, newc + xz
 #   artifacts/losos.efi             the UKI: stub + kernel + initrd + cmdline
 #   artifacts/losos-installer.efi   the same, with `losos.install` on the
 #                                   command line, which starts
 #                                   systemd-sysinstall on boot
+#   artifacts/losos-root.raw.xz     the root filesystem as a partition image,
+#                                   which is what systemd-sysupdate writes and
+#                                   what the installer copies block for block
+#   artifacts/losos.qcow2           a whole disk that boots to the desktop
+#   artifacts/losos.iso             a whole disk that boots the installer,
+#                                   readable as an ISO 9660 volume as well
 #
 # Two UKIs and ONE root filesystem. The installer is not a separate image: it
 # is this image, booted with one extra word on its command line, and installing
@@ -18,11 +24,19 @@
 # target disk (CopyBlocks=auto in /usr/lib/repart.sysinstall.d). So there is
 # nothing that can drift between "the installer" and "what it installs".
 #
-# There is still no disk image built here. systemd-repart creates and grows the
-# partitions, so the work that would normally need loop devices, mkfs and root
-# on the BUILD host is done by the OS itself on the target. None of mkfs,
-# losetup, dd or mount is in pm's fingerprint table anyway (C2), so the
-# alternative was never available.
+# The disk images are written by the format writers in files/, not by mkfs and
+# losetup: neither is in pm's fingerprint table, and the jail has no privilege
+# to use them with in any case (C2, C7). `mkext4.py` writes the root
+# filesystem, `mkfat.py` the ESP, `mkgpt.py` the partition table, and `mkiso.py`
+# and `mkqcow2.py` the two containers. tools/gates/test-disk.py parses every one
+# of them back with a second implementation, because a wrong field here is an
+# image that builds cleanly and does not boot.
+#
+# What is still NOT built here is a partition layout the OS has to live with.
+# The disks carry an ESP and a root partition and stop; /home, the second root
+# and every later resize are systemd-repart's at first boot, from
+# /usr/lib/repart.d, which is what makes a factory reset and an A/B update the
+# same mechanism as an install.
 name: losos-image
 version:
 - '0'
@@ -83,6 +97,82 @@ steps:
   - python3 @RECIPE@/files/losos-image/mkuki.py --stub /build/uki/stub.efi --linux /build/uki/vmlinuz --initrd /build/uki/initrd.cpio.xz --osrel /build/uki/osrel --cmdline @RECIPE@/files/losos-image/installer-cmdline --uname @VERSION_LINUX@ --sbat @RECIPE@/files/losos-image/sbat.csv --output /build/uki/losos-installer.efi
   - install -Dm644 /build/uki/losos-installer.efi /dest/artifacts/losos-installer.efi
 
+# The root filesystem as a disk partition rather than as an archive. This is
+# the artifact systemd-sysupdate writes into the inactive root partition, and
+# the one the installer duplicates with CopyBlocks=auto -- both of which take
+# blocks, not files. It is built before the tarball because the two disks below
+# embed it.
+- stage: Build
+  name: root-image
+  dl_urls: null
+  run:
+  - python3 @RECIPE@/files/losos-image/mkext4.py /build/root /build/losos-root.raw --label losos-root
+
+# The ESP as it will be on an installed machine: systemd-boot where firmware
+# looks with no NVRAM entry, and the UKI beside it under the versioned name
+# systemd-sysupdate matches. Without the version in the name the first update
+# installs a second kernel and can never retire the first, because
+# `MatchPattern=losos-desktop_@v_@ARCH@.efi` does not match an unversioned one.
+- stage: Build
+  name: esp-disk
+  dl_urls: null
+  run:
+  - mkdir -p /build/esp-disk/EFI/BOOT /build/esp-disk/EFI/Linux /build/esp-disk/EFI/systemd
+  - cp /build/root/usr/lib/systemd/boot/efi/@ARCH_EFI_BOOT@ /build/esp-disk/EFI/BOOT/@ARCH_EFI_DEFAULT@
+  - cp /build/root/usr/lib/systemd/boot/efi/@ARCH_EFI_BOOT@ /build/esp-disk/EFI/systemd/@ARCH_EFI_BOOT@
+  - cp /build/uki/losos.efi /build/esp-disk/EFI/Linux/losos-desktop_@VERSION@_@ARCH@.efi
+  # 512M, the same size repart.d/10-esp.conf gives an installed system, and for
+  # the same reason: two unified kernel images side by side, so an A/B update
+  # never has to repartition.
+  - python3 @RECIPE@/files/losos-image/mkfat.py /build/esp-disk /build/esp-disk.img --label LOSOS_ESP --size 536870912
+
+# The installer medium's ESP, which is deliberately not the one above. The
+# installer UKI sits at the removable-media path itself rather than behind
+# systemd-boot: there is exactly one thing to boot, and a loader in front of it
+# would only add a menu and a timeout to a medium whose whole purpose is to run
+# one program.
+- stage: Build
+  name: esp-installer
+  dl_urls: null
+  run:
+  - mkdir -p /build/esp-installer/EFI/BOOT
+  - cp /build/uki/losos-installer.efi /build/esp-installer/EFI/BOOT/@ARCH_EFI_DEFAULT@
+  - python3 @RECIPE@/files/losos-image/mkfat.py /build/esp-installer /build/esp-installer.img --label LOSOS_INST
+
+# The disk that boots to a desktop. The free space at the end is not slack: it
+# is where systemd-repart creates /home on first boot, and a disk with none
+# would come up with the root partition it was given and nowhere for a user to
+# exist. Twelve gigabytes because repart has to satisfy two minimums out of it
+# -- root's 8G in 20-root.conf and /home's 4G in 30-home.conf -- and the root
+# partition built here is only as large as the tree needs. It costs nothing:
+# the space is a hole in the image and an unallocated cluster in the qcow2.
+- stage: Build
+  name: qcow2
+  dl_urls: null
+  run:
+  - python3 @RECIPE@/files/losos-image/mkdisk.py --esp /build/esp-disk.img --root /build/losos-root.raw --output /build/losos-disk.raw --root-type @ARCH_GPT_ROOT@ --free 12884901888 --seed @VERSION@
+  - python3 @RECIPE@/files/losos-image/mkqcow2.py /build/losos-disk.raw /build/losos.qcow2
+  - install -Dm644 /build/losos.qcow2 /dest/artifacts/losos.qcow2
+
+# The installer medium: one file that firmware boots from a DVD through El
+# Torito and from a USB stick through the GPT, over the same bytes. The root
+# partition is on it because that is what the installer installs -- CopyBlocks
+# copies the partition it booted from.
+- stage: Build
+  name: iso
+  dl_urls: null
+  run:
+  - python3 @RECIPE@/files/losos-image/mkiso.py --esp /build/esp-installer.img --root /build/losos-root.raw --output /build/losos.iso --volume-id LOSOS --root-type @ARCH_GPT_ROOT@ --seed @VERSION@
+  - install -Dm644 /build/losos.iso /dest/artifacts/losos.iso
+
+# Compressed last, because both disks above embed the uncompressed image.
+- stage: Build
+  name: root-image-xz
+  dl_urls: null
+  run:
+  - xz --check=crc32 -T0 -9 -f /build/losos-root.raw
+  - install -Dm644 /build/losos-root.raw.xz /dest/artifacts/losos-root.raw.xz
+
 - stage: Build
   name: rootfs-tar
   dl_urls: null
@@ -101,6 +191,14 @@ steps:
   - test -f /dest/artifacts/losos-installer.efi
   - test -f /dest/artifacts/initrd.img
   - test -f /dest/artifacts/losos-rootfs.tar.xz
+  - test -f /dest/artifacts/losos-root.raw.xz
+  - test -f /dest/artifacts/losos.qcow2
+  - test -f /dest/artifacts/losos.iso
+  # Structural, not a boot: that the qcow2 is a qcow2, that the ISO carries a
+  # boot catalog pointing at a FAT volume, and that both disks have a partition
+  # table whose root partition holds an ext4 superblock. A disk that fails any
+  # of these boots to firmware with no message at all.
+  - python3 @RECIPE@/files/losos-image/assert-media.py --qcow2 /dest/artifacts/losos.qcow2 --iso /dest/artifacts/losos.iso
   - /bin/sh @RECIPE@/files/losos-image/assert-uki.sh /dest/artifacts/losos.efi
   - /bin/sh @RECIPE@/files/losos-image/assert-uki.sh /dest/artifacts/losos-installer.efi
   # The one difference between the two, asserted rather than assumed: without

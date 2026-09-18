@@ -45,6 +45,12 @@ roughly a sixfold multiplication of intermediate storage, and with a full GNOME
 stack the intermediates plausibly run to tens of gigabytes before the final
 tarball. `TMPDIR` must be on real disk, not tmpfs.
 
+The image layer adds to that: it holds the OS tree, the root filesystem as a
+partition image, a raw disk built around it, the qcow2 and the ISO in the same
+workspace at once. The disk images are sparse and the qcow2 leaves zero
+clusters unallocated, so the cost is close to the content rather than to the
+declared sizes — but it is still several copies of the tree.
+
 ## The GNOME layer is the long tail
 
 `recipes/30-gnome` is the minimum that produces a session, and it is a
@@ -67,6 +73,23 @@ writer's output against an independent parser — and that is the entire claim.
 `systemd-repart`, `systemd-firstboot`, homed, verity, sysupdate and gdm are all
 wired and none has been exercised. **Anyone who says this OS boots should say on
 what machine, once.**
+
+The installation media are checked the same way and are subject to the same
+sentence. `tools/gates/test-disk.py` parses back every filesystem, partition
+table and container this repository writes, using a second implementation
+written from the format rather than from the writer, and runs `e2fsck` against
+the root filesystem where one is installed. That proves the structures are the
+structures they claim to be. It proves nothing about firmware, and one field is
+a known unknown: El Torito's sector count is sixteen bits of 512-byte sectors,
+32 MiB, and a FAT32 volume cannot be smaller than that, so `mkiso.py` writes
+zero there and relies on UEFI firmware taking the boot image's size from its
+FAT BPB instead — see [`images.md`](images.md). **Nobody has put this ISO in
+front of real firmware.**
+
+`tools/vm-test disk` is the test that would settle it: it hands the qcow2 to
+QEMU with UEFI firmware and requires the guest to say it came up, and CI runs
+it. It needs KVM and OVMF, which is exactly what this environment does not
+have.
 
 ## The upstream sources have not been fetched
 
@@ -99,7 +122,11 @@ it wraps.
 
 Something genuinely unclassifiable — `veritysetup`, say — would need
 `pm build --permissive`, and should be its own recipe saying so in its header
-rather than smuggled through a wrapper.
+rather than smuggled through a wrapper. That is also why the disk images are
+written by format writers in Python rather than by e2fsprogs, mtools and
+libisoburn built into the sysroot and driven from a shell script: the script
+would have been a third wrapper, hiding four more programs. See
+[`images.md`](images.md).
 
 ## The download-path derivation is undocumented behaviour
 

@@ -7,7 +7,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 `losos-desktop` is a **distribution**, not a program: a chain of
 [`pm`](https://github.com/dichhead/pm) build recipes that compiles a
 systemd-native GNOME desktop OS from pinned upstream sources and assembles a
-rootfs tarball, an initramfs and a UKI. There is almost no application source
+rootfs tarball, an initramfs, a UKI, an installer ISO and a QCOW2 disk. There is almost no application source
 here. What there is: recipe templates, a generator, a set of gates, and the
 documentation explaining why each is shaped the way it is.
 
@@ -76,6 +76,16 @@ tool that *can* be told about the local CA and serving the bytes over loopback
 sidesteps that without weakening anything: the SHA-256 pin is unchanged, so a
 mirror serving different bytes fails pm's check exactly as a bad upstream would.
 
+**The image layer writes its own filesystems.** `mkfs`, `losetup`, `xorriso`
+and `qemu-img` are all outside pm's fingerprint table (C2) and mostly outside
+the jail's privileges (C7), so `recipes/90-image/losos-image/files/` holds
+writers for ext4, FAT32, GPT, ISO 9660 with El Torito, and qcow2 — the same
+argument that already produced `mkcpio.py` and `mkuki.py`. They are the only
+code here whose bugs produce an image that builds and does not boot, so
+`tools/gates/test-disk.py` parses every one of them back with a second
+implementation written from the format rather than from the writer.
+`docs/images.md` is the reasoning; read it before touching any of them.
+
 **`overlay/`** is the OS content this repo writes rather than fetches: units,
 drop-ins, presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`,
 networkd config, the kernel command line. The image layer stages it verbatim.
@@ -116,6 +126,16 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   recipe invalidates its signature and pm verifies before parsing (C10). If you
   run pm by hand after editing, sign first or the failure reads as a trust
   error.
+- **`./do build` re-generates before it builds, with the settings the last
+  `tools/configure` was given** — read back from `out/configure.args`. The
+  generated tree has an architecture, a channel and a version substituted into
+  it and says so nowhere, so a re-generation with the defaults would turn an
+  aarch64 tree into an x86_64 one and build it without complaint.
+- **The release version is baked into the image**, as the name of the UKI on
+  its ESP. That is the only place systemd-sysupdate can read a version from, so
+  `tools/configure --version` is not cosmetic: at its default an image's kernel
+  is unversioned, the first update installs a second one beside it and can
+  never retire either.
 - **`sources.lock` may ship unresolved hashes.** `TODO` is a sentinel, never a
   value to fill in by guessing. `tools/fetch-sources --update` writes what the
   bytes actually hashed to; `tools/configure` refuses to generate while any

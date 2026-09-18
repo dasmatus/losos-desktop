@@ -64,6 +64,10 @@ cmd_lint() {
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
   python3 "$repo/tools/gates/test-image.py"
+  # The disk-image writers, each parsed back by a second implementation. They
+  # are the only code here whose mistakes produce an image that builds and does
+  # not boot, so they are checked offline rather than discovered in a VM.
+  python3 "$repo/tools/gates/test-disk.py"
   # The release names and the shipped sysupdate MatchPatterns are one contract
   # written in two files. A mismatch does not fail an update -- sysupdate
   # reports "no update available", which is indistinguishable from being up to
@@ -110,12 +114,22 @@ print(layers[-1]['name'] if layers else '')
   [ -n "$target" ] || { echo "nothing to build" >&2; exit 1; }
 
   start_mirror || echo "do: no local source mirror; pm will fetch upstream" >&2
+  # Regenerate with the settings the last configure was given, not with the
+  # defaults. The generated tree carries an architecture, a channel and a
+  # version substituted into it and says so nowhere, so re-generating with the
+  # defaults silently turns an aarch64 tree into an x86_64 one and builds it.
+  local remembered=()
+  if [ -f "$repo/out/configure.args" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && remembered+=("$line")
+    done < "$repo/out/configure.args"
+  fi
   # Generate the whole tree, then insist only that the layers this build
   # actually walks are pinned. Refusing because some unrelated upper layer has
   # an unfetched source would make a partial tree unbuildable for no reason --
   # and a partial tree is the normal state while a distribution is being
   # brought up.
-  cmd_configure --allow-unresolved
+  cmd_configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
   echo "== building $target"

@@ -139,15 +139,21 @@ jobs:
         run: python3 tools/fetch-sources
 
       # The channel is derived from the event rather than being a matrix
-      # dimension: a tag builds stable, everything else builds nightly.
-      # Making it a dimension would double every job to publish a "stable"
-      # nobody tagged.
-      - name: Decide the channel
+      # dimension: a tag builds stable, everything else builds nightly. Making
+      # it a dimension would double every job to publish a "stable" nobody
+      # tagged.
+      #
+      # The version is decided here too, and no longer after the build: it is
+      # baked into the name of the kernel on the image's own ESP, which is the
+      # only place systemd-sysupdate can read a version from.
+      - name: Decide the channel and the version
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             echo "CHANNEL=stable" >> "$GITHUB_ENV"
+            echo "LOSOS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
             echo "CHANNEL=nightly" >> "$GITHUB_ENV"
+            echo "LOSOS_VERSION=$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
           fi
 
       - name: Build the image
@@ -156,24 +162,17 @@ jobs:
           PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
           python3 tools/configure --arch ${{ matrix.arch }} --channel "$CHANNEL" \
-            --mirror http://127.0.0.1:8730
+            --version "$LOSOS_VERSION" --mirror http://127.0.0.1:8730
           python3 tools/serve-sources --port 8730 &
           ./do build losos-90-image
 
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
         run: |
-          # A version sysupdate can order. The date is the nightly's version;
-          # a tag supplies its own.
-          version="${GITHUB_REF_NAME#v}"
-          if [ "$CHANNEL" = nightly ]; then
-            version=$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}
-          fi
           python3 tools/stage-release --arch ${{ matrix.arch }} \
-            --version "$version" --out release
+            --version "$LOSOS_VERSION" --out release
           python3 tools/release-manifest --arch ${{ matrix.arch }} \
-            --version "$version" release
-          echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
+            --version "$LOSOS_VERSION" release
 
       - uses: actions/upload-artifact@v4
         with:
@@ -210,17 +209,30 @@ jobs:
           # takes twenty times as long, which reads as a hang.
           sudo chmod 666 /dev/kvm || true
 
-      - name: Boot it
+      - name: Boot the kernel image
         run: |
           python3 tools/vm-test boot --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --log console.log
 
+      # The same claim about the disk this repository ships rather than about
+      # the kernel inside it. Firmware has to find the ESP in the partition
+      # table, load systemd-boot out of a FAT volume this repository wrote, and
+      # hand the kernel a root partition found by its GPT type -- none of which
+      # the step above exercises, because it stages its ESP with QEMU.
+      - name: Boot the disk image
+        run: |
+          python3 tools/vm-test disk --arch ${{ matrix.arch }} \
+            --disk release/losos-desktop_*_${{ matrix.arch }}.qcow2 \
+            --log disk-console.log
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: console-${{ matrix.arch }}
-          path: console.log
+          path: |
+            console.log
+            disk-console.log
 
   # Prove the update path, not just the boot path. A sysupdate MatchPattern
   # that matches nothing reports "no update available" rather than failing, so
