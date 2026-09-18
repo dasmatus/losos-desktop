@@ -64,6 +64,12 @@ with the SHA-256 pins unchanged.
 
 Run `./do` with no arguments for the full list.
 
+What the build host itself has to provide — clang, python3 with `jinja2`,
+cargo with the musl target, and working user namespaces among them — is in
+[`docs/host-requirements.md`](docs/host-requirements.md). It is short, and it
+is a list rather than a bootstrap step because pm resolves a step's first word
+on the host: a tool that installs a tool would have the same problem.
+
 ## What has actually been built
 
 Honesty matters more here than ambition, so: the environment this was developed

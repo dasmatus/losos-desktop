@@ -1,0 +1,90 @@
+# fwupd 2.0.3
+#
+# Firmware updates, and the firmware half of the security report. Both matter
+# on an OS with no package manager to push a microcode or UEFI fix: without
+# fwupd the firmware on this machine is whatever shipped on it, for ever.
+#
+# GNOME needs no patch to show it. gnome-control-center already carries the
+# firmware-security panel, already calls org.freedesktop.fwupd's
+# GetHostSecurityAttrs, and already hides itself when that name is not on the
+# bus. Installing fwupd IS the feature. (The OS-level half of the report is
+# losos-security, on its own bus name; see docs/security-report.md.)
+#
+# Four libraries this would have needed a year ago are not in the tree, because
+# 2.0 dropped all four: libgusb (2.0 uses libusb directly), gcab (cabinets go
+# through libarchive), efivar (required only on FreeBSD -- on Linux fwupd reads
+# efivarfs itself) and protobuf-c (wanted only by the Logitech
+# bulk-controller plugin, disabled below). Re-adding any of them would be
+# adding a dependency nothing links against.
+#
+# BUILD-HOST REQUIREMENT: fwupd's meson calls `python3 -c 'import jinja2'` and
+# errors out if it is missing. A build step cannot set PYTHONPATH -- there is
+# no shell and `env` is banned -- so jinja2 cannot be vendored into the sysroot
+# the way meson is; it has to be importable by the host's python3, which pm
+# mirrors into the jail read-only. See docs/host-requirements.md.
+name: fwupd
+version:
+- '2'
+- '0'
+- '3'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_FWUPD@: '@SHA256_FWUPD@'
+  run:
+  - mkdir -p /build/src/fwupd /build/b/fwupd
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_FWUPD@ --no-same-owner -C /build/src/fwupd --strip-components=1
+
+# The option list is long because fwupd's defaults assume a distribution
+# package: man pages, completions, introspection, a firmware-packager script
+# and sixty plugins. What is turned ON here is the short list that matters:
+#
+#   -Dhsi         the Host Security Attributes the Settings shield reads.
+#                 Without it fwupd still updates firmware and the panel has
+#                 nothing to show, which is the whole reason this is here.
+#   -Dsystemd     the units, and logind integration.
+#   -Dpolkit      authorisation for an unprivileged desktop session.
+#   -Dsqlite      the update history, which is what makes a firmware update
+#                 that bricked something reportable rather than just survived.
+#
+# Three plugins are disabled for missing dependencies rather than by choice:
+# logitech_bulkcontroller (protobuf-c), flashrom (libflashrom) and
+# modem_manager (ModemManager). uefi_capsule_splash is disabled because its
+# image generation wants python cairo and PIL at build time.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/fwupd /build/src/fwupd --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dhsi=enabled -Dsystemd=enabled -Dpolkit=enabled -Dsqlite=enabled -Dcurl=enabled -Dgnutls=enabled -Dcbor=enabled -Dblkid=enabled -Dlibarchive=enabled -Dlzma=enabled -Dudev=enabled -Dlibdrm=enabled -Dlvfs=true -Ddocs=disabled -Dtests=false -Dman=false -Dmetainfo=false -Dintrospection=false -Dbash_completion=false -Dfish_completion=false -Dfirmware-packager=false -Dpassim=disabled -Dsupported_build=disabled -Dbluez=disabled -Dconsolekit=disabled -Delogind=disabled -Dvalgrind=disabled -Dumockdev_tests=disabled -Dplugin_uefi_capsule_splash=false -Dplugin_logitech_bulkcontroller=disabled -Dplugin_flashrom=disabled -Dplugin_modem_manager=disabled
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/fwupd -j @JOBS@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/fwupd --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/fwupd --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+# The daemon, the CLI, and the two units the preset relies on. Asserting the
+# units matters as much as the binary: -Dsystemd=disabled would produce a
+# working fwupdmgr, no fwupd.service, and a preset that silently enables a
+# timer that is not there.
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/libexec/fwupd/fwupd
+  - test -x /dest/usr/bin/fwupdmgr
+  - test -e /dest/usr/lib/systemd/system/fwupd.service
+  - test -e /dest/usr/lib/systemd/system/fwupd-refresh.timer

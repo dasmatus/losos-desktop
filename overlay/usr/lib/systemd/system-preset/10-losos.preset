@@ -47,5 +47,11 @@ enable systemd-confext.service
 # A/B updates.
 enable systemd-sysupdate.timer
 
+# Firmware updates. fwupd.service itself is bus-activated and has no [Install]
+# section, so this enables only the metadata refresh -- which is what makes
+# updates appear without anyone asking. The daemon starts when Software or the
+# Settings security panel first speaks to it.
+enable fwupd-refresh.timer
+
 # Everything not named here stays disabled.
 disable *

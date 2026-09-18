@@ -170,6 +170,15 @@
     - gnome-session
     - gnome-settings-daemon
     - gdm
+    # fwupd and its stack, before the panel that reads it -- not because
+    # gnome-control-center links against fwupd (it does not; the whole
+    # relationship is one D-Bus name), but because a reader looking for what
+    # supplies the security shield should find it just above.
+    - libusb
+    - libxmlb
+    - libjcat
+    - sqlite
+    - fwupd
     - gnome-control-center
     - nautilus
     - xdg-desktop-portal
