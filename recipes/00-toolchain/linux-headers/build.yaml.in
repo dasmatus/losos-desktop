@@ -11,9 +11,9 @@
 # the kernel they describe.
 name: linux-headers
 version:
+- '7'
+- '2'
 - '6'
-- '12'
-- '1'
 dependencies: []
 steps:
 

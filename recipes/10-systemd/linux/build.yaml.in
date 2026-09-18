@@ -15,9 +15,9 @@
 # manifest/architectures.yaml.
 name: linux
 version:
+- '7'
+- '2'
 - '6'
-- '12'
-- '1'
 dependencies: []
 steps:
 

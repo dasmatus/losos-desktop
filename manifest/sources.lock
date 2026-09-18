@@ -237,8 +237,8 @@ GETTEXT:
   sha256: TODO
 
 LINUX:
-  url: https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.1.tar.xz
-  version: '6.12.1'
+  url: https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.2.6.tar.xz
+  version: '7.2.6'
   sha256: TODO
 
 SYSTEMD:
