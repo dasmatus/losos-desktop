@@ -75,6 +75,15 @@ jobs:
       - name: Build pm
         run: cargo build --release --manifest-path pm/Cargo.toml
 
+      # The components are not committed, so CI builds them -- and this is the
+      # only place `explain-all` runs with the plugins actually loaded. It needs
+      # the wasm32 target and pm's encoder, which is why it is not part of
+      # `./do check` (that has to run with no network and no wasm toolchain).
+      - name: Build the plugin components
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm ./do plugins
+
       - name: ./do check
         working-directory: losos-desktop
         run: PM=$GITHUB_WORKSPACE/pm/target/release/pm ./do check
