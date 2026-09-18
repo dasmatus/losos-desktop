@@ -64,6 +64,12 @@ cmd_lint() {
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
   python3 "$repo/tools/gates/test-image.py"
+  # A recipe whose `version:` no longer matches the source it downloads builds
+  # the new tarball under the old name, and nothing else notices.
+  # --self-test rather than a bare run: it covers the real tree too, and
+  # adds the cases that prove the gate can fail. A gate never shown to
+  # fail is a gate nobody should trust.
+  python3 "$repo/tools/gates/versions.py" --self-test
   "$repo/tools/gates/explain-all"
 }
 
