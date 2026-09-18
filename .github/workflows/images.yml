@@ -105,9 +105,20 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
+          # python3-jinja2: fwupd's meson runs `python3 -c 'import jinja2'`
+          # and errors out without it, and a build step cannot set PYTHONPATH,
+          # so it has to be importable by the host's python3. See
+          # docs/host-requirements.md.
           sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev python3-yaml \
+            clang lld llvm libclang-rt-18-dev python3-yaml python3-jinja2 \
             ninja-build cmake bison flex bc xz-utils
+
+      # losos-security is a cargo build and everything above the toolchain
+      # layer is musl, so --target needs that target's std installed. Without
+      # it the failure is a rustc error about a missing core, several layers
+      # into a build that has already run for minutes.
+      - name: Add the Rust musl target
+        run: rustup target add ${{ matrix.arch }}-unknown-linux-musl
 
       # pm's jail is a user namespace, and Ubuntu 24.04 ships
       # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
