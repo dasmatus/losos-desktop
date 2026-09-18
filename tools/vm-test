@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Boot an image in QEMU and require it to say it came up.
+
+On a machine with no shell, no SSH and no serial login, "did it boot?" has to be
+answered by the image itself. `overlay/usr/lib/systemd/system/losos-selftest.service`
+is that answer: it is ordered after `boot-complete.target`, which systemd only
+reaches when startup finished without a failed unit, and it prints a marker to
+the console and powers off. So a passing run means "systemd reached a good
+state", not "the kernel started", and a hanging run fails on the timeout rather
+than being reported green.
+
+Two modes:
+
+    tools/vm-test boot --arch x86_64 --uki out/.../losos.efi
+    tools/vm-test ota  --arch x86_64 --uki <stable UKI> --serve <dir of nightly>
+
+`boot` is the gate. `ota` additionally serves a release directory over the
+guest's user-mode network and requires the guest to update itself to the
+version in it, reboot, and report the new one -- which is the only way to find
+out whether a systemd-sysupdate transfer definition is actually correct, since
+a wrong MatchPattern produces no error at all, just an update that finds
+nothing.
+
+# Why there is no mkfs here
+
+The ESP is handed to QEMU as `-drive file=fat:rw:<dir>`, which presents a host
+directory as a FAT filesystem. That needs no mkfs.vfat, no loop device and no
+root, which matters because this has to run on a CI runner and inside a
+container. The cost is that it is read-mostly and QEMU's VVFAT is not a
+general-purpose filesystem; for booting a UKI that firmware loads once, it is
+exactly enough.
+"""
+
+import argparse
+import http.server
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "lib"))
+
+import yaml  # noqa: E402
+
+MARKER = "LOSOS-SELFTEST-OK"
+
+# Where distributions put the UEFI firmware QEMU needs. Searched in order
+# because no two of them agree.
+FIRMWARE = {
+    "x86_64": [
+        "/usr/share/OVMF/OVMF_CODE_4M.fd",
+        "/usr/share/OVMF/OVMF_CODE.fd",
+        "/usr/share/edk2/x64/OVMF_CODE.4m.fd",
+        "/usr/share/qemu/OVMF.fd",
+    ],
+    "aarch64": [
+        "/usr/share/AAVMF/AAVMF_CODE.fd",
+        "/usr/share/edk2/aarch64/QEMU_EFI.fd",
+        "/usr/share/qemu-efi-aarch64/QEMU_EFI.fd",
+    ],
+}
+
+QEMU = {"x86_64": "qemu-system-x86_64", "aarch64": "qemu-system-aarch64"}
+
+
+def architectures():
+    return yaml.safe_load((REPO / "manifest" / "architectures.yaml").read_text())
+
+
+def find_firmware(arch):
+    for candidate in FIRMWARE[arch]:
+        if Path(candidate).exists():
+            return candidate
+    sys.exit(
+        f"vm-test: no UEFI firmware for {arch}. Looked in:\n  "
+        + "\n  ".join(FIRMWARE[arch])
+        + "\n  Install ovmf (x86_64) or qemu-efi-aarch64 (aarch64)."
+    )
+
+
+def accelerated(arch):
+    """KVM only when the guest matches the host; otherwise TCG.
+
+    Emulating a foreign architecture is perhaps twenty times slower, which is
+    why the aarch64 timeout below is not the x86_64 one.
+    """
+    return Path("/dev/kvm").exists() and os.uname().machine == arch
+
+
+def qemu_command(arch, firmware, esp=None, disk=None, network=False):
+    binary = shutil.which(QEMU[arch])
+    if binary is None:
+        sys.exit(f"vm-test: {QEMU[arch]} is not installed")
+
+    command = [binary, "-m", "2048", "-display", "none", "-serial", "stdio",
+               "-no-reboot"]
+
+    if arch == "x86_64":
+        command += ["-machine", "q35"]
+        if accelerated(arch):
+            command += ["-enable-kvm", "-cpu", "host"]
+        else:
+            command += ["-cpu", "max"]
+    else:
+        command += ["-machine", "virt"]
+        if accelerated(arch):
+            command += ["-enable-kvm", "-cpu", "host"]
+        else:
+            command += ["-cpu", "cortex-a76"]
+
+    command += ["-drive", f"if=pflash,format=raw,readonly=on,file={firmware}"]
+
+    if esp is not None:
+        # VVFAT: a host directory presented as FAT. No mkfs, no loop, no root.
+        command += ["-drive", f"file=fat:rw:{esp},format=raw,if=virtio"]
+    if disk is not None:
+        command += ["-drive", f"file={disk},if=virtio"]
+
+    if network:
+        # User-mode networking: the host is 10.0.2.2 from inside the guest,
+        # which is where the OTA server below listens.
+        command += ["-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"]
+    else:
+        command += ["-nic", "none"]
+
+    return command
+
+
+def stage_esp(arch, uki, work):
+    """An ESP directory holding the UKI where firmware looks with no bootloader.
+
+    EFI/BOOT/BOOT<arch>.EFI is the removable-media path: firmware boots it
+    without an NVRAM entry, which a fresh VM has none of.
+    """
+    default = architectures()[arch]["efi_default"]
+    esp = work / "esp"
+    (esp / "EFI" / "BOOT").mkdir(parents=True)
+    shutil.copy2(uki, esp / "EFI" / "BOOT" / default)
+    return esp
+
+
+def run_vm(command, timeout, log):
+    """Run QEMU, tee the serial console, and return what it printed."""
+    print("vm-test: " + " ".join(command), file=sys.stderr)
+    captured = []
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
+    try:
+        for line in process.stdout:
+            captured.append(line)
+            sys.stderr.write(line)
+            if MARKER in line:
+                # Seen what we came for. The guest powers itself off, but do
+                # not wait on that: a guest that fails to shut down would turn
+                # a pass into a timeout.
+                break
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        captured.append("vm-test: TIMEOUT\n")
+    finally:
+        if process.poll() is None:
+            process.kill()
+    log.write_text("".join(captured))
+    return "".join(captured)
+
+
+def mode_boot(args):
+    arch = args.arch
+    firmware = find_firmware(arch)
+    with tempfile.TemporaryDirectory(prefix="losos-vm-") as tmp:
+        work = Path(tmp)
+        esp = stage_esp(arch, Path(args.uki), work)
+        log = Path(args.log) if args.log else work / "console.log"
+        output = run_vm(
+            qemu_command(arch, firmware, esp=esp), args.timeout, log
+        )
+
+    if MARKER not in output:
+        print(
+            f"vm-test: FAILED -- {MARKER} never appeared.\n"
+            f"  The console log is at {log}.\n"
+            "  A boot that reaches a shell prompt or an emergency target does\n"
+            "  not print it: the unit is ordered after boot-complete.target.",
+            file=sys.stderr,
+        )
+        return 1
+
+    version = re.search(r"VERSION_ID=(\S+)", output)
+    print(f"vm-test: booted and reported {MARKER}"
+          + (f" (VERSION_ID={version.group(1)})" if version else ""))
+    return 0
+
+
+class Quiet(http.server.SimpleHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        sys.stderr.write("vm-test/http: " + (fmt % args) + "\n")
+
+
+def mode_ota(args):
+    """Boot, let the guest update itself from a served release, require the
+    version to change.
+
+    This is the only way to find out whether a sysupdate transfer definition is
+    right. A wrong MatchPattern= does not error -- sysupdate reports that no
+    update is available, which is indistinguishable from being up to date.
+    """
+    arch = args.arch
+    firmware = find_firmware(arch)
+    served = Path(args.serve)
+    if not (served / "SHA256SUMS").exists():
+        sys.exit(
+            f"vm-test: {served}/SHA256SUMS is missing. systemd-sysupdate "
+            "discovers versions from it; without one the guest will correctly "
+            "report that no update is available and this test would pass for "
+            "the wrong reason. Run tools/release-manifest first."
+        )
+
+    handler = lambda *a, **k: Quiet(*a, directory=str(served), **k)
+    httpd = http.server.ThreadingHTTPServer(("0.0.0.0", args.port), handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+    expected = None
+    for line in (served / "SHA256SUMS").read_text().splitlines():
+        found = re.search(r"losos-desktop_([0-9A-Za-z.]+)_", line)
+        if found:
+            expected = found.group(1)
+            break
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="losos-vm-ota-") as tmp:
+            work = Path(tmp)
+            esp = stage_esp(arch, Path(args.uki), work)
+            log = Path(args.log) if args.log else work / "console.log"
+            output = run_vm(
+                qemu_command(arch, firmware, esp=esp, network=True),
+                args.timeout,
+                log,
+            )
+    finally:
+        httpd.shutdown()
+
+    if MARKER not in output:
+        print(f"vm-test: FAILED -- guest never reported {MARKER}", file=sys.stderr)
+        return 1
+
+    reported = re.search(r"VERSION_ID=(\S+)", output)
+    if expected and reported and reported.group(1) != expected:
+        print(
+            f"vm-test: FAILED -- guest booted {reported.group(1)}, "
+            f"the served release is {expected}.\n"
+            "  The update did not take. A sysupdate MatchPattern that does not\n"
+            "  match reports 'no update available' rather than failing, so\n"
+            "  check overlay/usr/lib/sysupdate.d against the served filenames.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"vm-test: OTA applied, guest booted {expected}")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("mode", choices=["boot", "ota"])
+    parser.add_argument("--arch", default="x86_64", choices=sorted(QEMU))
+    parser.add_argument("--uki", required=True)
+    parser.add_argument("--serve", help="ota: directory of the release to offer")
+    parser.add_argument("--port", type=int, default=8731)
+    parser.add_argument("--log", help="where to write the serial console log")
+    parser.add_argument("--timeout", type=int, default=0)
+    args = parser.parse_args()
+
+    if args.timeout == 0:
+        # Emulating a foreign architecture under TCG is roughly twenty times
+        # slower than KVM, and a timeout tuned for the fast case reports a slow
+        # boot as a broken one.
+        args.timeout = 300 if accelerated(args.arch) else 1800
+
+    if args.mode == "ota" and not args.serve:
+        sys.exit("vm-test: ota needs --serve")
+
+    return mode_boot(args) if args.mode == "boot" else mode_ota(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
