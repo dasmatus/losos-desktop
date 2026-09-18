@@ -40,6 +40,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang lld llvm libclang-rt-18-dev python3-yaml
 
+      # pm's jail is a user namespace, and Ubuntu 24.04 ships
+      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
+      # uid_map write hakoniwa needs. Without this every pm build fails with
+      # "Operation not permitted" from inside the sandbox -- which reads like a
+      # permissions problem with the workspace and is not.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Build pm
         run: cargo build --release --manifest-path pm/Cargo.toml
 
@@ -100,6 +108,14 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang lld llvm libclang-rt-18-dev python3-yaml \
             ninja-build cmake bison flex bc xz-utils
+
+      # pm's jail is a user namespace, and Ubuntu 24.04 ships
+      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
+      # uid_map write hakoniwa needs. Without this every pm build fails with
+      # "Operation not permitted" from inside the sandbox -- which reads like a
+      # permissions problem with the workspace and is not.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Build pm
         run: cargo build --release --manifest-path pm/Cargo.toml
