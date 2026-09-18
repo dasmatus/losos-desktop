@@ -144,6 +144,15 @@ class Toolchain:
             "@CFLAGS@": " ".join(self.cflags()),
             "@LDFLAGS@": " ".join(self.ldflags()),
             "@RUSTFLAGS@": " ".join(self.rustflags()),
+            # The same flags as a TOML array, for `cargo --config
+            # build.rustflags=...`. cargo's own way of taking them is the
+            # RUSTFLAGS environment variable, and a build step cannot set one:
+            # `env` is banned here because pm reads only a command's first word
+            # (C3), so `env RUSTFLAGS=... cargo build` is classified coreutils
+            # and loses cargo's network grant with it. Quoted and comma-joined
+            # with no spaces, because a step's command line is whitespace-split
+            # and execve'd -- a space would make this several arguments.
+            "@RUSTFLAGS_CARGO@": _toml_list(self.rustflags()),
             "@TRIPLE@": self.target.get("triple", ""),
             "@SYSROOT@": self.target.get("sysroot", "/build/sysroot"),
         }
@@ -155,3 +164,8 @@ class Toolchain:
 
 def _ini_list(flags):
     return "[" + ", ".join(f"'{flag}'" for flag in flags) + "]"
+
+
+def _toml_list(flags):
+    """A TOML array with no whitespace anywhere in it."""
+    return "[" + ",".join(f'"{flag}"' for flag in flags) + "]"

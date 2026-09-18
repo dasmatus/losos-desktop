@@ -132,7 +132,17 @@ def stage_support(recipe_out, member_dirs, subs):
         files = source / "files"
         if files.is_dir():
             dest = recipe_out / "files" / package
-            shutil.copytree(files, dest, dirs_exist_ok=True)
+            # Skip build detritus. A member whose files/ holds a cargo project
+            # accumulates a target/ directory of hundreds of megabytes the
+            # moment anyone runs cargo there by hand, and copying it into the
+            # generated tree would put it inside the jail's read-only mount and
+            # into every archive built above it.
+            shutil.copytree(
+                files,
+                dest,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("target", "__pycache__"),
+            )
             # A member's helper scripts get the same substitution its build
             # file does, so a script can name an absolute path too.
             for script in dest.rglob("*.sh"):
