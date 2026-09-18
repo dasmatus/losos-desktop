@@ -20,12 +20,19 @@ steps:
 
 # ./configure has no -C and there is no `cd` in a build step (C1), so the one
 # permitted wrapper puts it in the build directory. configure takes VAR=value
-# as positional arguments, which is how the sysroot is reached without `env`.
+# as positional arguments, which is how the toolchain and the sysroot are
+# reached without `env`.
+#
+# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
+# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
+# separate arguments and configure would reject the first it did not know.
+# The response file is one word, and clang expands it. Its contents come from
+# manifest/toolchain.yaml -- LTO and CFI included.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/nettle /build/src/nettle/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig CPPFLAGS=-I/build/sysroot/usr/include LDFLAGS=-L/build/sysroot/usr/lib --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/nettle /build/src/nettle/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
 
 - stage: Build
   name: compile
