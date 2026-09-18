@@ -70,6 +70,9 @@ cmd_lint() {
   # date -- so it has to be caught here.
   python3 "$repo/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "$repo/tools/gates/plugins.py"
+  # An artifact name mismatch between two CI jobs fails only on the release
+  # path, which is the one nobody exercises until it matters.
+  python3 "$repo/tools/gates/workflow.py"
   # A recipe whose `version:` no longer matches the source it downloads builds
   # the new tarball under the old name, and nothing else notices.
   # --self-test rather than a bare run: it covers the real tree too, and
