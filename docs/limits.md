@@ -1,0 +1,112 @@
+# Limits
+
+What this repository does not do, and what it cannot do without a change
+somewhere outside it. Written to be read before trusting anything here.
+
+## The rootfs is not self-contained
+
+**This is the defining limitation.** pm mirrors the build host's `/bin`, `/lib`,
+`/lib64`, `/sbin` and `/usr` read-only into the jail (C7), and there is no libc
+in the recipe set. So everything here links against the *build host's* glibc and
+libstdc++, and `losos-rootfs.tar.xz` contains no loader and no libc at all.
+Unpacked on a machine without a compatible glibc at the expected sonames,
+nothing in it runs.
+
+Fixing it means building glibc or musl as a package and getting every later
+package to use it — which needs a real prefix and a sysroot-aware toolchain.
+pm cannot express that today, for a specific reason: a newly built compiler
+could never be a step's first word, because pm canonicalises that word on the
+host (C3). The new toolchain would be reachable only through native-file
+injection, per build system, for every package. That is a change to pm, not to
+this tree, and it is the honest ceiling of the current design.
+
+## pm has no package store
+
+Dependencies are carried, not consumed (C5): a dependency's archive is copied
+into its dependent and nothing unpacks it. `share/sysroot.sh` is this
+repository's workaround — recursive untar plus a pkg-config prefix rewrite — and
+it lives here rather than in pm because that is what it is. Anything it gets
+wrong (a `.la` file, a cmake package file, an RPATH) surfaces as a link against
+the wrong library version with no warning. `leak-audit.sh` catches the subset
+that leaves a `/build` string behind; it cannot catch a silent link against the
+host's copy of a library we also built.
+
+## pm has no build cache
+
+`pm build` rebuilds every node in the graph, every time (C6). That is why the
+build graph is seven layer bundles and not ninety package nodes — but it still
+means changing one GNOME package rebuilds that entire layer. There is no
+incremental path, and adding one means adding content addressing to pm.
+
+## Archive duplication
+
+Each layer's archive contains the one below it, whole. With seven layers that is
+roughly a sixfold multiplication of intermediate storage, and with a full GNOME
+stack the intermediates plausibly run to tens of gigabytes before the final
+tarball. `TMPDIR` must be on real disk, not tmpfs.
+
+## The GNOME layer is the long tail
+
+`recipes/30-gnome` is the minimum that produces a session, and it is a
+minimum in the optimistic sense. `gobject-introspection` has to *run* the
+libraries it scans. `gjs` carries SpiderMonkey. `mutter` needs a working GL
+stack at build time, not just at run time. `gnome-control-center` reaches for
+NetworkManager, ModemManager, fwupd, cups, ibus and more; `nautilus` wants
+tracker3 and gvfs; the portal wants gnome-remote-desktop for screencast. A first
+honest count after real build attempts should be expected to land well above the
+27 packages listed, and several panels of the control centre will be inert
+because this OS runs `systemd-networkd` rather than NetworkManager. That trade
+is deliberate — one network stack, already a systemd unit — but it is a trade.
+
+## Nothing here has booted
+
+There is no VM in the development environment: no KVM, no EFI firmware, no loop
+devices. The UKI is checked structurally — it is a PE, it carries the six
+sections systemd-stub looks for, and `tools/gates/test-image.py` verifies the
+writer's output against an independent parser — and that is the entire claim.
+`systemd-repart`, `systemd-firstboot`, homed, verity, sysupdate and gdm are all
+wired and none has been exercised. **Anyone who says this OS boots should say on
+what machine, once.**
+
+## The upstream sources have not been fetched
+
+`manifest/sources.lock` ships with `sha256: TODO` for every entry except
+`MESON`, because the environment this was developed in cannot reach
+kernel.org, freedesktop.org, gnome.org or ftp.gnu.org. `tools/fetch-sources
+--update` fills them in on a machine that can. Nothing here invents a hash: pm
+verifies before it parses, so a wrong value presents as a compromised mirror,
+which is strictly worse than a missing one.
+
+Consequently **no upstream package in this tree has been compiled**. What has
+been built end to end, by pm, in the jail: `losos-00-hosttools` (meson, from a
+pinned sdist) and `losos-05-core` (`losos-release`, compiled from this
+repository's own C by that meson, and run out of its own archive). The recipe
+tree above that is validated by `./do check` — schema, URL form, fingerprints,
+and `pm explain` over every command — which proves it is executable-in-principle
+and proves nothing about whether each package configures.
+
+## Two named fingerprint compromises
+
+pm's fingerprint check reads the first word only (C2), so a wrapper hides what
+it wraps.
+
+- **`share/in-dir.sh`** is the one wrapper this repo permits, because
+  `./configure` has no `-C` and there is no `cd`. It is listed in
+  `tools/gates/allowed-wrappers`, and `fingerprint-lint.py` re-applies pm's own
+  table to whatever follows it. That lint has already caught one real case.
+- **`env` is banned outright**, not merely discouraged — it hides the program
+  *and* silently rewrites the derived capability set.
+
+Something genuinely unclassifiable — `veritysetup`, say — would need
+`pm build --permissive`, and should be its own recipe saying so in its header
+rather than smuggled through a wrapper.
+
+## The download-path derivation is undocumented behaviour
+
+`tools/configure` computes where pm will put a download by reimplementing an
+FNV-1a-64 hash from pm's `Step::url_digest`. Nothing in pm promises that layout
+and no test in pm pins it. If it changes, every recipe fails with `ENOENT` on a
+file that was downloaded and verified moments earlier. `tools/check-digest`
+exists to turn that into one clear message, and it proves the agreement against
+a real `pm build` rather than against itself — but it is a guard on a
+dependency that was never promised.
