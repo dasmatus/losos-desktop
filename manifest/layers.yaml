@@ -11,18 +11,18 @@
 # links against the sysroot the earlier ones populated.
 
 
-- name: losos-00-hosttools
-  dir: 01-hosttools
-  # Build-time programs. meson is first because it is not installed on any
-  # build host we target and cannot be: pm resolves a step's first word on the
-  # HOST (C3), so meson is vendored and invoked as `python3 <meson.py>` after.
-  # gperf, flex and msgfmt reach later builds through a meson native file, for
-  # the same reason -- never through PATH.
+- name: losos-00-meson
+  dir: 00-meson
+  # meson alone, and at the very bottom, because every layer above configures
+  # with it. It is not installed on any build host we target and cannot be:
+  # pm resolves a step's first word on the HOST (C3), so meson is vendored
+  # here and invoked as `python3 <meson.py>` everywhere after.
+  #
+  # Kept apart from the other host tools on purpose. gperf, flex and msgfmt are
+  # needed only by systemd and the kernel, and putting them here would make
+  # every lower layer unbuildable until all four were fetched.
   members:
     - meson
-    - gperf
-    - flex
-    - gettext
 
 - name: losos-05-core
   dir: 10-core
@@ -74,6 +74,16 @@
     - libbpf
     - libpwquality
     - libxml2
+
+- name: losos-15-hosttools
+  dir: 01-hosttools
+  # The build-time programs systemd and the kernel look up for themselves.
+  # They reach those builds through a meson native file or an explicit make
+  # variable, never through PATH -- pm cannot put a pm-built program there (C3).
+  members:
+    - gperf
+    - flex
+    - gettext
 
 - name: losos-20-systemd
   dir: 10-systemd
