@@ -242,8 +242,8 @@ LINUX:
   sha256: TODO
 
 SYSTEMD:
-  url: https://github.com/systemd/systemd/archive/refs/tags/v257.tar.gz
-  version: '257'
+  url: https://github.com/systemd/systemd/archive/refs/tags/v261.tar.gz
+  version: '261'
   sha256: TODO
 
 WAYLAND:
@@ -484,4 +484,14 @@ XDG_DESKTOP_PORTAL:
 XDG_DESKTOP_PORTAL_GNOME:
   url: https://download.gnome.org/sources/xdg-desktop-portal-gnome/47/xdg-desktop-portal-gnome-47.1.tar.xz
   version: '47.1'
+  sha256: TODO
+
+MUSL:
+  url: https://musl.libc.org/releases/musl-1.2.5.tar.gz
+  version: '1.2.5'
+  sha256: TODO
+
+COMPILER_RT:
+  url: https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/compiler-rt-18.1.8.src.tar.xz
+  version: '18.1.8'
   sha256: TODO

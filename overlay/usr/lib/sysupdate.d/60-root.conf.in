@@ -1,0 +1,23 @@
+# A/B updates of the root filesystem.
+#
+# The second root partition is created empty by systemd-repart and filled by
+# sysupdate; the booted one is never written. Paired with dm-verity this is
+# what makes /usr immutable in a way that survives an update rather than being
+# reset by one.
+#
+# MatchPartitionType must agree with overlay/usr/lib/repart.d/20-root.conf --
+# both come from manifest/architectures.yaml so they cannot drift.
+[Transfer]
+ProtectVersion=%A
+
+[Source]
+Type=url-file
+Path=https://github.com/dichhead/losos-desktop/releases/download/@CHANNEL@/
+MatchPattern=losos-desktop_@v_@ARCH_SYSUPDATE_ROOT@.raw.xz
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=losos-desktop_@v
+MatchPartitionType=@ARCH_GPT_ROOT@
+InstancesMax=2
