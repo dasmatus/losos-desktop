@@ -22,10 +22,11 @@ wired into a job that the design actually needs:
 |---|---|
 | Boot | `systemd-boot`, `systemd-stub` (UKI), `ukify`, `kernel-install`, `bless-boot`, `boot-check-no-failures` |
 | Measured boot | `systemd-pcrlock`, `systemd-measure`, `systemd-pcrextend`, `systemd-cryptenroll` |
+| Installation | `systemd-sysinstall`, started by the installer UKI's command line — it copies the root partition it booted from onto the target |
 | Self-installation | `systemd-repart` partitions and grows the disk on first boot — which is why this repo ships no disk-image tool |
 | First boot | `systemd-firstboot`, `systemd-creds`, `systemd-machine-id-setup` |
 | Immutable `/usr` | `systemd-veritysetup` (dm-verity), `systemd-sysext` / `systemd-confext` for layering |
-| Updates | `systemd-sysupdate` A/B |
+| Updates | `systemd-sysupdate` A/B, and `fwupd` for firmware |
 | Accounts | `systemd-homed`, `systemd-userdbd`, `pam_systemd` |
 | Session | `systemd-logind` seats for gdm, the systemd user manager driving `graphical-session.target`, `systemd-xdg-autostart-generator`, `run0` |
 | Network | `systemd-networkd`, `systemd-resolved`, `systemd-timesyncd`, `systemd-ssh-generator` |
