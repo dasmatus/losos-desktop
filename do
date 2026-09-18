@@ -70,6 +70,9 @@ cmd_lint() {
   # date -- so it has to be caught here.
   python3 "$repo/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "$repo/tools/gates/plugins.py"
+  # A patch series nobody applies is tracked, reviewed and inert: the build
+  # goes green and the feature is simply absent.
+  python3 "$repo/tools/gates/patches.py"
   "$repo/tools/gates/explain-all"
 }
 

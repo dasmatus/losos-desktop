@@ -22,3 +22,9 @@
 # what gets signed, and tools/gates/plugins.py checks none is older than its
 # source. The intermediates are not.
 target/
+
+# CPython bytecode caches. Tracked once by accident; they are regenerated on
+# every run of tools/configure and differ by interpreter version, so a commit
+# that touches one is noise in every review afterwards.
+__pycache__/
+*.pyc

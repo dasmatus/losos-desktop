@@ -34,6 +34,12 @@ enable systemd-boot-update.service
 enable systemd-bless-boot.service
 enable systemd-boot-check-no-failures.service
 
+# The factory reset Varlink API, at /run/systemd/io.systemd.FactoryReset.
+# Socket-activated, so enabling it costs a socket and no running process.
+# Without it the only way to ask for a reset is the kernel command line, which
+# a desktop user has no way to reach.
+enable systemd-factory-reset.socket
+
 # System extensions and configuration extensions, applied at boot if present.
 enable systemd-sysext.service
 enable systemd-confext.service
