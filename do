@@ -73,6 +73,9 @@ cmd_lint() {
   # An artifact name mismatch between two CI jobs fails only on the release
   # path, which is the one nobody exercises until it matters.
   python3 "$repo/tools/gates/workflow.py"
+  # A patch series nobody applies is tracked, reviewed and inert: the build
+  # goes green and the feature is simply absent.
+  python3 "$repo/tools/gates/patches.py"
   # A recipe whose `version:` no longer matches the source it downloads builds
   # the new tarball under the old name, and nothing else notices.
   # --self-test rather than a bare run: it covers the real tree too, and
