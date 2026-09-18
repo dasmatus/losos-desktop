@@ -489,3 +489,8 @@ COMPILER_RT:
   url: https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/compiler-rt-18.1.8.src.tar.xz
   version: 18.1.8
   sha256: TODO
+
+NVIDIA_OPEN:
+  url: https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/580.95.05.tar.gz
+  version: 580.95.05
+  sha256: TODO
