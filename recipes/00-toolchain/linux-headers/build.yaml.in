@@ -1,0 +1,44 @@
+# The kernel's userspace headers.
+#
+# First thing built, before libc, because musl needs <linux/*.h> and <asm/*.h>
+# to compile at all -- every syscall wrapper it defines is described by them.
+# This is the same `make headers_install` every distribution runs; it copies
+# the sanitised userspace subset of the kernel's headers and touches nothing
+# else.
+#
+# It shares the LINUX source key with the kernel recipe, so both come from one
+# tarball and one hash, and the headers can never be a different version from
+# the kernel they describe.
+name: linux-headers
+version:
+- '7'
+- '2'
+- '6'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LINUX@: '@SHA256_LINUX@'
+  run:
+  - mkdir -p /build/src/linux /build/b/linux-headers
+  - tar -xf @DL_LINUX@ --no-same-owner -C /build/src/linux --strip-components=1
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  # ARCH is the kernel's spelling, from manifest/architectures.yaml: the
+  # headers differ per architecture and installing x86's on arm64 produces a
+  # libc that compiles and makes the wrong syscalls.
+  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ INSTALL_HDR_PATH=/dest/usr headers_install
+  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ INSTALL_HDR_PATH=/build/sysroot/usr headers_install
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -f /dest/usr/include/linux/fs.h
+  - test -d /dest/usr/include/asm
+  - test -f /build/sysroot/usr/include/linux/fs.h

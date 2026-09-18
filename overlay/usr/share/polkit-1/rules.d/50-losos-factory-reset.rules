@@ -1,0 +1,36 @@
+// Let an active local administrator ask for a factory reset from the desktop.
+//
+// Starting factory-reset.target is an ordinary systemd unit start, so polkit
+// mediates it through org.freedesktop.systemd1.manage-units. That action covers
+// EVERY unit, though, and granting it wholesale to hand someone a reset button
+// would also hand them every other service on the machine.
+//
+// So this narrows to the one unit, and to a session that is both active and
+// local: an active session is one currently on a seat, and local excludes a
+// remote one. A factory reset is irreversible and takes the machine with it;
+// requiring physical presence is the least that should be true of it.
+//
+// The dialog still asks for authentication -- AUTH_ADMIN, not YES. This decides
+// who may be asked, not who may skip being asked.
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var unit = action.lookup("unit");
+    if (unit !== "factory-reset.target") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    // `verb` is start/stop/restart/... Only asking for the reset is mediated
+    // here; anything else about the unit falls through to the default policy.
+    if (action.lookup("verb") !== "start") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    if (subject.active && subject.local && subject.isInGroup("wheel")) {
+        return polkit.Result.AUTH_ADMIN;
+    }
+
+    return polkit.Result.NOT_HANDLED;
+});

@@ -110,3 +110,28 @@ file that was downloaded and verified moments earlier. `tools/check-digest`
 exists to turn that into one clear message, and it proves the agreement against
 a real `pm build` rather than against itself — but it is a guard on a
 dependency that was never promised.
+
+## NVIDIA: kernel module yes, proprietary userspace no
+
+`recipes/10-systemd/nvidia-open` builds NVIDIA's open kernel modules from
+source, against this kernel tree, so they pick up the same `CONFIG_CFI_CLANG`
+and LTO settings the kernel was built with. An out-of-tree module whose CFI
+settings disagree with the kernel's does not load, and reports only that the
+module format is invalid.
+
+The userspace is NVK and nouveau in Mesa. The proprietary userspace is absent
+and will stay absent, for a reason that is structural rather than political:
+`libcuda` and `libnvidia-glcore` are prebuilt blobs linked against **glibc**.
+Our toolchain never compiles them, so they receive neither CFI nor LTO, and
+they cannot load into a musl process at all — two C libraries cannot coexist in
+one address space. Shipping them would mean carrying a second libc inside a
+bundle and running every accelerated application inside that bundle, which is a
+parallel userspace maintained for one vendor.
+
+What this costs: **CUDA is not available**, and NVK is behind the proprietary
+driver on raw performance. What it buys: one libc, one toolchain, and no
+component of the graphics stack outside the CFI scheme.
+
+Open kernel modules cover Turing and later. Nothing older has one, and this
+tree has nothing to offer those cards beyond nouveau's reverse-engineered
+support.

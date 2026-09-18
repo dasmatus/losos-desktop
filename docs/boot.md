@@ -55,8 +55,8 @@ the machine, not to a build recipe.
 
 ## First boot creates the disk
 
-There is no disk image and no installer. `systemd-repart` runs in the initrd
-and creates what `overlay/usr/lib/repart.d/` describes:
+There is no disk image. `systemd-repart` runs in the initrd and creates what
+`overlay/usr/lib/repart.d/` describes:
 
 - `10-esp.conf` — 512 MB ESP, sized for several UKIs side by side so an A/B
   update needs no repartitioning;

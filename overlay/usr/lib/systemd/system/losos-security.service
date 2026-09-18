@@ -1,0 +1,65 @@
+# The operating-system security report, on the system bus.
+#
+# Bus-activated, not enabled: it has no [Install] section on purpose. The only
+# thing that asks for it is the Settings panel opening the security dialog, and
+# a report that takes a few milliseconds to produce does not need a process
+# sitting in memory between the two times a year anyone looks at it.
+# io.losos.Security1.service in dbus-1/system-services is what starts this.
+
+[Unit]
+Description=Operating system security checks
+After=dbus.socket
+Requires=dbus.socket
+
+[Service]
+Type=dbus
+BusName=io.losos.Security1
+ExecStart=/usr/bin/losos-security --serve
+
+# Root, because two of the paths it reads are not world-readable: the efivars
+# holding SecureBoot, and /sys/kernel/security/lockdown. Everything a root
+# process could otherwise do is taken away below -- this reads eight files and
+# answers one method, and the sandbox is written to let it do exactly that and
+# nothing else. A security reporter that is itself an attack surface has
+# subtracted from the security of the machine it reports on.
+User=root
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+
+# No writes anywhere. ProtectSystem=strict makes the whole filesystem
+# read-only including /etc; ProtectKernelTunables additionally makes /proc/sys
+# read-only, which is right -- the sysctl checks read those values and must
+# never be able to change one to make its own report look better.
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+PrivateTmp=yes
+PrivateDevices=yes
+
+# The system bus is a unix socket, so nothing here needs IP at all. Both lines
+# say that, in the two ways it can be said: no network namespace of its own to
+# route through, and no address family but AF_UNIX to open.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# A ceiling, not an idle timeout -- systemd has no idle timeout for a bus
+# service, and this is the honest approximation of one. Nothing is held between
+# calls: every request re-reads the files, so being stopped mid-life costs the
+# next caller a process start and nothing else.
+RuntimeMaxSec=300

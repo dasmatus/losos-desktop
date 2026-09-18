@@ -1,0 +1,75 @@
+# NVIDIA's open kernel modules, built from source against this kernel.
+#
+# This is the only NVIDIA component that can be built rather than merely
+# unpacked, and the only one whose licence lets this repository name it without
+# qualification: open-gpu-kernel-modules is MIT/GPLv2 dual, and everything in
+# it is C we compile. It covers Turing and later; nothing older has an open
+# module, and this recipe cannot help there.
+#
+# It lives in the kernel's OWN layer rather than a GPU layer above, because an
+# out-of-tree module has to be built against the configured kernel tree -- not
+# the installed headers -- and that tree exists in exactly one workspace. A
+# separate layer would have to download and configure the kernel a second time
+# to get back to the same place.
+#
+# This provides the kernel half only. The userspace half is NVK and nouveau in
+# Mesa, built from source like everything else -- see recipes/20-graphics/mesa.
+#
+# The proprietary userspace is deliberately absent and will stay absent.
+# libcuda and libnvidia-glcore are prebuilt blobs linked against glibc: our
+# toolchain never compiles them, so they get neither CFI nor LTO, and they
+# cannot load into a musl process at all, because two libcs cannot coexist in
+# one address space. Shipping them would mean carrying a second libc in a
+# bundle and running accelerated applications inside it -- a whole parallel
+# userspace for one vendor. The cost of not doing it is CUDA and some
+# performance; docs/limits.md says so plainly.
+name: nvidia-open
+version:
+- '580'
+- '95'
+- '05'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_NVIDIA_OPEN@: '@SHA256_NVIDIA_OPEN@'
+  run:
+  - mkdir -p /build/src/nvidia-open
+  - tar -xf @DL_NVIDIA_OPEN@ --no-same-owner -C /build/src/nvidia-open --strip-components=1
+
+# SYSSRC and SYSOUT are the kernel's source and build directories, which the
+# `linux` member of this same layer left behind. The module's Kbuild reads the
+# configured tree from them, which is how it picks up the same CONFIG_CFI_CLANG
+# and the same LTO settings the kernel was built with -- an out-of-tree module
+# whose CFI settings disagree with the kernel's does not load, and says only
+# that the module format is invalid.
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/src/nvidia-open modules -j @JOBS@ ARCH=@ARCH_KERNEL_ARCH@ SYSSRC=/build/src/linux SYSOUT=/build/b/linux CC=@CC@ LD=@CC@ NV_VERBOSE=1
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/src/nvidia-open modules_install -j 1 ARCH=@ARCH_KERNEL_ARCH@ SYSSRC=/build/src/linux SYSOUT=/build/b/linux INSTALL_MOD_PATH=/dest/usr
+  - make -C /build/src/nvidia-open modules_install -j 1 ARCH=@ARCH_KERNEL_ARCH@ SYSSRC=/build/src/linux SYSOUT=/build/b/linux INSTALL_MOD_PATH=/build/sysroot/usr
+
+# nvidia_drm.modeset=1 is what makes the module usable by a Wayland compositor
+# at all: without it there is no DRM/KMS device for mutter's native backend to
+# open, and the session falls back to software rendering with no error that
+# mentions NVIDIA.
+- stage: Build
+  name: modprobe-config
+  dl_urls: null
+  run:
+  - install -Dm644 @RECIPE@/files/nvidia-open/nvidia.conf /dest/usr/lib/modprobe.d/nvidia.conf
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/files/nvidia-open/assert-modules.sh /dest @VERSION_LINUX@

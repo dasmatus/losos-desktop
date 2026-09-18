@@ -1,0 +1,317 @@
+# Build, verify and publish the sysupdate images.
+#
+# The matrix is architecture x channel. `nightly` is built on a schedule and
+# from main; `stable` only from a tag. Both publish to a GitHub release whose
+# tag IS the channel name and which is moved rather than recreated, because
+# systemd-sysupdate's Source Path= has to be a stable URL -- it fetches
+# SHA256SUMS from that directory to discover what versions exist.
+name: images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  schedule:
+    # Nightly, off the hour: a cron on the hour competes with everyone else's.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+# Read-only by default. This workflow runs on pull_request, which means it
+# checks out and executes branch code; a token that can write to the repository
+# has no business being in that job. Only `publish` needs more, and it asks for
+# it itself.
+permissions:
+  contents: read
+
+jobs:
+  # The channel, decided once. It used to be derived independently in `build`
+  # (into $GITHUB_ENV) and again in `publish` (in shell), while `verify` and
+  # `ota` just hardcoded "nightly" -- so on a tag, build uploaded
+  # losos-stable-<arch> and verify asked for losos-nightly-<arch>, which does
+  # not exist. download-artifact fails on a missing name, so verify and ota
+  # failed and publish (needs: [verify, ota]) never ran: the stable release
+  # path could not complete at all. One output, referenced everywhere.
+  channel:
+    runs-on: ubuntu-24.04
+    outputs:
+      name: ${{ steps.pick.outputs.name }}
+    steps:
+      - id: pick
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "name=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=nightly" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The gate that runs anywhere, on every event. No network to upstream, no
+  # KVM, no nix. If this is red nothing below is worth running.
+  gates:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: losos-desktop }
+      - uses: actions/checkout@v4
+        with: { repository: dichhead/pm, path: pm, ref: master }
+
+      - name: Install the toolchain the gates need
+        run: |
+          sudo apt-get update
+          # libclang-rt-*-dev is not optional: without it clang errors out on
+          # -fsanitize=cfi with a missing ignorelist, and the toolchain report
+          # cannot tell whether CFI works.
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm libclang-rt-18-dev python3-yaml
+
+      # pm's jail is a user namespace, and Ubuntu 24.04 ships
+      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
+      # uid_map write hakoniwa needs. Without this every pm build fails with
+      # "Operation not permitted" from inside the sandbox -- which reads like a
+      # permissions problem with the workspace and is not.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build pm
+        run: cargo build --release --manifest-path pm/Cargo.toml
+
+      # The components are not committed, so CI builds them -- and this is the
+      # only place `explain-all` runs with the plugins actually loaded. It needs
+      # the wasm32 target and pm's encoder, which is why it is not part of
+      # `./do check` (that has to run with no network and no wasm toolchain).
+      - name: Build the plugin components
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm ./do plugins
+
+      - name: ./do check
+        working-directory: losos-desktop
+        run: PM=$GITHUB_WORKSPACE/pm/target/release/pm ./do check
+
+      # Proves the flag set compiles, links, runs, and that a mistyped indirect
+      # call is actually caught -- not that a YAML file says CFI is on.
+      - name: Toolchain report
+        working-directory: losos-desktop
+        run: python3 tools/gates/toolchain-report.py --verify-cfi
+
+  # Whether the sources are pinned decides whether anything below can run at
+  # all. Reported as an output rather than a failure: an unpinned tree is the
+  # normal state while a distribution is being brought up, and it should not
+  # turn every push red.
+  pinned:
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if grep -q 'sha256: TODO' manifest/sources.lock; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::sources.lock has unpinned entries; image jobs will be skipped."
+            grep -c 'sha256: TODO' manifest/sources.lock
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: [gates, pinned, channel]
+    if: needs.pinned.outputs.ready == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          # GitHub's arm64 runners, so aarch64 builds and boots natively
+          # instead of under TCG. A cross-built image verified only under
+          # emulation is a weaker claim and a much slower job.
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: losos-desktop }
+      - uses: actions/checkout@v4
+        with: { repository: dichhead/pm, path: pm, ref: master }
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # python3-jinja2: fwupd's meson runs `python3 -c 'import jinja2'`
+          # and errors out without it, and a build step cannot set PYTHONPATH,
+          # so it has to be importable by the host's python3. See
+          # docs/host-requirements.md.
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm libclang-rt-18-dev python3-yaml python3-jinja2 \
+            ninja-build cmake bison flex bc xz-utils
+
+      # losos-security is a cargo build and everything above the toolchain
+      # layer is musl, so --target needs that target's std installed. Without
+      # it the failure is a rustc error about a missing core, several layers
+      # into a build that has already run for minutes.
+      - name: Add the Rust musl target
+        run: rustup target add ${{ matrix.arch }}-unknown-linux-musl
+
+      # pm's jail is a user namespace, and Ubuntu 24.04 ships
+      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
+      # uid_map write hakoniwa needs. Without this every pm build fails with
+      # "Operation not permitted" from inside the sandbox -- which reads like a
+      # permissions problem with the workspace and is not.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build pm
+        run: cargo build --release --manifest-path pm/Cargo.toml
+
+      # pm's downloader compiles Mozilla's roots in and reads no CA setting, so
+      # it cannot fetch through a TLS-terminating proxy. Mirroring first and
+      # serving over loopback keeps the SHA-256 pins exactly as they are.
+      - name: Mirror the pinned sources
+        working-directory: losos-desktop
+        run: python3 tools/fetch-sources
+
+      # The channel comes from the `channel` job, not from the event read a
+      # second time here: a tag builds stable, everything else nightly, and
+      # every job below has to agree on which. It is not a matrix dimension
+      # because that would double every job to publish a "stable" nobody
+      # tagged.
+      - name: Take the channel
+        run: echo "CHANNEL=${{ needs.channel.outputs.name }}" >> "$GITHUB_ENV"
+
+      - name: Build the image
+        working-directory: losos-desktop
+        env:
+          PM: ${{ github.workspace }}/pm/target/release/pm
+        run: |
+          python3 tools/configure --arch ${{ matrix.arch }} --channel "$CHANNEL" \
+            --mirror http://127.0.0.1:8730
+          python3 tools/serve-sources --port 8730 &
+          ./do build losos-90-image
+
+      - name: Name the artifacts and write SHA256SUMS
+        working-directory: losos-desktop
+        run: |
+          # A version sysupdate can order. The date is the nightly's version;
+          # a tag supplies its own.
+          version="${GITHUB_REF_NAME#v}"
+          if [ "$CHANNEL" = nightly ]; then
+            version=$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}
+          fi
+          python3 tools/stage-release --arch ${{ matrix.arch }} \
+            --version "$version" --out release
+          python3 tools/release-manifest --arch ${{ matrix.arch }} \
+            --version "$version" release
+          echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: losos-desktop/release/
+
+  # Boot what was built. A build that produces an unbootable image is a build
+  # that passed, so this is the job that makes the others mean anything.
+  verify:
+    needs: [build, channel]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: release
+
+      - name: Install QEMU and UEFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml \
+            qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
+          # GitHub's Linux runners expose /dev/kvm, but the runner user is not
+          # in the kvm group by default. Without this the boot still works and
+          # takes twenty times as long, which reads as a hang.
+          sudo chmod 666 /dev/kvm || true
+
+      - name: Boot it
+        run: |
+          python3 tools/vm-test boot --arch ${{ matrix.arch }} \
+            --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
+            --log console.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: console-${{ matrix.arch }}
+          path: console.log
+
+  # Prove the update path, not just the boot path. A sysupdate MatchPattern
+  # that matches nothing reports "no update available" rather than failing, so
+  # the only way to know a transfer definition is right is to apply one.
+  ota:
+    needs: [build, verify, channel]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: release
+
+      - name: Install QEMU and UEFI firmware
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml \
+            qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
+          sudo chmod 666 /dev/kvm || true
+
+      - name: Apply an update inside the VM
+        run: |
+          python3 tools/vm-test ota --arch ${{ matrix.arch }} \
+            --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
+            --serve release --log ota-console.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ota-console-${{ matrix.arch }}
+          path: ota-console.log
+
+  publish:
+    needs: [verify, ota, channel]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    # The one job that writes, and it says so here rather than at the top of
+    # the file where it would also apply to every pull request.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: "losos-*", path: release, merge-multiple: true }
+
+      # The release tag is the channel, and it is moved rather than recreated:
+      # sysupdate's Path= must stay the same URL across releases, because it is
+      # baked into the image that is trying to update itself.
+      - name: Publish to the channel release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          channel="${{ needs.channel.outputs.name }}"
+          gh release delete "$channel" --repo "$GITHUB_REPOSITORY" --yes || true
+          gh release create "$channel" --repo "$GITHUB_REPOSITORY" \
+            --title "LosOS $channel" --notes "Rolling $channel channel." \
+            --prerelease release/*

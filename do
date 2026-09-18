@@ -64,6 +64,24 @@ cmd_lint() {
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
   python3 "$repo/tools/gates/test-image.py"
+  # The release names and the shipped sysupdate MatchPatterns are one contract
+  # written in two files. A mismatch does not fail an update -- sysupdate
+  # reports "no update available", which is indistinguishable from being up to
+  # date -- so it has to be caught here.
+  python3 "$repo/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
+  python3 "$repo/tools/gates/plugins.py"
+  # An artifact name mismatch between two CI jobs fails only on the release
+  # path, which is the one nobody exercises until it matters.
+  python3 "$repo/tools/gates/workflow.py"
+  # A patch series nobody applies is tracked, reviewed and inert: the build
+  # goes green and the feature is simply absent.
+  python3 "$repo/tools/gates/patches.py"
+  # A recipe whose `version:` no longer matches the source it downloads builds
+  # the new tarball under the old name, and nothing else notices.
+  # --self-test rather than a bare run: it covers the real tree too, and
+  # adds the cases that prove the gate can fail. A gate never shown to
+  # fail is a gate nobody should trust.
+  python3 "$repo/tools/gates/versions.py" --self-test
   "$repo/tools/gates/explain-all"
 }
 
@@ -98,10 +116,28 @@ print(layers[-1]['name'] if layers else '')
   [ -n "$target" ] || { echo "nothing to build" >&2; exit 1; }
 
   start_mirror || echo "do: no local source mirror; pm will fetch upstream" >&2
-  cmd_configure
+  # Generate the whole tree, then insist only that the layers this build
+  # actually walks are pinned. Refusing because some unrelated upper layer has
+  # an unfetched source would make a partial tree unbuildable for no reason --
+  # and a partial tree is the normal state while a distribution is being
+  # brought up.
+  cmd_configure --allow-unresolved
+  python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
   echo "== building $target"
   ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )
+}
+
+# Build the plugin components from source.
+#
+# Kept out of `check` on purpose. The components need the wasm32 Rust target and
+# pm's encoder, and building the encoder needs crates.io -- while `./do check`
+# is meant to run on any machine with no network and no wasm toolchain. So this
+# is its own verb: CI runs it before check, a developer runs it after touching
+# plugins/, and everyone else never needs it. Nothing reads a component out of
+# the tree, because none is committed.
+cmd_plugins() {
+  "$repo/plugins/build.sh" "$@"
 }
 
 cmd_clean() {
@@ -118,6 +154,7 @@ case "${1:-}" in
   build)     shift; cmd_build "$@" ;;
   fetch)     shift; python3 "$repo/tools/fetch-sources" "$@" ;;
   serve)     shift; python3 "$repo/tools/serve-sources" --port "$mirror_port" ;;
+  plugins)   shift; cmd_plugins "$@" ;;
   clean)     shift; cmd_clean ;;
   *)
     cat <<USAGE
@@ -132,6 +169,8 @@ case "${1:-}" in
   fetch [--update]            mirror every pinned source into out/sources,
                               filling any TODO hash
   serve                       serve out/sources over loopback for pm
+  plugins [crate]             build the pm plugin components into plugins/dist
+                              (needs the wasm32 Rust target; not part of check)
   clean                       remove out/recipes, out/pkgs, out/tmp
 
 Environment:

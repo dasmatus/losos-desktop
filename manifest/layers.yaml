@@ -11,24 +11,44 @@
 # links against the sysroot the earlier ones populated.
 
 
-- name: losos-00-hosttools
-  dir: 01-hosttools
-  # Build-time programs. meson is first because it is not installed on any
-  # build host we target and cannot be: pm resolves a step's first word on the
-  # HOST (C3), so meson is vendored and invoked as `python3 <meson.py>` after.
-  # gperf, flex and msgfmt reach later builds through a meson native file, for
-  # the same reason -- never through PATH.
+- name: losos-00-toolchain
+  dir: 00-toolchain
+  # The C library, and the two things that have to exist around it.
+  #
+  # First, and before meson, because everything compiled above this line is
+  # compiled against musl rather than against the build host's glibc -- which
+  # is what makes a package runnable on a machine other than the one that
+  # built it. Order within the layer is forced: musl needs the kernel's
+  # userspace headers to compile, and compiler-rt needs musl to link against.
+  members:
+    - linux-headers
+    - musl
+    - compiler-rt
+
+- name: losos-01-meson
+  dir: 00-meson
+  # meson alone, and at the very bottom, because every layer above configures
+  # with it. It is not installed on any build host we target and cannot be:
+  # pm resolves a step's first word on the HOST (C3), so meson is vendored
+  # here and invoked as `python3 <meson.py>` everywhere after.
+  #
+  # Kept apart from the other host tools on purpose. gperf, flex and msgfmt are
+  # needed only by systemd and the kernel, and putting them here would make
+  # every lower layer unbuildable until all four were fetched.
   members:
     - meson
-    - gperf
-    - flex
-    - gettext
 
 - name: losos-05-core
   dir: 10-core
   # The parts of the OS this repository writes rather than fetches.
+  #
+  # losos-security is a cargo build, and pm derives the network capability per
+  # build file rather than per step (C8) -- so this whole layer's jail shares
+  # the host network, losos-release included. Named here as well as in the
+  # recipe because a layer is the unit that carries the consequence.
   members:
     - losos-release
+    - losos-security
 
 - name: losos-10-base
   dir: 00-base
@@ -75,12 +95,23 @@
     - libpwquality
     - libxml2
 
+- name: losos-15-hosttools
+  dir: 01-hosttools
+  # The build-time programs systemd and the kernel look up for themselves.
+  # They reach those builds through a meson native file or an explicit make
+  # variable, never through PATH -- pm cannot put a pm-built program there (C3).
+  members:
+    - gperf
+    - flex
+    - gettext
+
 - name: losos-20-systemd
   dir: 10-systemd
   # The kernel and systemd. bpftool comes out of the kernel tree, so linux
   # builds before systemd, which needs it for -Dbpf-framework.
   members:
     - linux
+    - nvidia-open
     - systemd
 
 - name: losos-30-graphics
@@ -139,6 +170,15 @@
     - gnome-session
     - gnome-settings-daemon
     - gdm
+    # fwupd and its stack, before the panel that reads it -- not because
+    # gnome-control-center links against fwupd (it does not; the whole
+    # relationship is one D-Bus name), but because a reader looking for what
+    # supplies the security shield should find it just above.
+    - libusb
+    - libxmlb
+    - libjcat
+    - sqlite
+    - fwupd
     - gnome-control-center
     - nautilus
     - xdg-desktop-portal

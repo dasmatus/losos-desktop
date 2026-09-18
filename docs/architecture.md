@@ -109,7 +109,7 @@ serves that over loopback; `tools/configure --mirror` rewrites the URL while
 fails pm's check exactly as a bad upstream would. It also makes an offline or
 air-gapped build work, which the upstream URLs alone never would.
 
-## Why the image is three files and not a disk image
+## Why the image is four files and not a disk image
 
 `mkfs`, `losetup`, `dd` and `mount` are not in pm's fingerprint table (C2), and
 `/build` and `/dest` are the only writable mounts (C7). A disk image was never
@@ -118,9 +118,14 @@ available inside the jail.
 It is also not wanted. `systemd-repart` creates the ESP, root and `/home`
 partitions on first boot from `overlay/usr/lib/repart.d/` and grows root to the
 disk it finds, so partitioning belongs to the target rather than the builder.
-What the build produces is a rootfs tarball, an initramfs and a UKI —
+What the build produces is a rootfs tarball, an initramfs and two UKIs —
 and `systemd-gpt-auto-generator` means there is no `/etc/fstab` and no `root=`
 to write either.
+
+The second UKI is the installer, and it is the same image with one extra word
+on its command line: `systemd-sysinstall` copies the root partition it is
+running from onto the target disk. So even the installer is not a fourth thing
+to build — see `docs/install.md`.
 
 The initramfs and the UKI are written by stdlib Python (`mkcpio.py`,
 `mkuki.py`) because `cpio -o` reads its file list from a stdin pm ties to

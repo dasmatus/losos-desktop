@@ -8,6 +8,12 @@
 # The graphical session.
 enable gdm.service
 
+# The installer. Enabled on every image and started on exactly one of them:
+# the drop-in in systemd-sysinstall.service.d conditions it on `losos.install`
+# on the kernel command line, which only the installer UKI carries. See
+# docs/install.md.
+enable systemd-sysinstall.service
+
 # Identity and accounts. homed and userdbd are how users exist at all here:
 # there is no useradd in the image.
 enable systemd-homed.service
@@ -34,12 +40,24 @@ enable systemd-boot-update.service
 enable systemd-bless-boot.service
 enable systemd-boot-check-no-failures.service
 
+# The factory reset Varlink API, at /run/systemd/io.systemd.FactoryReset.
+# Socket-activated, so enabling it costs a socket and no running process.
+# Without it the only way to ask for a reset is the kernel command line, which
+# a desktop user has no way to reach.
+enable systemd-factory-reset.socket
+
 # System extensions and configuration extensions, applied at boot if present.
 enable systemd-sysext.service
 enable systemd-confext.service
 
 # A/B updates.
 enable systemd-sysupdate.timer
+
+# Firmware updates. fwupd.service itself is bus-activated and has no [Install]
+# section, so this enables only the metadata refresh -- which is what makes
+# updates appear without anyone asking. The daemon starts when Software or the
+# Settings security panel first speaks to it.
+enable fwupd-refresh.timer
 
 # Everything not named here stays disabled.
 disable *

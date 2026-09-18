@@ -1,0 +1,11 @@
+# Bus activation for the security report.
+#
+# SystemdService= rather than Exec=: dbus-daemon hands the request to systemd,
+# which starts the unit with the sandbox in losos-security.service. Activating
+# it directly from here would start the binary with dbus-daemon's own
+# environment and none of that sandbox.
+[D-BUS Service]
+Name=io.losos.Security1
+Exec=/usr/bin/losos-security --serve
+User=root
+SystemdService=losos-security.service
