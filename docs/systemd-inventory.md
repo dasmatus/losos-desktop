@@ -38,12 +38,14 @@ enabled and then not wired into anything, it says so.
 | `systemd-pcrlock` | `-Dtpm2=enabled` | Policy that survives a firmware update, unlike raw PCR binding. |
 | `systemd-cryptenroll` | `-Dlibfido2=enabled`, `-Dp11kit=enabled`, `-Dtpm2=enabled` | Enrols a TPM2, a FIDO2 key or a PKCS#11 token as a LUKS factor. Not run automatically: binding a disk to hardware is the owner's decision, and doing it unasked would be a trap. |
 
-## Self-installation
+## Installation and self-installation
 
-This is why the repository ships no disk image and no installer.
+This is why the repository ships no disk image, and why its installer is one
+extra word on a kernel command line rather than a program.
 
 | Component | Option | Wiring |
 |---|---|---|
+| `systemd-sysinstall` | `-Dsysinstall=true` | The installer, new in v261. Started by `systemd-sysinstall.service` when the command line carries `losos.install`, which only `losos-installer.efi` does. Partitions the target from `overlay/usr/lib/repart.sysinstall.d/`, whose root definition is `CopyBlocks=auto` — so installing is copying the root partition the installer booted from. See `docs/install.md`. |
 | `systemd-repart` | `-Drepart=true` | Creates the ESP, root and `/home` partitions on first boot from `overlay/usr/lib/repart.d/`, and grows root to the disk it finds itself on. Runs in the initrd. |
 | `systemd-gpt-auto-generator` | core | Finds the root filesystem by GPT partition type UUID. This is why there is no `/etc/fstab` and no `root=` on the kernel command line. |
 | `systemd-growfs`, `systemd-makefs` | core | The filesystem half of what repart does to a partition. |

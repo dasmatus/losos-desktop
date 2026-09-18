@@ -1,0 +1,18 @@
+# The target disk's root partition.
+#
+# CopyBlocks=auto is the entire installer. It copies the root partition this
+# system is running from, block for block, onto the newly created one -- so
+# "install" means "duplicate the medium you booted", and there is no separate
+# OS image to build, ship, or keep in step with the one that boots.
+#
+# Type= is not cosmetic: systemd-gpt-auto-generator finds the root filesystem
+# by GPT type UUID, which is why the installed system needs no /etc/fstab and
+# no root= on its kernel command line.
+[Partition]
+Type=@ARCH_GPT_ROOT@
+CopyBlocks=auto
+# No Format=: the copied blocks bring their own filesystem. Formatting here
+# would write a fresh ext4 over the image that was just copied in, and the
+# failure is a target disk that partitions perfectly and boots to nothing.
+SizeMinBytes=8G
+PaddingMinBytes=0
