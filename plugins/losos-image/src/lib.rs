@@ -141,6 +141,12 @@ impl Guest for LososImage {
                 Capability::Archive,
             ],
             source_extensions: vec![],
+            // No symbols. The contract added these for the paths a build file
+            // would otherwise hardcode -- where a distribution puts unit files,
+            // where a sysext goes. This plugin classifies tools and knows no
+            // such path, and a symbol invented here would be a constant nothing
+            // in this tree agreed to.
+            symbols: vec![],
         }
     }
 
