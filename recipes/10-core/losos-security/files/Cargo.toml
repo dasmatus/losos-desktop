@@ -1,0 +1,28 @@
+[package]
+name = "losos-security"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "losos_security"
+path = "src/lib.rs"
+
+[[bin]]
+name = "losos-security"
+path = "src/main.rs"
+
+[dependencies]
+# The system bus, so GNOME's Privacy & Security panel can read the report.
+# zbus rather than a hand-rolled client: the panel talks D-Bus, and the one
+# thing worse than no security report is one that lies because its serialiser
+# was written in a hurry.
+zbus = { version = "5.5", default-features = false, features = ["tokio"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

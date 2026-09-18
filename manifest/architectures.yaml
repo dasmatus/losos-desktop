@@ -14,6 +14,11 @@ x86_64:
   # The musl target triple. The toolchain's `target.triple` is derived from
   # this rather than written twice.
   triple: x86_64-linux-musl
+  # Rust spells the same target differently: four fields where clang takes
+  # three. Written out rather than derived, because the vendor field is not a
+  # transformation of anything -- it is a literal that rustc either recognises
+  # or rejects.
+  rust_target: x86_64-unknown-linux-musl
   # What the kernel's own build system calls this architecture, and where it
   # leaves the bootable image. x86 produces a compressed bzImage; most other
   # architectures do not, which is why the path is data rather than a pattern.
@@ -37,6 +42,7 @@ x86_64:
 
 aarch64:
   triple: aarch64-linux-musl
+  rust_target: aarch64-unknown-linux-musl
   kernel_arch: arm64
   # arm64 has no bzImage: the EFI stub is built into the uncompressed Image,
   # and that is what goes in the UKI's .linux section.

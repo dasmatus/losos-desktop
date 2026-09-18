@@ -1,0 +1,77 @@
+# losos-security -- the operating-system half of the security report.
+#
+# fwupd answers "is the firmware trustworthy". This answers "is the operating
+# system set up the way a careful person would set it up" -- TPM, disk
+# encryption, kernel lockdown, module signing, IOMMU, the hardening sysctls --
+# and serves the answer on the system bus in fwupd's own attribute shape, so
+# GNOME's Privacy & Security panel lists both in one report rather than in two
+# applications. The panel change that consumes it is
+# recipes/30-gnome/gnome-control-center/files/patches/0002-*.
+#
+# The sources are this repository's own, so there is no dl_urls here and
+# nothing to pin -- with one exception, below.
+#
+# THIS MEMBER MAKES THE WHOLE LAYER'S JAIL SHARE THE HOST NETWORK. pm derives
+# the network capability from `cargo` and applies it per BUILD FILE, not per
+# step (C8), so every member of losos-05-core builds with the host's network
+# namespace because this one needs crates.io. That is the cost of the first
+# Rust package in the tree and it is paid by its neighbours, which is why it is
+# written here rather than discovered later.
+#
+# What is NOT lost is the pin. `--locked` refuses to move Cargo.lock, and that
+# file records a SHA-256 for every crate, checked by cargo on extraction -- the
+# same guarantee sources.lock gives for a tarball, enforced by a different
+# tool. An unpinned `cargo build` would be the problem; this is not one.
+name: losos-security
+version:
+- '0'
+- '1'
+- '0'
+dependencies: []
+steps:
+
+# Copied out of the recipe directory before building, because that directory is
+# mounted read-only (C7) and cargo writes target/ next to the manifest unless
+# told otherwise. Copying is cheaper to reason about than keeping every cargo
+# output path pointed elsewhere.
+- stage: Build
+  name: stage-sources
+  dl_urls: null
+  run:
+  - mkdir -p /build/src/losos-security
+  - cp -a @RECIPE@/files/losos-security/. /build/src/losos-security
+
+# --target, not the host default: everything above the toolchain layer is musl,
+# and a cargo build with no --target silently produces a binary linked against
+# the build host's libc that will not run on the image.
+#
+# --config build.rustflags rather than RUSTFLAGS, because a step cannot set an
+# environment variable and `env` is banned (see CLAUDE.md). The flag list comes
+# from manifest/toolchain.yaml like every other flag in the tree; a recipe that
+# spelled its own -Clto would be outside the scheme with nothing saying so.
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cargo build --release --locked --manifest-path /build/src/losos-security/Cargo.toml --target-dir /build/b/losos-security --target @ARCH_RUST_TARGET@ --config build.rustflags=@RUSTFLAGS_CARGO@
+
+# The suite runs here rather than nowhere. It is ten tests over a fixture
+# directory tree -- no TPM, no root, no network -- and it is the only thing that
+# distinguishes "the checks compile" from "the checks say the right thing".
+- stage: Build
+  name: test
+  dl_urls: null
+  run:
+  - cargo test --release --locked --manifest-path /build/src/losos-security/Cargo.toml --target-dir /build/b/losos-security --target @ARCH_RUST_TARGET@ --config build.rustflags=@RUSTFLAGS_CARGO@
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - install -D -m 0755 /build/b/losos-security/@ARCH_RUST_TARGET@/release/losos-security /dest/usr/bin/losos-security
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -x /dest/usr/bin/losos-security

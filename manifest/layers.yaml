@@ -41,8 +41,14 @@
 - name: losos-05-core
   dir: 10-core
   # The parts of the OS this repository writes rather than fetches.
+  #
+  # losos-security is a cargo build, and pm derives the network capability per
+  # build file rather than per step (C8) -- so this whole layer's jail shares
+  # the host network, losos-release included. Named here as well as in the
+  # recipe because a layer is the unit that carries the consequence.
   members:
     - losos-release
+    - losos-security
 
 - name: losos-10-base
   dir: 00-base
