@@ -19,6 +19,11 @@ Two properties, both cheap to check and neither visible by reading one job:
 It also checks that write permission is not granted workflow-wide, because this
 workflow runs on `pull_request` -- it checks out and executes branch code, and a
 token that can write to the repository has no business in that job.
+
+And it holds every checkout of pm to one pinned commit. `ref: master` made this
+repository's CI a function of another repository's tip: pm's plugin contract
+changed upstream and every open pull request here went red within half an hour,
+on trees nobody had touched.
 """
 
 import re
@@ -34,6 +39,12 @@ WORKFLOW = REPO / ".github" / "workflows" / "images.yml"
 # out of the shell, because this is the list the check is asserting against.
 CHANNELS = ("nightly", "stable")
 CHANNEL_REF = re.compile(r"\$\{\{\s*needs\.channel\.outputs\.name\s*\}\}")
+
+# The repository whose checkout has to be pinned, and what counts as a pin: a
+# full commit id. A tag would do as well in principle and is deliberately not
+# allowed, because a tag can be moved and this check would not notice.
+PM_REPO = "dichhead/pm"
+COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
 def main():
@@ -93,6 +104,31 @@ def main():
             "instead."
         )
 
+    # Every job that checks pm out must name one commit, and all of them the
+    # same one. Two jobs on different pm commits means the gate approved a tree
+    # against a pm the build never ran, and the comparison it made says nothing
+    # about what shipped.
+    pins = {}
+    for job, spec in jobs.items():
+        for step in (spec or {}).get("steps") or []:
+            settings = step.get("with") or {}
+            if str(settings.get("repository", "")) == PM_REPO:
+                pins[job] = str(settings.get("ref", ""))
+
+    floating = sorted(job for job, ref in pins.items() if not COMMIT.match(ref))
+    if floating:
+        failures.append(
+            f"{PM_REPO} is not pinned to a commit in: {', '.join(floating)}.\n"
+            f"    plugins/wit/plugin.wit is a copy of that checkout's contract, "
+            f"so a push to pm goes red here on a tree nobody touched."
+        )
+    elif len(set(pins.values())) > 1:
+        failures.append(
+            "jobs check out different commits of "
+            f"{PM_REPO}:\n    "
+            + "\n    ".join(f"{job}: {ref}" for job, ref in sorted(pins.items()))
+        )
+
     if failures:
         print("workflow: FAILED", file=sys.stderr)
         for failure in failures:
@@ -101,7 +137,8 @@ def main():
 
     print(
         f"workflow: {len(downloads)} artifact download(s) resolve for "
-        f"{len(CHANNELS)} channel(s); least privilege at the top"
+        f"{len(CHANNELS)} channel(s); least privilege at the top; "
+        f"{len(pins)} pm checkout(s) on one pin"
     )
     return 0
 

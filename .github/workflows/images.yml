@@ -52,8 +52,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
+      # pm is pinned to a commit rather than followed at master, because
+      # plugins/wit/plugin.wit is a copy of pm's and tools/gates/plugins.py
+      # fails the build when the two differ. Following master means any push to
+      # pm turns this repository red on a tree nobody touched -- which is
+      # exactly what happened within half an hour of the plugin contract
+      # landing upstream. Bumping this pin is the moment the contract gets
+      # re-copied and the plugins rebuilt, which is the only point at which the
+      # two can be reconciled anyway.
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, path: pm, ref: master }
+        with:
+          repository: dichhead/pm
+          path: pm
+          ref: 145bae94bf170a9779029abdb41777ea380dc9f0
 
       - name: Install the toolchain the gates need
         run: |
@@ -123,8 +134,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
+      # The same commit the gates job pins; tools/gates/workflow.py holds
+      # every pm checkout in this file to one pin, because a build that runs
+      # against a different pm than the gate approved proves nothing.
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, path: pm, ref: master }
+        with:
+          repository: dichhead/pm
+          path: pm
+          ref: 145bae94bf170a9779029abdb41777ea380dc9f0
 
       - name: Install build dependencies
         run: |

@@ -110,3 +110,13 @@ pm plugins                       # confirm both loaded and signed
 `tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's
 and that no component is older than its source. Neither is something pm can
 catch: from pm's side, a stale plugin is simply a plugin.
+
+That check compares bytes, so it is only as stable as the pm it compares
+against. CI therefore checks pm out at a pinned commit —
+`145bae94bf170a9779029abdb41777ea380dc9f0`, the one `wit/plugin.wit` here is a
+copy of — rather than at `master`. While it followed `master`, the contract
+changing upstream turned every open pull request red inside half an hour, on
+trees nobody had touched. Bumping that pin in `.github/workflows/images.yml`,
+re-copying `wit/plugin.wit` from the same commit and re-running `./build.sh` is
+one change rather than three; `tools/gates/workflow.py` holds both checkouts in
+that file to the same pin.
