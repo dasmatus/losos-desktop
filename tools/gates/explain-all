@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Run `pm explain` over every recipe in the tree.
+#
+# This is the headline gate. `pm explain` derives the sandbox policy and exits
+# non-zero the moment a command matches no fingerprint -- before anything is
+# downloaded or compiled. It therefore proves the entire recipe corpus is
+# executable-in-principle by pm on a machine that could never actually run the
+# build: no network, no disk, no hours.
+#
+# It also verifies signatures on the way, because pm checks those before it
+# parses (C10), so a stale signature fails here too.
+set -euo pipefail
+
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+pm=${PM:-$repo/../pm/target/release/pm}
+
+if [ ! -x "$pm" ]; then
+  echo "explain-all: no pm binary at $pm" >&2
+  exit 1
+fi
+
+export XDG_CONFIG_HOME="$repo/.pm-config"
+
+failed=0
+count=0
+for recipe in "$repo"/out/recipes/*/build.yaml; do
+  [ -e "$recipe" ] || continue
+  count=$((count + 1))
+  name=$(basename "$(dirname "$recipe")")
+  if output=$( cd "$repo/out/pkgs" && "$pm" explain "$recipe" 2>&1 ); then
+    # The capability line is the interesting half: a layer reporting
+    # VersionControl means someone put a `git` in a recipe, and a layer
+    # reporting Network when it has no dl_urls means the same for cargo/pip.
+    grants=$(printf '%s\n' "$output" | sed -n 's/^grants: *//p')
+    printf '  %-28s %s\n' "$name" "$grants"
+  else
+    failed=$((failed + 1))
+    printf '  %-28s FAILED\n' "$name"
+    printf '%s\n' "$output" | sed 's/^/      /'
+  fi
+done
+
+if [ "$failed" -gt 0 ]; then
+  echo "explain-all: $failed of $count recipe(s) rejected by pm" >&2
+  exit 1
+fi
+
+echo "explain-all: all $count recipe(s) accepted by pm"

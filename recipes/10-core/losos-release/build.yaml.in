@@ -1,0 +1,48 @@
+# losos-release -- the OS identity, and the tree's proof that a compile works.
+#
+# Configured by the meson the layer below built. Note the shape of that call:
+# `python3` is the first word, because pm canonicalises a step's first word on
+# the HOST and /build/sysroot exists only inside the jail (C3). meson.py is an
+# argument, so it is reached from where it actually is.
+#
+# The sources are this repository's own, not a download, so there is no
+# dl_urls here and nothing to pin. tools/configure copies files/ into the
+# generated recipe directory, which is the only host tree the jail mounts (C7).
+name: losos-release
+version:
+- '0'
+- '1'
+- '0'
+dependencies: []
+steps:
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/losos-release @RECIPE@/files/losos-release --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - ninja -C /build/b/losos-release -j @JOBS@
+
+# Installed twice: /dest is the shipped tree and keeps prefix=/usr verbatim,
+# /build/sysroot is what later members of this layer link against. See
+# share/stage-sysroot.sh for why the second copy needs its metadata re-pointed.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/losos-release --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/losos-release --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -x /dest/usr/bin/losos-release
+  - test -f /dest/usr/lib/os-release
+  - grep -q ID=losos-desktop /dest/usr/lib/os-release

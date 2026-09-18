@@ -4,136 +4,129 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 
 ## What this is
 
-`losos-desktop` is a **distribution**, not a program: a DAG of
+`losos-desktop` is a **distribution**, not a program: a chain of
 [`pm`](https://github.com/dichhead/pm) build recipes that compiles a
-systemd-native GNOME desktop OS from pinned upstream tarballs and assembles a
-rootfs tarball, an initramfs and a UKI. There is no application source code
+systemd-native GNOME desktop OS from pinned upstream sources and assembles a
+rootfs tarball, an initramfs and a UKI. There is almost no application source
 here. What there is: recipe templates, a generator, a set of gates, and the
-documentation that explains why each of them is shaped the way it is.
+documentation explaining why each is shaped the way it is.
 
-`README.md` covers what the OS is. This file covers what the README does not:
-the build commands, the generation pipeline, and the `pm` behaviours that bite
-silently.
+`README.md` says what the OS is. `docs/pm-constraints.md` is the ground truth
+every design decision cites — **read it before changing anything**; its items
+are numbered C1–C11 and referenced throughout the tree. This file is the map.
 
 ## Build & develop
 
 ```sh
-cd ../pm && cargo build --release   # the pm binary; this repo never vendors it
+cd ../pm && cargo build --release   # the pm binary; never vendored here
 
-./do check        # the gate. Generate, validate, sign, lint, smoke-build.
-./do configure    # recipes/**/*.in -> out/recipes/**
-./do lint         # pm explain over the whole DAG + the two local lints
-./do sign         # pm sign every generated recipe, repo-local trust store
-./do build [pkg]  # the real build. Needs network and hours.
+./do check        # the gate: configure, sign, prove the digest, lint
+./do fetch        # mirror pinned sources into out/sources (needs network)
+./do build        # the real build, top of manifest/layers.yaml
 ./do clean
 ```
 
-`./do check` is the only gate that runs anywhere: no network, no KVM, no nix,
-no root beyond working user namespaces. **Run it before trusting a change.**
-`./do build` needs to reach the upstream source hosts and is not a gate.
+`./do check` runs anywhere: no network, no KVM, no nix, no root beyond working
+user namespaces. **Run it before trusting a change.** `./do build` needs the
+sources mirrored first.
 
 ## Architecture (cross-file big picture)
 
-**Recipes are generated, never authored directly.** The tracked truth is
-`recipes/<layer>/<pkg>/build.yaml.in` plus `sources.lock`; `tools/configure`
-writes `out/recipes/<pkg>/build.yaml`. Three `pm` properties force this, and
-`pm` solves the same problem for itself the same way (`pm.yaml.in`):
+**The build graph is a chain of layer bundles, not a package DAG.** pm has no
+build cache (`Workspace::new` is unconditional, nothing checks for an existing
+archive) and copies each dependency's *entire* archive into its dependent
+(C5, C6). A ninety-node package DAG would rebuild the world on every attempt
+and duplicate the base layer's bytes into every leaf that depends on it. So
+`manifest/layers.yaml` defines a short chain, and `tools/lib/compose.py` splices
+each layer's per-package fragments into one build file. Per-package recipes
+remain the authored unit; they are not what pm sees.
 
-1. A build file has **no `$srcdir`**. The only host directory mounted into the
-   jail is the build file's own, at its own absolute path, so every path a
-   recipe names must be absolute — and therefore substituted in.
-2. A `dl_urls` download lands at `/build/<digest>/<basename>`, where `<digest>`
-   is **FNV-1a-64 over the full URL string, formatted `{:016x}`**
-   (`Step::url_digest` in pm's `src/step.rs`). With no shell and no globbing, a
-   recipe cannot discover that path at run time, so `tools/configure` computes
-   it and substitutes `@DL_<KEY>@`.
-3. Helper scripts must sit **inside the recipe's own directory** to be
-   readable from the jail, so `tools/configure` copies `tools/lib/*.sh` next to
-   every generated `build.yaml`.
+The composer's one non-obvious rule: **every member step lands in the `Build`
+stage.** pm sorts steps by stage and keeps authored order only *within* a stage,
+so a member that kept an `Install` step would float past every later member and
+run against a sysroot they had not populated yet. Inside a bundle, order is the
+list.
 
-**`pm` runs from `out/`.** Dependency paths in a build file resolve against the
-*process* working directory, not the build file's directory, so every
-`dependencies:` entry is spelled `recipes/<pkg>/build.yaml` and `./do` always
-`cd`s to `out/` first. Archives also land in the process working directory.
+**Recipes are generated, never authored directly.** `tools/configure` renders
+`recipes/<layer>/<pkg>/build.yaml.in` into `out/recipes/<layer>/build.yaml`,
+substituting absolute paths (there is no `$srcdir`, C1), the computed download
+path for every source (C9), and the host toolchain paths (C3). pm has the same
+problem with its own build file and solves it the same way, with `pm.yaml.in`.
 
-**Every package is two recipes: `<pkg>-src` and `<pkg>`.** `Capability::Network`
-is derived per *build file*, not per step — `BuildPolicy::derive` unions the
-capabilities of every step and `BuildSandbox::new` unshares the network
-namespace once for the whole build. So a recipe that downloads compiles in a
-jail that **shares the host network**, and pm warns about exactly that. Splitting
-fetch from build is the only way to keep a compiler off the network: `<pkg>-src`
-downloads and restages the verified tarball, `<pkg>` depends on it and compiles
-in an empty netns. This doubles the recipe count on purpose.
+**pm runs from `out/pkgs/`,** which is where archives land and where dependency
+paths resolve from (C11). `out/recipes/` is kept disjoint from it so the
+read-only mount of a recipe's directory never nests inside the mount of the
+archive directory.
 
-**The sysroot pattern** (`tools/lib/sysroot.sh`) exists because **`pm` carries
-dependencies without consuming them**. A dependency's archive is copied to
-`/dest/deps/<name>-<version>.cpkg` and nothing unpacks it; there is no store, no
-prefix, and nothing sets `-I`, `-L` or `PKG_CONFIG_PATH`. So each recipe unpacks
-its own dependency closure — each `.cpkg` carries its own nested `deps/` — into
-`/build/sysroot`, then rewrites `prefix=` in every staged `.pc` file to point at
-it. That rewrite is why meson, cmake and autotools all work with nothing but
-native flags and no `env` wrapper.
+**The sysroot pattern** (`share/sysroot.sh`) exists because pm carries
+dependencies without consuming them (C5). Each bundle unpacks its own dependency
+closure into `/build/sysroot` — each `.cpkg` carries its own nested `deps/` — and
+rewrites `prefix=` in every staged `.pc` file to point at it. Without that
+rewrite a consumer is handed `-I/usr/include`, silently finds the *host's*
+headers in pm's read-only `/usr` mirror, and compiles against the wrong version
+with no warning at all. `share/stage-sysroot.sh` does the same for a package
+just installed into the sysroot by an earlier member of the same layer.
 
-**Layers**, bottom to top: `00-base` (the libraries systemd's maximal option set
-needs) -> `10-systemd` (systemd itself, and the kernel) -> `20-graphics` ->
-`30-gnome` -> `90-image` (merge, initramfs, UKI, rootfs tar). `30-gnome` is the
-long tail and is deliberately last, so the tree is useful before it is complete.
+**The local source mirror** (`tools/fetch-sources`, `tools/serve-sources`) is
+not a convenience. pm's downloader is minreq built with `https-rustls`, which
+compiles Mozilla's roots in (`webpki-roots`) and reads no CA environment
+variable. On any host whose egress re-terminates TLS, pm cannot fetch over HTTPS
+at all and dies with `invalid peer certificate: UnknownIssuer`. Fetching with a
+tool that *can* be told about the local CA and serving the bytes over loopback
+sidesteps that without weakening anything: the SHA-256 pin is unchanged, so a
+mirror serving different bytes fails pm's check exactly as a bad upstream would.
 
-**`os/`** is the part of the OS that is not upstream: unit files, drop-ins,
-presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`, networkd config
-and the kernel command line. `90-image` stages it verbatim.
+**`overlay/`** is the OS content this repo writes rather than fetches: units,
+drop-ins, presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`,
+networkd config, the kernel command line. The image layer stages it verbatim.
 
 ## Gotchas that bite silently
 
-- **`pm` verifies a detached `.sig` before it parses a build file**, and holds
-  every dependency to the same standard all the way down. **Any edit
-  invalidates it, including a comment.** `./do check` re-signs the whole tree
-  every run for this reason; if you edit a recipe and skip signing, the failure
-  reads as a trust error, not an edit.
-- **The fingerprint check reads the first word only.** The pattern is anchored
-  `^(?:[\w.+/-]*/)?(?:…)(?:\s|$)`, so `env FOO=bar meson setup …` matches the
-  `coreutils` fingerprint and the wrapped program is never checked. That is a
-  hole in the guarantee `pm explain` appears to give. `tools/lint` closes it on
-  our side by re-applying pm's table past any leading `VAR=value` tokens — do
-  not remove that check, and prefer a native flag over `env` every time.
-- **`basename` is not in the fingerprint table**, deliberately (pm's
-  `tests/cli_build.rs` asserts it). Neither is `mkfs`, `losetup`, `dd`,
-  `mount`, `rpm`, `dpkg`, `mkosi` or `dracut`. If an assembly step feels like it
-  wants one of those, it belongs in a `/bin/sh` helper script — or it does not
-  belong inside a `pm` jail at all.
-- **`python` does not grant network, but `pip`, `cargo`, `go`, `node`, `npm`
-  and `git` all do.** Invoking any of the latter in a build recipe silently
-  turns its jail into a network-sharing one and defeats the `-src` split. Use
-  `python` for `ukify` and friends; never `pip`.
-- **`/root` and `/var` are not mounted in the jail at all, and `/tmp` is a
-  fresh tmpfs.** A recipe that stages into any of them writes to nowhere. The
-  only writable mounts are `/build` (cwd) and `/dest` (`DESTDIR`).
-- **The jail's `PATH` is fixed** to
-  `/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin`. `pm` resolves
-  a step's *first word* against the host `PATH` and hands `execve` the
-  canonicalised result, but nothing after that — so a build system's own lookup
-  of `cc` or `rustc` goes through the container `PATH` and finds nothing if the
-  toolchain lives outside `/usr`. Name such binaries explicitly, the way pm's
-  own `pm.yaml.in` passes `--config target.<triple>.linker=`.
-- **`version:` is a list of strings.** Quote every component. An unquoted `0`
-  reaches serde as an integer and parsing fails with a type error that does not
-  mention quoting.
-- **`stage:` is required on every step.** serde does not apply the Rust
-  default, so omitting it is an error rather than a `Prepare`.
-- **`TMPDIR` must be on real disk.** Every build workspace lives under it, and
-  a large package needs several GB. On a tmpfs `/tmp` the build dies partway
-  through with `Disk quota exceeded (os error 122)`. `./do` points it at
-  `out/tmp`.
-- **`sources.lock` may ship unresolved hashes.** `TODO` is a sentinel, not a
-  placeholder to be filled in by guessing. Run `tools/fetch-hashes` on a
-  networked machine; `./do lint` fails while any remain.
+Beyond the numbered list in `docs/pm-constraints.md`:
+
+- **`tar` needs `--no-same-owner`, everywhere, always.** pm's jail is a user
+  namespace mapping only uid 0, so a tarball recording any other uid fails with
+  `Cannot change ownership to uid N: Invalid argument` — *after* extracting
+  everything, so it reads as a problem with the destination rather than with the
+  archive's metadata.
+- **`env` is banned** and `tools/gates/fingerprint-lint.py` rejects it by name.
+  pm's fingerprint check reads the first word only, so `env FOO=bar meson …` is
+  classified `coreutils` and `meson` is never checked — and `env` also rewrites
+  the derived capability set, so `env FOO=bar cargo build` silently loses
+  `Network`. Use a native flag (`--pkg-config-path`, `configure VAR=value`,
+  `make VAR=value`, a meson `--native-file`). `share/in-dir.sh` is the single
+  permitted wrapper, listed in `tools/gates/allowed-wrappers`, and the lint
+  re-applies pm's table to what it wraps.
+- **Never invoke `meson` as a step's first word.** pm canonicalises the first
+  word *on the host* (C3), and meson is not installed on the build hosts this
+  repo targets. It is vendored by `losos-00-hosttools` and invoked as
+  `python3 /build/sysroot/usr/lib/meson/meson.py`, where `python3` is the first
+  word. The same applies to every build-time helper a build system looks up for
+  itself — gperf, flex, msgfmt, bpftool, wayland-scanner: they reach the build
+  through a meson `--native-file` `[binaries]` section, never through `PATH`.
+- **A compiled-in absolute path resolves into the host mirror.** pm's run jail
+  extracts a package at `/pkg` *and* mirrors the host's `/usr` read-only, so a
+  binary that opens `/usr/lib/os-release` gets the build host's file and reports
+  the wrong distribution. `losos-release` resolves via `/proc/self/exe`
+  instead; anything else with a data file should do the same.
+- **`python` does not grant network, but `pip`, `cargo`, `go`, `node`, `npm` and
+  `git` all do** — and the grant is per build file, not per step (C8), so one of
+  them anywhere makes the whole layer's jail share the host network.
+- **`./do check` re-signs everything on every run**, because generating a
+  recipe invalidates its signature and pm verifies before parsing (C10). If you
+  run pm by hand after editing, sign first or the failure reads as a trust
+  error.
+- **`sources.lock` may ship unresolved hashes.** `TODO` is a sentinel, never a
+  value to fill in by guessing. `tools/fetch-sources --update` writes what the
+  bytes actually hashed to; `tools/configure` refuses to generate while any
+  remain unless passed `--allow-unresolved`.
 
 ## Conventions
 
-- Commits are Conventional Commits (`feat:`, `fix:`, `docs:`, `ci:`), written
-  from the diff. **No attribution trailers of any kind** — no `Co-Authored-By`,
-  no "Generated with", no session link, and no tool name in a code comment or
-  doc header. The sibling `losos` enforces this with a commit-msg hook.
+- Commits are Conventional Commits (`feat:`, `fix:`, `docs:`), written from the
+  diff. **No attribution trailers of any kind** — no `Co-Authored-By`, no
+  "Generated with", no session link, no tool name in a comment or doc header.
+  The sibling `losos` enforces this with a commit-msg hook.
 - Licence is AGPL-3.0-or-later via the blanket `REUSE.toml`. **No per-file SPDX
   headers**: a recipe's header comment is scarce space, spent on what the recipe
   does and why.

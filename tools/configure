@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""Generate out/recipes/** from recipes/**/build.yaml.in and manifest/layers.yaml.
+
+A pm build file cannot be written by hand in this repository, for three reasons
+that all come from pm itself (docs/pm-constraints.md):
+
+ C9. A `dl_urls` download lands at /build/<fnv1a64(url)>/<basename>. There is no
+     shell in a build step, so no globbing and no command substitution: a recipe
+     cannot find that directory at run time. It has to be told, which means
+     something has to compute it.
+
+ C1/C3. There is no `$srcdir`, and the only host directory mounted into the jail
+     is the build file's own, at its own absolute path. Every path a recipe
+     names must be absolute -- and an absolute path is machine-specific.
+
+ C7. A shared helper cannot be shared by reference, for the same reason. It has
+     to be copied next to every generated build file.
+
+pm has exactly this problem with its own build file and solves it exactly this
+way, with `pm.yaml.in` and a handful of @PLACEHOLDER@ tokens.
+
+The tracked truth is recipes/**/build.yaml.in, manifest/layers.yaml and
+manifest/sources.lock. out/ is disposable and gitignored.
+"""
+
+import argparse
+import shutil
+import subprocess
+import sys
+from collections import OrderedDict
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "lib"))
+
+try:
+    import yaml
+except ImportError:
+    sys.exit("configure: PyYAML is required (apt install python3-yaml)")
+
+import compose as compose_lib
+from fnv import basename, download_path
+
+UNRESOLVED = "TODO"
+
+
+def host_tool(*names):
+    """Absolute, canonical path of the first of `names` on the host PATH.
+
+    pm resolves a step's FIRST WORD against the host PATH and hands execve the
+    canonicalised result, but nothing after that: a build system's own lookup of
+    `cc` goes through the jail's fixed PATH (C3). So the compiler is named
+    explicitly, the way pm's own pm.yaml.in does it.
+    """
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return str(Path(found).resolve())
+    return ""
+
+
+def load_sources(path, mirror=None):
+    """Read sources.lock into the placeholder tokens it contributes.
+
+    Each entry yields four tokens. @DL_KEY@ is the load-bearing one; the others
+    exist so a recipe never restates a URL or a version the lock file already
+    holds, which is how the two drift apart.
+
+    With `mirror` set, the upstream URL is replaced by
+    <mirror>/<sha256>/<basename> -- the layout tools/fetch-sources writes and
+    tools/serve-sources serves. The hash is NOT replaced, so the build is
+    pinned to exactly the same bytes; only the transport changes. This is what
+    makes pm usable on a host that re-terminates TLS, where pm's compiled-in
+    root list cannot validate any upstream chain (see tools/fetch-sources).
+    """
+    if not path.exists():
+        return {}, []
+    doc = yaml.safe_load(path.read_text()) or {}
+    subs, unresolved = {}, []
+    for key, entry in doc.items():
+        url = entry["url"]
+        digest = str(entry.get("sha256", UNRESOLVED))
+        if digest == UNRESOLVED:
+            unresolved.append(key)
+        elif mirror:
+            url = f"{mirror.rstrip('/')}/{digest}/{basename(url)}"
+        subs[f"@URL_{key}@"] = url
+        subs[f"@SHA256_{key}@"] = digest
+        subs[f"@VERSION_{key}@"] = str(entry.get("version", ""))
+        subs[f"@DL_{key}@"] = download_path(url)
+    return subs, unresolved
+
+
+def substitute(text, subs):
+    for token, value in subs.items():
+        text = text.replace(token, value)
+    return text
+
+
+def stage_support(recipe_out, member_dirs, subs):
+    """Copy everything the bundle's steps will need to read from inside the jail.
+
+    Only the build file's own directory is mounted (C7), so `share/*.sh`, every
+    member's `files/`, and anything named in an `include` manifest is copied in
+    rather than referenced.
+    """
+    for helper in sorted((REPO / "share").glob("*.sh")):
+        target = recipe_out / helper.name
+        target.write_text(substitute(helper.read_text(), subs))
+        target.chmod(0o755)
+
+    for package, source in member_dirs:
+        files = source / "files"
+        if files.is_dir():
+            dest = recipe_out / "files" / package
+            shutil.copytree(files, dest, dirs_exist_ok=True)
+            for script in dest.rglob("*.sh"):
+                script.write_text(substitute(script.read_text(), subs))
+                script.chmod(0o755)
+            for script in dest.rglob("*.py"):
+                script.write_text(substitute(script.read_text(), subs))
+
+        manifest = source / "include"
+        if manifest.exists():
+            for line in manifest.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                src = REPO / line
+                if not src.exists():
+                    raise SystemExit(
+                        f"configure: {package}: include not found: {line}"
+                    )
+                dest = recipe_out / "files" / package / Path(line).name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if src.is_dir():
+                    shutil.copytree(src, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dest)
+
+
+def render_member(path, subs):
+    """Render one member's build.yaml.in and parse it as a pm build file."""
+    text = substitute(path.read_text(), subs)
+    try:
+        doc = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"configure: {path}: {exc}")
+    if not isinstance(doc, dict) or "steps" not in doc:
+        raise SystemExit(f"configure: {path}: not a build file")
+    return doc
+
+
+def yaml_dump(doc):
+    """Serialise preserving key order, and never folding a long command."""
+
+    class Dumper(yaml.SafeDumper):
+        pass
+
+    Dumper.add_representer(
+        OrderedDict,
+        lambda d, data: d.represent_mapping("tag:yaml.org,2002:map", data.items()),
+    )
+    return yaml.dump(doc, Dumper=Dumper, default_flow_style=False, width=10**6,
+                     sort_keys=False)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--out", default=str(REPO / "out"))
+    parser.add_argument("--allow-unresolved", action="store_true",
+                        help="generate even while sources.lock has TODO hashes")
+    parser.add_argument("--mirror", metavar="URL",
+                        help="fetch sources from a local mirror instead of "
+                             "upstream, keeping the same SHA-256 pins")
+    args = parser.parse_args()
+
+    out = Path(args.out)
+    recipes_out = out / "recipes"
+    if recipes_out.exists():
+        shutil.rmtree(recipes_out)
+    recipes_out.mkdir(parents=True)
+    (out / "pkgs").mkdir(parents=True, exist_ok=True)
+    (out / "tmp").mkdir(parents=True, exist_ok=True)
+
+    subs, unresolved = load_sources(
+        REPO / "manifest" / "sources.lock", args.mirror
+    )
+    if unresolved and not args.allow_unresolved:
+        print(
+            "configure: sources.lock has unresolved hashes for: "
+            + ", ".join(sorted(unresolved)),
+            file=sys.stderr,
+        )
+        print(
+            "configure: run tools/fetch-hashes on a networked machine, or pass\n"
+            "           --allow-unresolved to generate anyway (the build will\n"
+            "           fail at the hash check, not silently).",
+            file=sys.stderr,
+        )
+        return 1
+
+    subs["@SRCDIR@"] = str(REPO)
+    subs["@OUT@"] = str(out)
+    subs["@PKGS@"] = str(out / "pkgs")
+    subs["@CC@"] = host_tool("cc", "gcc")
+    subs["@CXX@"] = host_tool("c++", "g++")
+    subs["@AR@"] = host_tool("ar")
+    subs["@NM@"] = host_tool("nm")
+    subs["@STRIP@"] = host_tool("strip")
+    subs["@PKGCONFIG@"] = host_tool("pkgconf", "pkg-config")
+    subs["@PYTHON@"] = host_tool("python3")
+    subs["@JOBS@"] = str(max(1, (__import__("os").cpu_count() or 2)))
+
+    layers_file = REPO / "manifest" / "layers.yaml"
+    layers = yaml.safe_load(layers_file.read_text()) if layers_file.exists() else []
+    layers = layers or []
+
+    previous = None
+    for layer in layers:
+        name, directory = layer["name"], layer["dir"]
+        recipe_out = recipes_out / name
+        recipe_out.mkdir(parents=True)
+
+        local = dict(subs)
+        # @RECIPE@ is the bundle's own generated directory -- the one host tree
+        # the jail mounts for this build file. Every helper path in every
+        # member's steps resolves through it.
+        local["@RECIPE@"] = str(recipe_out)
+
+        member_dirs = []
+        members = []
+        for package in layer.get("members") or []:
+            source = REPO / "recipes" / directory / package
+            template = source / "build.yaml.in"
+            if not template.exists():
+                raise SystemExit(f"configure: missing {template}")
+            member_dirs.append((package, source))
+            members.append((package, render_member(template, local)))
+
+        bundle = compose_lib.compose(
+            name, members, f"../recipes/{previous}/build.yaml" if previous else None
+        )
+        # The composer emits @RECIPE@ in its own shared steps; members were
+        # already rendered above.
+        text = substitute(yaml_dump(bundle), local)
+        (recipe_out / "build.yaml").write_text(text)
+
+        stage_support(recipe_out, member_dirs, local)
+
+        # A surviving @TOKEN@ means a recipe named something sources.lock or
+        # the substitution map does not define. Caught here, it is a one-line
+        # generation error; caught later it is an ENOENT deep inside a build.
+        residual = sorted({
+            word for word in text.split()
+            if word.startswith("@") and word.endswith("@") and len(word) > 2
+        })
+        if residual:
+            raise SystemExit(
+                f"configure: {name}: unsubstituted placeholders: "
+                + ", ".join(residual)
+            )
+
+        previous = name
+
+    print(f"configure: generated {len(layers)} layer bundle(s) into {recipes_out}")
+    if unresolved:
+        print(
+            f"configure: WARNING {len(unresolved)} source(s) still unpinned; "
+            "the build will stop at the hash check",
+            file=sys.stderr,
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

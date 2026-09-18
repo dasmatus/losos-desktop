@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Mirror every pinned source locally, and fill in any hash that is still TODO.
+
+Two jobs, one pass.
+
+**Filling sources.lock.** A recipe's `dl_urls` hash is verified by pm before it
+parses the build file, so a wrong value is indistinguishable from a compromised
+mirror. Nothing in this repository ever writes a hash by hand: this tool
+downloads the bytes and records what they actually hashed to.
+
+**The mirror, and why it is not a workaround.** pm's downloader is minreq built
+with `https-rustls`, which compiles Mozilla's root list in (`webpki-roots` in
+pm's Cargo.lock). It reads no CA environment variable and has no configuration,
+so on any host whose egress re-terminates TLS -- a corporate MITM proxy, an
+air-gapped mirror, the sandbox this repository was developed in -- pm cannot
+fetch over HTTPS at all, and fails with `invalid peer certificate:
+UnknownIssuer`.
+
+Fetching with a tool that *can* be told about the local CA, then serving the
+bytes over loopback HTTP, sidesteps that without weakening anything: the
+SHA-256 in sources.lock still pins the content, and a mirror that served
+different bytes would fail pm's check exactly as a bad upstream would. TLS is
+protecting the transfer we already did; the hash is protecting the build.
+
+    tools/fetch-sources                 # fetch + verify everything
+    tools/fetch-sources --update        # also fill TODO hashes
+    tools/serve-sources                 # serve out/sources over loopback
+    tools/configure --mirror http://127.0.0.1:8730
+"""
+
+import argparse
+import hashlib
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools" / "lib"))
+
+import yaml  # noqa: E402
+
+from fnv import basename  # noqa: E402
+
+UNRESOLVED = "TODO"
+CHUNK = 1 << 16
+
+
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(CHUNK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def download(url, dest):
+    """Fetch with curl, which reads the environment's proxy and CA settings.
+
+    Deliberately not urllib: curl already honours HTTPS_PROXY and the system
+    CA bundle that this kind of environment pre-configures, and getting that
+    wrong is the entire reason this tool exists.
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["curl", "-sS", "-L", "--fail", "--max-time", "600", "-o", str(dest), url],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        dest.unlink(missing_ok=True)
+        return result.stderr.strip() or f"curl exited {result.returncode}"
+    return None
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--update", action="store_true",
+                        help="write hashes for entries pinned to TODO")
+    parser.add_argument("--only", help="fetch just this sources.lock key")
+    args = parser.parse_args()
+
+    lock_path = REPO / "manifest" / "sources.lock"
+    text = lock_path.read_text()
+    doc = yaml.safe_load(text) or {}
+
+    mirror = REPO / "out" / "sources"
+    mirror.mkdir(parents=True, exist_ok=True)
+
+    failures, updated = [], []
+    for key, entry in doc.items():
+        if args.only and key != args.only:
+            continue
+        url = entry["url"]
+        pinned = str(entry.get("sha256", UNRESOLVED))
+        name = basename(url)
+
+        # Content-addressed: the pinned hash names the directory, so a changed
+        # pin never silently reuses the old bytes.
+        staged = mirror / (pinned if pinned != UNRESOLVED else "unpinned") / name
+
+        if staged.exists() and pinned != UNRESOLVED and sha256_of(staged) == pinned:
+            print(f"  ok      {key:24} (cached)")
+            continue
+
+        print(f"  fetch   {key:24} {url}")
+        error = download(url, staged)
+        if error:
+            failures.append((key, url, error))
+            print(f"  FAILED  {key:24} {error}", file=sys.stderr)
+            continue
+
+        actual = sha256_of(staged)
+        if pinned == UNRESOLVED:
+            if not args.update:
+                failures.append((key, url, "unpinned; re-run with --update"))
+                continue
+            # Move into its content-addressed home now that we know the hash.
+            final = mirror / actual / name
+            final.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(staged), final)
+            text = text.replace(
+                f"  sha256: {UNRESOLVED}", f"  sha256: {actual}", 1
+            ) if f"  sha256: {UNRESOLVED}" in text else text
+            updated.append((key, actual))
+            print(f"  pinned  {key:24} {actual}")
+        elif actual != pinned:
+            failures.append(
+                (key, url, f"hash mismatch: pinned {pinned}, got {actual}")
+            )
+            print(f"  MISMATCH {key:23} pinned {pinned} got {actual}", file=sys.stderr)
+        else:
+            print(f"  ok      {key:24} {actual}")
+
+    if updated:
+        # Rewrite per key rather than re-dumping the document, so the file's
+        # comments and ordering survive.
+        fresh = lock_path.read_text()
+        for key, digest in updated:
+            lines = fresh.splitlines()
+            for i, line in enumerate(lines):
+                if line.startswith(f"{key}:"):
+                    for j in range(i + 1, min(i + 6, len(lines))):
+                        if lines[j].strip().startswith("sha256:"):
+                            indent = lines[j][: len(lines[j]) - len(lines[j].lstrip())]
+                            lines[j] = f"{indent}sha256: {digest}"
+                            break
+                    break
+            fresh = "\n".join(lines) + "\n"
+        lock_path.write_text(fresh)
+        print(f"fetch-sources: pinned {len(updated)} source(s) in {lock_path}")
+
+    if failures:
+        print(f"\nfetch-sources: {len(failures)} source(s) unavailable:",
+              file=sys.stderr)
+        for key, url, why in failures:
+            print(f"  {key}: {why}\n    {url}", file=sys.stderr)
+        return 1
+
+    print("fetch-sources: every pinned source is present and verified")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

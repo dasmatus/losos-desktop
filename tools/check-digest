@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Assert that tools/configure predicts pm's download path correctly.
+
+This is the sharpest gate in the repo, and it exists because the prediction it
+checks is the load-bearing, undocumented, unversioned part of the whole design.
+
+`tools/configure` substitutes @DL_<KEY>@ with /build/<digest>/<basename>, where
+<digest> is FNV-1a-64 over the URL. Nothing in pm's public surface promises that
+layout: it is an implementation detail of `Step::url_digest`, no test in pm pins
+it, and a recipe cannot discover it at run time because a build step has no
+shell. If pm ever changes the hash, every recipe in this tree starts failing
+with `No such file or directory` on a file that was downloaded and verified
+successfully moments earlier -- a spectacularly misleading error.
+
+So this does not re-derive the digest in Python and compare it with itself,
+which would only prove that Python agrees with Python. It serves a real file
+over loopback, hands the URL to a real `pm build`, and asserts from INSIDE the
+jail that the file is where tools/configure said it would be. If pm's layout
+changes, this goes red and says so.
+
+Loopback only: no external network, so it runs in the same places `./do check`
+does.
+"""
+
+import hashlib
+import http.server
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+configure = SourceFileLoader(
+    "configure", str(REPO / "tools" / "configure")
+).load_module()
+
+PROBE = b"losos-desktop download digest probe\n"
+
+
+class Quiet(http.server.SimpleHTTPRequestHandler):
+    """SimpleHTTPRequestHandler without the per-request log line."""
+
+    def log_message(self, *args):
+        pass
+
+
+def main() -> int:
+    pm = os.environ.get("PM", str(REPO.parent / "pm" / "target" / "release" / "pm"))
+    if not Path(pm).exists():
+        sys.exit(f"check-digest: pm binary not found at {pm}; build it first")
+
+    work = Path(tempfile.mkdtemp(prefix="losos-desktop-digest-"))
+    httpd = None
+    try:
+        srv = work / "srv"
+        srv.mkdir()
+        (srv / "probe.txt").write_bytes(PROBE)
+        sha = hashlib.sha256(PROBE).hexdigest()
+
+        def handler(*args, **kwargs):
+            return Quiet(*args, directory=str(srv), **kwargs)
+
+        httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+        url = f"http://127.0.0.1:{port}/probe.txt"
+        predicted = configure.download_path(url)
+
+        recipe = work / "recipe"
+        recipe.mkdir()
+        # The assertion is `test -f <predicted>`, run inside the jail. pm
+        # fetches before the step's commands run, so a wrong prediction fails
+        # here and nowhere else.
+        (recipe / "build.yaml").write_text(
+            "name: dlprobe\n"
+            "version:\n"
+            "- '0'\n"
+            "dependencies: []\n"
+            "steps:\n"
+            "- stage: Prepare\n"
+            "  name: assert-download-path\n"
+            "  dl_urls:\n"
+            f"    {url}: {sha}\n"
+            "  run:\n"
+            f"  - test -f {predicted}\n"
+        )
+
+        out = work / "out"
+        out.mkdir()
+        (work / "tmp").mkdir()
+        env = dict(os.environ)
+        env["XDG_CONFIG_HOME"] = str(work / "config")
+        env["TMPDIR"] = str(work / "tmp")
+
+        def run(*args):
+            return subprocess.run(
+                [pm, *args], cwd=out, env=env, capture_output=True, text=True
+            )
+
+        run("keygen")
+        run("sign", str(recipe / "build.yaml"))
+        result = run("build", str(recipe / "build.yaml"))
+
+        if result.returncode != 0:
+            sys.stderr.write(result.stdout)
+            sys.stderr.write(result.stderr)
+            sys.exit(
+                "check-digest: FAILED.\n"
+                f"  tools/configure predicted {predicted}\n"
+                "  and the file was not there inside the jail.\n"
+                "  pm's Step::url_digest has almost certainly changed; fix\n"
+                "  tools/configure.url_digest to match pm's src/step.rs."
+            )
+
+        print(f"check-digest: pm put the download where configure said ({predicted})")
+        return 0
+    finally:
+        if httpd is not None:
+            httpd.shutdown()
+        shutil.rmtree(work, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
