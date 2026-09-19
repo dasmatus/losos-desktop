@@ -79,15 +79,16 @@ def host_flags(flags):
     """The flag set minus the cross-target parts.
 
     A musl --target/--sysroot cannot be exercised without a musl sysroot, which
-    only exists once losos-00-toolchain has been built. -resource-dir goes with
-    them: it points INTO that sysroot, and clang given a resource directory that
-    does not exist finds neither its builtin headers nor a runtime, so the probe
-    would fail for a reason that says nothing about the flags being tested.
-    Dropping exactly those three and keeping everything else means this still
-    tests the LTO and CFI machinery, against the host's own resource directory,
-    and the report says plainly which part went unverified.
+    only exists once losos-00-toolchain has been built. Two others point into
+    that same sysroot and have to go with them: -resource-dir, without which
+    clang finds neither its builtin headers nor a runtime, and --unwindlib,
+    which names a libunwind this tree builds and no build host installs
+    (`ld.lld: error: unable to find library -lunwind`). Dropping exactly those
+    four and keeping everything else means this still tests the LTO and CFI
+    machinery -- diagnose mode included, against whatever unwinder the host
+    has -- and the report says plainly which part went unverified.
     """
-    dropped = ("--target=", "--sysroot=", "-resource-dir=")
+    dropped = ("--target=", "--sysroot=", "-resource-dir=", "--unwindlib=")
     return [f for f in flags if not f.startswith(dropped)]
 
 
@@ -242,11 +243,13 @@ def main():
     # State the gap rather than let the green line imply it away.
     print()
     print("  NOT verified here:")
-    print(f"    --target={tc.target.get('triple')}, --sysroot and -resource-dir:")
+    print(f"    --target={tc.target.get('triple')}, --sysroot, -resource-dir")
+    print("    and --unwindlib:")
     print("    no musl sysroot exists until losos-00-toolchain is built, and the")
-    print("    resource directory lives inside it. The probe above drops exactly")
-    print("    those three flags and keeps every other one, so what it proves is")
-    print("    the flag set against the HOST's runtimes, not the staged ones.")
+    print("    resource directory and the unwinder both live inside it. The probe")
+    print("    above drops exactly those four flags and keeps every other one, so")
+    print("    what it proves is the flag set against the HOST's runtimes and")
+    print("    unwinder, not the staged ones.")
     print("    See docs/limits.md for what remains outside the scheme.")
 
     return 0 if ok else 1

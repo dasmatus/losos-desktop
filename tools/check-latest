@@ -105,6 +105,16 @@ HOLD = {
         "module set. Bump it with COMPILER_RT or not at all -- which is not a "
         "request: enforce_lockstep below refuses the apply that tries."
     ),
+    "LIBUNWIND": (
+        "the unwinder from the same LLVM release as COMPILER_RT. The CFI "
+        "runtime that calls into it is compiler-rt's, so the two have to be "
+        "one release; bump them together or not at all."
+    ),
+    "LLVM_RUNTIMES": (
+        "three cmake modules of the same LLVM release as LIBUNWIND, which "
+        "does not configure without HandleFlags.cmake from them. Held with "
+        "it, and enforce_lockstep refuses the apply that moves one alone."
+    ),
 }
 
 

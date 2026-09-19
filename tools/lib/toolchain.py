@@ -76,12 +76,41 @@ class Toolchain:
             flags.append(f"-resource-dir={resource_dir}")
         return flags
 
-    def runtime_flags(self):
+    def runtime_flags(self, drops=()):
         """Which runtime library and unwinder clang links against.
 
         Link-time only, deliberately. They are accepted on a compile line and
         do nothing there, and clang then warns about an unused argument for
         every translation unit in the distribution.
+
+        `unwindlib` is droppable on its own, which no other flag here is. The
+        unwinder cannot be handed itself: libunwind's own shared library links
+        with --rtlib=compiler-rt like everything else, and a --unwindlib
+        naming the library being linked resolves to nothing.
+
+        Dropping it emits `--unwindlib=none`, not nothing. Those are different
+        instructions and the difference is the whole reason this line is
+        written out rather than skipped: omitting the flag does not mean "no
+        unwinder", it means clang's build-time default, and the clang in the
+        Containerfile -- Ubuntu's 18.1.3 (1ubuntu1) -- defaults to libgcc even
+        under --rtlib=compiler-rt. Upstream clang returns UNW_None for
+        compiler-rt on linux-musl, so the reasoning in manifest/toolchain.yaml
+        holds against an unpatched compiler; Ubuntu's patch is what breaks it.
+
+        Measured by asking the driver to print its link command on that exact
+        compiler: with the flag omitted, two "-lgcc_s"; with --unwindlib=none,
+        zero. No sysroot here has libgcc_s, so the omitted form got
+        `ld.lld: error: unable to find library -lgcc_s` out of cmake's own
+        compiler test, before libunwind compiled a single file.
+
+        Which makes the `none` branch a restoration rather than an addition,
+        and that is the part worth remembering. Before there was an unwinder
+        to name, `target.unwindlib` was `none` and this method appended it
+        unconditionally, so every link in the tree carried --unwindlib=none
+        and the default was never reached. Changing the key to `libunwind` and
+        making it droppable kept the flag for everything except the one
+        package built before any unwinder exists -- which is the one package
+        that needed it.
         """
         flags = []
         rtlib = self.target.get("rtlib")
@@ -89,7 +118,11 @@ class Toolchain:
             flags.append(f"--rtlib={rtlib}")
         unwindlib = self.target.get("unwindlib")
         if unwindlib:
-            flags.append(f"--unwindlib={unwindlib}")
+            flags.append(
+                "--unwindlib=none"
+                if "unwindlib" in drops
+                else f"--unwindlib={unwindlib}"
+            )
         return flags
 
     def cflags(self, package=None):
@@ -138,7 +171,10 @@ class Toolchain:
         # packages that drop `target` -- musl and the kernel -- are exactly the
         # two that must not be handed compiler-rt. musl is building the sysroot
         # these would resolve out of, and the kernel supplies its own.
-        flags = [] if "target" in drops else self.target_flags() + self.runtime_flags()
+        flags = (
+            [] if "target" in drops
+            else self.target_flags() + self.runtime_flags(drops)
+        )
         if linker:
             # CFI needs a linker that understands the bitcode it is merging.
             flags.append(f"-fuse-ld={linker}")

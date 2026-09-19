@@ -19,11 +19,14 @@
   # compiled against musl rather than against the build host's glibc -- which
   # is what makes a package runnable on a machine other than the one that
   # built it. Order within the layer is forced: musl needs the kernel's
-  # userspace headers to compile, and compiler-rt needs musl to link against.
+  # userspace headers to compile, compiler-rt needs musl to link against, and
+  # libunwind is last because its shared library links against compiler-rt's
+  # crt objects out of the resource directory compiler-rt has just staged.
   members:
     - linux-headers
     - musl
     - compiler-rt
+    - libunwind
 
 - name: losos-01-meson
   dir: 00-meson
