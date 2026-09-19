@@ -117,8 +117,9 @@ build target="":
   fi
 
   target="{{target}}"
+  top_target=$(python3 -c 'import pathlib, yaml; layers = yaml.safe_load(pathlib.Path("'"{{repo}}"'/manifest/layers.yaml").read_text()) or []; print(layers[-1]["name"] if layers else "")')
   if [ -z "$target" ]; then
-    target=$(python3 -c 'import pathlib, yaml; layers = yaml.safe_load(pathlib.Path("'"{{repo}}"'/manifest/layers.yaml").read_text()) or []; print(layers[-1]["name"] if layers else "")')
+    target="$top_target"
   fi
   [ -n "$target" ] || { echo "nothing to build" >&2; exit 1; }
 
@@ -185,7 +186,15 @@ build target="":
     done < "{{repo}}/out/configure.args"
   fi
 
-  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
+  configure_args=("${remembered[@]}")
+  have_allow_unresolved=0
+  for arg in "${configure_args[@]}"; do
+    [ "$arg" = "--allow-unresolved" ] && have_allow_unresolved=1
+  done
+  if [ "$target" != "$top_target" ] && [ "$have_allow_unresolved" -eq 0 ]; then
+    configure_args=(--allow-unresolved "${configure_args[@]}")
+  fi
+  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure "${configure_args[@]+"${configure_args[@]}"}"
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
 
   if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
