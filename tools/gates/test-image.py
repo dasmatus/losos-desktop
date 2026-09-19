@@ -201,8 +201,51 @@ def test_uki(work, failures):
         print(f"  mkuki    {count} sections, {len(data)} bytes, payloads intact")
 
 
+# The Discoverable Partitions Specification's root types, written here so that
+# architectures.yaml can be checked against something rather than against
+# itself.
+DISCOVERABLE_ROOTS = {
+    "root-x86-64": "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",
+    "root-arm64": "B921B045-1DF0-41C3-AF44-4C6F280D3FAE",
+}
+
+
+def test_partition_types(failures):
+    """`gpt_root` and `gpt_root_uuid` are one value spelled two ways.
+
+    They have to be. systemd-repart takes the name and xorriso's
+    -append_partition takes the GUID, so the same partition type is written out
+    twice for every architecture, and a mismatch is an image whose ISO carries
+    a root partition systemd-gpt-auto-generator will not recognise -- which
+    boots to an initrd with nowhere to go and no message saying why.
+    """
+    sys.path.insert(0, str(REPO / "tools" / "lib"))
+    import yaml
+
+    architectures = yaml.safe_load(
+        (REPO / "manifest" / "architectures.yaml").read_text()
+    )
+    for arch, spec in sorted(architectures.items()):
+        name, guid = spec.get("gpt_root"), spec.get("gpt_root_uuid")
+        expected = DISCOVERABLE_ROOTS.get(name)
+        if expected is None:
+            failures.append(
+                f"partition types: {arch}: gpt_root {name!r} is not a root type "
+                "this gate knows; add it here with its GUID from the "
+                "Discoverable Partitions Specification"
+            )
+        elif (guid or "").upper() != expected:
+            failures.append(
+                f"partition types: {arch}: gpt_root is {name} but gpt_root_uuid "
+                f"is {guid}, and {name} is {expected}"
+            )
+    if not failures:
+        print(f"  types    {len(architectures)} architecture(s) name one root type twice")
+
+
 def main():
     failures = []
+    test_partition_types(failures)
     with tempfile.TemporaryDirectory(prefix="losos-image-test-") as tmp:
         work = Path(tmp)
         cpio_work = work / "cpio"

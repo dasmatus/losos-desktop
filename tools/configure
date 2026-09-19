@@ -282,6 +282,16 @@ def main():
     # The loopback port tools/vm-test serves a test release on. Written here
     # rather than in the unit so the harness and the guest cannot disagree.
     subs["@OTA_PORT@"] = str(args.ota_port)
+    # Every partition UUID in the image is derived from this, so two builds of
+    # one version agree and two versions differ. systemd-repart takes a UUID
+    # and nothing else, so the version string is hashed into one rather than
+    # spelled into it.
+    subs["@IMAGE_SEED@"] = str(
+        __import__("uuid").uuid5(
+            __import__("uuid").NAMESPACE_URL,
+            f"https://losos.invalid/image/{args.arch}/{args.version}",
+        )
+    )
 
     # The toolchain: one manifest, every flag in the tree. A recipe that
     # spelled its own -O2 would be outside the CFI scheme with nothing saying

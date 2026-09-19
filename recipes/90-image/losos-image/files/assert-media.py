@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Check the disk images structurally, inside the build that produced them.
 
-`tools/gates/test-disk.py` proves the writers against synthetic trees and runs
-anywhere. This runs against the real artifacts, in the jail, as a `Test` step,
-and asks the smaller question those writers cannot answer about themselves: is
-what came out actually a qcow2, an ISO with a boot catalog, and a partition
-table whose partitions hold the filesystems they claim to.
+mkosi, xorriso and qemu-img each report success on their own terms. This runs
+against what they actually produced, in the jail, as a `Test` step, and asks
+the question none of them asks: is what came out actually a qcow2, an ISO with
+a boot catalog, and a partition table whose partitions hold the filesystems
+they claim to.
 
 Every failure here is one that firmware reports as a machine that powers on and
 sits at a boot menu with nothing in it.
 
-Deliberately duplicates nothing from the writers: it reads magic numbers and
-offsets out of the finished files.
+Deliberately shares no code with anything that wrote these: it reads magic
+numbers and offsets out of the finished files.
 """
 
 import argparse
@@ -21,6 +21,17 @@ from pathlib import Path
 
 SECTOR = 512
 ISO_SECTOR = 2048
+
+# The two partition types this has an opinion about, from the Discoverable
+# Partitions Specification. Looked up by type rather than by position: xorriso
+# puts the ISO 9660 image area in the table as partition 1, so the ESP is no
+# longer whatever came first, and an index would silently start checking the
+# wrong bytes.
+ESP_TYPE = "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
+ROOT_TYPES = (
+    "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",  # root-x86-64
+    "B921B045-1DF0-41C3-AF44-4C6F280D3FAE",  # root-arm64
+)
 
 
 def fail(message):
@@ -79,6 +90,29 @@ class Qcow2View:
         return self.image.read(self.cluster).ljust(self.cluster, b"\0")
 
 
+def guid_text(raw):
+    """A GPT type GUID's 16 bytes as the string everyone writes it as.
+
+    The first three fields are little-endian and the last two are not, which is
+    not a quirk of this file: it is how Microsoft wrote GUIDs down and what
+    every partition table since has copied.
+    """
+    first, second, third = struct.unpack_from("<IHH", raw, 0)
+    return (
+        f"{first:08X}-{second:04X}-{third:04X}-"
+        f"{raw[8]:02X}{raw[9]:02X}-" + "".join(f"{b:02X}" for b in raw[10:16])
+    )
+
+
+def by_type(table, wanted):
+    """The first entry whose type GUID is `wanted`, or None."""
+    wanted = wanted if isinstance(wanted, tuple) else (wanted,)
+    for entry in table:
+        if guid_text(entry[0]) in wanted:
+            return entry
+    return None
+
+
 def partitions(image):
     """The partition table's entries, read from the primary header."""
     image.seek(SECTOR)
@@ -104,10 +138,18 @@ def check_disk(image, what):
     table = partitions(image)
     if not table:
         return fail(f"{what} has no GPT header at LBA 1")
-    if len(table) != 2:
-        return fail(f"{what} has {len(table)} partitions, expected 2")
 
-    esp, root = table[0], table[1]
+    esp = by_type(table, ESP_TYPE)
+    root = by_type(table, ROOT_TYPES)
+    if esp is None:
+        return fail(f"{what} has no partition typed as an EFI system partition")
+    if root is None:
+        # A root partition typed as anything else is the failure this whole
+        # distribution's boot path cannot survive: there is no /etc/fstab and
+        # no root= on the command line, so systemd-gpt-auto-generator finding
+        # nothing means the initrd has nowhere to go.
+        return fail(f"{what} has no partition typed as a discoverable root")
+
     image.seek(esp[1] * SECTOR)
     boot = image.read(512)
     if boot[82:90] != b"FAT32   ":
@@ -168,10 +210,14 @@ def check_iso(path):
         table = partitions(image)
         if not table:
             return fail(f"{path} has no GPT, so it would not boot from USB")
-        if boot_extent * ISO_SECTOR != table[0][1] * SECTOR:
+        esp = by_type(table, ESP_TYPE)
+        if esp is None:
+            return fail(f"{path} has no ESP in its GPT, so it would not boot "
+                        "from USB")
+        if boot_extent * ISO_SECTOR != esp[1] * SECTOR:
             return fail(f"{path}: the boot catalog points at byte "
                         f"{boot_extent * ISO_SECTOR} and the ESP partition "
-                        f"starts at {table[0][1] * SECTOR}")
+                        f"starts at {esp[1] * SECTOR}")
 
         if not check_disk(image, path):
             return False

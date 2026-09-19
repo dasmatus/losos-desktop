@@ -40,6 +40,8 @@ use pm::plugin::{
 
 struct LososImage;
 
+/// pm-fingerprints
+///
 /// Tools that only read and write ordinary files in the workspace.
 ///
 /// Filesystem builders are here rather than under anything more alarming because

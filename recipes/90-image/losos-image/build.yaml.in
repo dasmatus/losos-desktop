@@ -24,13 +24,12 @@
 # target disk (CopyBlocks=auto in /usr/lib/repart.sysinstall.d). So there is
 # nothing that can drift between "the installer" and "what it installs".
 #
-# The disk images are written by the format writers in files/, not by mkfs and
-# losetup: neither is in pm's fingerprint table, and the jail has no privilege
-# to use them with in any case (C2, C7). `mkext4.py` writes the root
-# filesystem, `mkfat.py` the ESP, `mkgpt.py` the partition table, and `mkiso.py`
-# and `mkqcow2.py` the two containers. tools/gates/test-disk.py parses every one
-# of them back with a second implementation, because a wrong field here is an
-# image that builds cleanly and does not boot.
+# The disk images are mkosi's, driving systemd-repart offline -- no loop
+# device, no mount, nothing the jail lacks the privilege for (C7). `mkosi` is
+# not in pm's fingerprint table and neither are `xorriso` and `qemu-img`; the
+# losos-mkosi and losos-image plugins name all three, which is how a
+# distribution extends pm's table without weakening it (C2). See
+# docs/images.md.
 #
 # What is still NOT built here is a partition layout the OS has to live with.
 # The disks carry an ESP and a root partition and stop; /home, the second root
@@ -97,81 +96,108 @@ steps:
   - python3 @RECIPE@/files/losos-image/mkuki.py --stub /build/uki/stub.efi --linux /build/uki/vmlinuz --initrd /build/uki/initrd.cpio.xz --osrel /build/uki/osrel --cmdline @RECIPE@/files/losos-image/installer-cmdline --uname @VERSION_LINUX@ --sbat @RECIPE@/files/losos-image/sbat.csv --output /build/uki/losos-installer.efi
   - install -Dm644 /build/uki/losos-installer.efi /dest/artifacts/losos-installer.efi
 
-# The root filesystem as a disk partition rather than as an archive. This is
-# the artifact systemd-sysupdate writes into the inactive root partition, and
-# the one the installer duplicates with CopyBlocks=auto -- both of which take
-# blocks, not files. It is built before the tarball because the two disks below
-# embed it.
+# The ESP's contents, staged inside the tree at the path they are mounted at on
+# a running system. systemd-repart copies them out of there into the ESP, and
+# the root partition's definition excludes the same path, so a unified kernel
+# image is in the image once rather than twice.
+#
+# `%{losos-mkosi:...}` is the losos-mkosi plugin naming the paths mkosi and the
+# Boot Loader Specification fix; `pm explain` prints what each expanded to.
 - stage: Build
-  name: root-image
+  name: esp-tree
   dl_urls: null
   run:
-  - python3 @RECIPE@/files/losos-image/mkext4.py /build/root /build/losos-root.raw --label losos-root
+  - mkdir -p /build/root%{losos-mkosi:esp}/EFI/BOOT /build/root%{losos-mkosi:uki-dir} /build/root%{losos-mkosi:loader-dir}
+  # systemd-boot where firmware looks with no NVRAM entry, so a disk that was
+  # copied onto a machine rather than installed on it still boots.
+  - cp /build/root/usr/lib/systemd/boot/efi/@ARCH_EFI_BOOT@ /build/root%{losos-mkosi:esp}/EFI/BOOT/@ARCH_EFI_DEFAULT@
+  - cp /build/root/usr/lib/systemd/boot/efi/@ARCH_EFI_BOOT@ /build/root%{losos-mkosi:loader-dir}/@ARCH_EFI_BOOT@
+  # Versioned, because that name is the only place systemd-sysupdate can read a
+  # version from: `MatchPattern=losos-desktop_@v_@ARCH@.efi` does not match an
+  # unversioned kernel, so the first update would install a second one beside
+  # it and never be able to retire either.
+  - cp /build/uki/losos.efi /build/root%{losos-mkosi:uki-dir}/losos-desktop_@VERSION@_@ARCH@.efi
 
-# The ESP as it will be on an installed machine: systemd-boot where firmware
-# looks with no NVRAM entry, and the UKI beside it under the versioned name
-# systemd-sysupdate matches. Without the version in the name the first update
-# installs a second kernel and can never retire the first, because
-# `MatchPattern=losos-desktop_@v_@ARCH@.efi` does not match an unversioned one.
+# The disk, and the partitions inside it as separate files.
+#
+# mkosi is not installing a distribution here -- pm already built one -- it is
+# partitioning the tree that exists, with systemd-repart, offline. Offline is
+# the whole reason this can run in a build jail: repart populates the
+# filesystems through mkfs' own populate modes rather than by attaching a loop
+# device and mounting it, and a loop device is exactly what the jail has no
+# /dev node and no privilege for (C7).
+#
+# SplitArtifacts=partitions is what makes the root filesystem a first-class
+# artifact rather than something trapped inside a disk image. The split files
+# are named by systemd-repart from each definition's SplitName=.
 - stage: Build
-  name: esp-disk
+  name: disk
   dl_urls: null
   run:
-  - mkdir -p /build/esp-disk/EFI/BOOT /build/esp-disk/EFI/Linux /build/esp-disk/EFI/systemd
-  - cp /build/root/usr/lib/systemd/boot/efi/@ARCH_EFI_BOOT@ /build/esp-disk/EFI/BOOT/@ARCH_EFI_DEFAULT@
-  - cp /build/root/usr/lib/systemd/boot/efi/@ARCH_EFI_BOOT@ /build/esp-disk/EFI/systemd/@ARCH_EFI_BOOT@
-  - cp /build/uki/losos.efi /build/esp-disk/EFI/Linux/losos-desktop_@VERSION@_@ARCH@.efi
-  # 512M, the same size repart.d/10-esp.conf gives an installed system, and for
-  # the same reason: two unified kernel images side by side, so an A/B update
-  # never has to repartition.
-  - python3 @RECIPE@/files/losos-image/mkfat.py /build/esp-disk /build/esp-disk.img --label LOSOS_ESP --size 536870912
+  - mkdir -p /build/media /build/mkosi-work
+  - mkosi --directory @RECIPE@/files/losos-image/mkosi/disk --output-dir /build/media --workspace-dir /build/mkosi-work build
+  - test -f /build/media/losos-disk.raw
+  - test -f /build/media/losos-disk.root.raw
 
-# The installer medium's ESP, which is deliberately not the one above. The
-# installer UKI sits at the removable-media path itself rather than behind
-# systemd-boot: there is exactly one thing to boot, and a loader in front of it
-# would only add a menu and a timeout to a medium whose whole purpose is to run
-# one program.
-- stage: Build
-  name: esp-installer
-  dl_urls: null
-  run:
-  - mkdir -p /build/esp-installer/EFI/BOOT
-  - cp /build/uki/losos-installer.efi /build/esp-installer/EFI/BOOT/@ARCH_EFI_DEFAULT@
-  - python3 @RECIPE@/files/losos-image/mkfat.py /build/esp-installer /build/esp-installer.img --label LOSOS_INST
-
-# The disk that boots to a desktop. The free space at the end is not slack: it
-# is where systemd-repart creates /home on first boot, and a disk with none
-# would come up with the root partition it was given and nowhere for a user to
-# exist. Twelve gigabytes because repart has to satisfy two minimums out of it
-# -- root's 8G in 20-root.conf and /home's 4G in 30-home.conf -- and the root
-# partition built here is only as large as the tree needs. It costs nothing:
-# the space is a hole in the image and an unallocated cluster in the qcow2.
+# The disk that boots to a desktop.
+#
+# The virtual size is grown after the conversion rather than the raw image
+# being padded before it: the extra twelve gigabytes are where systemd-repart
+# creates /home on first boot and grows root into, and a disk with none comes
+# up with the partition it was given and nowhere for a user to exist. Growing
+# the qcow2 costs nothing -- an unallocated cluster is not stored -- and leaves
+# the GPT backup header where it was, which repart relocates on its first run,
+# exactly as it does for every cloud image shipped this way.
 - stage: Build
   name: qcow2
   dl_urls: null
   run:
-  - python3 @RECIPE@/files/losos-image/mkdisk.py --esp /build/esp-disk.img --root /build/losos-root.raw --output /build/losos-disk.raw --root-type @ARCH_GPT_ROOT@ --free 12884901888 --seed @VERSION@
-  - python3 @RECIPE@/files/losos-image/mkqcow2.py /build/losos-disk.raw /build/losos.qcow2
+  - qemu-img convert -f raw -O qcow2 /build/media/losos-disk.raw /build/losos.qcow2
+  - qemu-img resize /build/losos.qcow2 +12G
   - install -Dm644 /build/losos.qcow2 /dest/artifacts/losos.qcow2
 
+# The installer medium's ESP, which is deliberately not the disk's. The
+# installer UKI sits at the removable-media path itself rather than behind
+# systemd-boot: there is one thing to boot, and a loader in front of it would
+# add a menu and a timeout to a medium whose whole purpose is to run one
+# program.
+- stage: Build
+  name: installer-esp
+  dl_urls: null
+  run:
+  - mkdir -p /build/installer%{losos-mkosi:esp}/EFI/BOOT
+  - cp /build/uki/losos-installer.efi /build/installer%{losos-mkosi:esp}/EFI/BOOT/@ARCH_EFI_DEFAULT@
+  - mkosi --directory @RECIPE@/files/losos-image/mkosi/installer --output-dir /build/media --workspace-dir /build/mkosi-work build
+  - test -f /build/media/losos-installer-esp.raw
+
 # The installer medium: one file that firmware boots from a DVD through El
-# Torito and from a USB stick through the GPT, over the same bytes. The root
-# partition is on it because that is what the installer installs -- CopyBlocks
-# copies the partition it booted from.
+# Torito and from a USB stick through the GPT, over the same bytes.
+#
+# `--interval:appended_partition_2:all::` is what makes it one copy rather than
+# two: the El Torito boot entry is pointed at the appended partition itself
+# instead of at a second copy of the ESP inside the ISO 9660 filesystem. If
+# those ever drift, the DVD boots one kernel and the USB stick boots another.
+#
+# The root partition is appended too, because that is what the installer
+# installs: CopyBlocks=auto copies the partition it booted from, so the medium
+# has to carry a real one.
 - stage: Build
   name: iso
   dl_urls: null
   run:
-  - python3 @RECIPE@/files/losos-image/mkiso.py --esp /build/esp-installer.img --root /build/losos-root.raw --output /build/losos.iso --volume-id LOSOS --root-type @ARCH_GPT_ROOT@ --seed @VERSION@
+  - mkdir -p /build/isoroot
+  - 'xorriso -as mkisofs -iso-level 3 -volid LOSOS -appended_part_as_gpt -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B /build/media/losos-installer-esp.raw -append_partition 3 @ARCH_GPT_ROOT_UUID@ /build/media/losos-disk.root.raw -e --interval:appended_partition_2:all:: -no-emul-boot -o /build/losos.iso /build/isoroot'
   - install -Dm644 /build/losos.iso /dest/artifacts/losos.iso
 
-# Compressed last, because both disks above embed the uncompressed image.
+# The root filesystem on its own: what systemd-sysupdate writes into the
+# inactive root partition, and what the installer duplicates with
+# CopyBlocks=auto. Both take blocks, not files.
 - stage: Build
   name: root-image-xz
   dl_urls: null
   run:
-  - xz --check=crc32 -T0 -9 -f /build/losos-root.raw
-  - install -Dm644 /build/losos-root.raw.xz /dest/artifacts/losos-root.raw.xz
+  - xz --check=crc32 -T0 -9 -f /build/media/losos-disk.root.raw
+  - install -Dm644 /build/media/losos-disk.root.raw.xz /dest/artifacts/losos-root.raw.xz
 
 - stage: Build
   name: rootfs-tar

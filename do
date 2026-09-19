@@ -91,10 +91,6 @@ cmd_lint() {
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
   python3 "$repo/tools/gates/test-image.py"
-  # The disk-image writers, each parsed back by a second implementation. They
-  # are the only code here whose mistakes produce an image that builds and does
-  # not boot, so they are checked offline rather than discovered in a VM.
-  python3 "$repo/tools/gates/test-disk.py"
   # The libvirt domain, checked for what it must NOT hand the guest. A domain
   # that boots a kernel the host supplied shows a desktop and says nothing
   # about the image's own partition table.

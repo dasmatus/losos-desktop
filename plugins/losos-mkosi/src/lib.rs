@@ -50,6 +50,8 @@ use pm::plugin::{
 
 struct LososMkosi;
 
+/// pm-fingerprints
+///
 /// The mkosi entry points a build step may name as its first word.
 ///
 /// `mkosi-sandbox` is deliberately absent. mkosi execs it for itself from inside a

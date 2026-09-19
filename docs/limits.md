@@ -74,17 +74,16 @@ writer's output against an independent parser — and that is the entire claim.
 wired and none has been exercised. **Anyone who says this OS boots should say on
 what machine, once.**
 
-The installation media are checked the same way and are subject to the same
-sentence. `tools/gates/test-disk.py` parses back every filesystem, partition
-table and container this repository writes, using a second implementation
-written from the format rather than from the writer, and runs `e2fsck` against
-the root filesystem where one is installed. That proves the structures are the
-structures they claim to be. It proves nothing about firmware, and one field is
-a known unknown: El Torito's sector count is sixteen bits of 512-byte sectors,
-32 MiB, and a FAT32 volume cannot be smaller than that, so `mkiso.py` writes
-zero there and relies on UEFI firmware taking the boot image's size from its
-FAT BPB instead — see [`images.md`](images.md). **Nobody has put this ISO in
-front of real firmware.**
+The installation media are subject to the same sentence, and the claim about
+them is now weaker rather than stronger. They are built by mkosi, xorriso and
+qemu-img, which are mature and are not this repository's to get wrong — but
+nothing here has run them: the environment this was developed in has none of
+them installed, which is the whole reason `Containerfile` exists. What runs
+inside the build is `assert-media.py`, which reads the finished files back and
+asserts the qcow2 is a qcow2 with an ESP and a discoverable root in it and that
+the ISO's boot catalog and its ESP partition entry point at the same bytes.
+That proves the structures are the structures they claim to be. It proves
+nothing about firmware, and **nobody has put this ISO in front of any.**
 
 `tools/vm-test disk` is the test that would settle it: it hands the qcow2 to
 QEMU with UEFI firmware and requires the guest to say it came up, and CI runs

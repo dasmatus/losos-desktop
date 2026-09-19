@@ -76,15 +76,19 @@ tool that *can* be told about the local CA and serving the bytes over loopback
 sidesteps that without weakening anything: the SHA-256 pin is unchanged, so a
 mirror serving different bytes fails pm's check exactly as a bad upstream would.
 
-**The image layer writes its own filesystems.** `mkfs`, `losetup`, `xorriso`
-and `qemu-img` are all outside pm's fingerprint table (C2) and mostly outside
-the jail's privileges (C7), so `recipes/90-image/losos-image/files/` holds
-writers for ext4, FAT32, GPT, ISO 9660 with El Torito, and qcow2 — the same
-argument that already produced `mkcpio.py` and `mkuki.py`. They are the only
-code here whose bugs produce an image that builds and does not boot, so
-`tools/gates/test-disk.py` parses every one of them back with a second
-implementation written from the format rather than from the writer.
-`docs/images.md` is the reasoning; read it before touching any of them.
+**The image layer is mkosi, and the plugins are what let it run.** `mkosi`,
+`xorriso` and `qemu-img` are all outside pm's fingerprint table (C2), and a
+command matching nothing aborts the build before any step runs. `plugins/`
+names them — pm consults a plugin only about a command no built-in fingerprint
+matched, so this extends the table without weakening it — and the
+`Containerfile` is what guarantees they are installed. mkosi drives
+`systemd-repart` with `RepartOffline=yes`, which populates filesystems through
+`mkfs`' own populate modes rather than a loop device the jail has no privilege
+for (C7). `docs/images.md` is the reasoning; read it before touching the image
+layer. The stdlib-only ext4, FAT, GPT, ISO and qcow2 writers this tree used to
+carry are gone: the fingerprint argument for them was already answered by
+`plugins/losos-image`, and the real gap — whether the tools were installed at
+all — is the Containerfile's.
 
 **`overlay/`** is the OS content this repo writes rather than fetches: units,
 drop-ins, presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`,

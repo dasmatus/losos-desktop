@@ -104,13 +104,12 @@ Read `docs/limits.md` before trusting anything here. The short version:
   feature.
 - **Nothing here has booted.** No VM and no EFI firmware in the environment
   this was developed in. The UKI is verified structurally — it is a PE carrying
-  the six sections systemd-stub looks for — and the ISO and QCOW2 are verified
-  the same way: every filesystem, partition table and container this repository
-  writes is parsed back by a second implementation in
-  `tools/gates/test-disk.py`, and `e2fsck` agrees the root filesystem is clean
-  where it is installed. No firmware has been asked to boot any of it.
-  `tools/vm-test disk` is the test that would, and it needs a machine with KVM
-  and OVMF.
+  the six sections systemd-stub looks for — and the ISO and QCOW2 are checked
+  after the fact by `assert-media.py`, which reads magic numbers and offsets
+  out of the finished files rather than trusting the tools that wrote them. No
+  firmware has been asked to boot any of it. `tools/vm-test disk` is the test
+  that would, and it needs a machine with KVM and OVMF;
+  `tools/libvirt-domain` is the same machine for looking at by hand.
 - **The GNOME layer is the long tail** and is the least complete part of the
   tree by construction; several control-centre panels will be inert because
   this OS runs `systemd-networkd` rather than NetworkManager.
