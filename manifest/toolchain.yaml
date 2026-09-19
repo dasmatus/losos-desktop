@@ -255,7 +255,7 @@ exceptions:
       already drops CFI, and LTO is only mandatory for the packages that keep
       it.
   - package: libunwind
-    drops: [cfi, lto, unwindlib]
+    drops: [cfi, lto, unwindlib, stdlibxx]
     why: >
       The unwinder cannot be handed itself. --unwindlib=libunwind on
       libunwind's own shared link resolves to the library being linked, so
@@ -267,6 +267,14 @@ exceptions:
       flag off: off means clang's build-time default, and the Containerfile's
       clang defaults to libgcc even under --rtlib=compiler-rt. No sysroot here
       has libgcc_s. tools/lib/toolchain.py carries the measurement.
+
+      `stdlibxx` is the same argument one language over: most of libunwind is
+      C++, cmake links it with clang++, and clang++ links libstdc++ by
+      default, which no musl sysroot here has and which the unwinder does not
+      use. Upstream adds -nostdlib++ to its own link for this reason; it
+      cannot help with cmake's project() compiler test, which links before
+      any of upstream's CMakeLists has run. This is the only package that
+      drops it.
 
       CFI and LTO come off for a reason beyond cost. cfi_diag calls into this
       library to report a violation, so instrumenting it puts the reporter

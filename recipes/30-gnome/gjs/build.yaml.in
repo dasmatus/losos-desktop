@@ -1,11 +1,11 @@
-# gjs 1.82.1
+# gjs 1.90.0
 #
 # The JavaScript engine gnome-shell is written in. It carries SpiderMonkey and is the longest single compile in the tree.
 name: gjs
 version:
 - '1'
-- '82'
-- '1'
+- '90'
+- '0'
 dependencies: []
 steps:
 

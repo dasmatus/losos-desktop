@@ -1,11 +1,11 @@
-# gcr 4.3.0
+# gcr 4.4.1
 #
 # Crypto UI and the PKCS#11 glue gnome-keyring exposes.
 name: gcr
 version:
 - '4'
-- '3'
-- '0'
+- '4'
+- '1'
 dependencies: []
 steps:
 

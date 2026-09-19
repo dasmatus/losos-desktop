@@ -1,11 +1,11 @@
-# curl 8.10.1
+# curl 8.22.0
 #
 # systemd-importd and systemd-sysupdate fetch over HTTP with it.
 name: curl
 version:
 - '8'
-- '10'
-- '1'
+- '22'
+- '0'
 dependencies: []
 steps:
 

@@ -1,10 +1,10 @@
-# gnome-control-center 47.2
+# gnome-control-center 51.0
 #
 # Settings. Several panels reach for daemons this OS does not ship; see docs/limits.md.
 name: gnome-control-center
 version:
-- '47'
-- '2'
+- '51'
+- '0'
 dependencies: []
 steps:
 

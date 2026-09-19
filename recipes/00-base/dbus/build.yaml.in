@@ -1,11 +1,11 @@
-# dbus 1.14.10
+# dbus 1.16.2
 #
 # The system and session bus. systemd's own API surface is D-Bus, and --enable-user-session is what gives each logind session its own bus.
 name: dbus
 version:
 - '1'
-- '14'
-- '10'
+- '16'
+- '2'
 dependencies: []
 steps:
 
