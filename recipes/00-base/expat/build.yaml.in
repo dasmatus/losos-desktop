@@ -29,11 +29,20 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# --host is what tells autoconf this is a cross build. The target is musl and
+# the build host is glibc, so a test program configure links runs against a
+# loader at /lib/ld-musl-<arch>.so.1 that exists only inside the sysroot --
+# AC_PROG_CC compiles one, tries to execute it, and reports "cannot run C
+# compiled programs" as though the compiler were broken. With --host set,
+# autoconf sets cross_compiling=yes and stops running what it builds. The
+# triple is @TRIPLE@ rather than a literal because it is the architecture's,
+# and this tree builds two.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/expat /build/src/expat/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/expat /build/src/expat/configure --host=@TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
 
 - stage: Build
   name: compile
