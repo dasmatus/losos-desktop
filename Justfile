@@ -114,8 +114,9 @@ check *args:
 build target="":
   #!/usr/bin/env bash
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
-  if [ ! -x "{{pm}}" ]; then
-    echo "no pm binary at {{pm}}" >&2
+  pm_bin="${PM:-{{pm}}}"
+  if [ ! -x "$pm_bin" ]; then
+    echo "no pm binary at $pm_bin" >&2
     echo "build it first:  cd ../pm && cargo build --release" >&2
     exit 1
   fi
@@ -182,7 +183,7 @@ build target="":
     else
       : > "{{repo}}/out/configure.args"
     fi
-    if PM="{{pm}}" PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"; then
+    if PM="$pm_bin" PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"; then
       status=0
     else
       status=$?
@@ -212,13 +213,7 @@ build target="":
   if [ "$target" != "$top_target" ] && [ "$have_allow_unresolved" -eq 0 ]; then
     configure_args=(--allow-unresolved "${configure_args[@]}")
   fi
-  if [ "${#configure_args[@]}" -eq 0 ]; then
-    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure
-  elif [[ "${configure_args[0]}" = -* ]]; then
-    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure -- "${configure_args[@]}"
-  else
-    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure "${configure_args[@]}"
-  fi
+  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure "${configure_args[@]+"${configure_args[@]}"}"
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
 
   if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
@@ -230,7 +225,7 @@ build target="":
   echo "== building $target"
   (
     cd "{{repo}}/out/pkgs"
-    "{{pm}}" build "../recipes/$target/build.yaml"
+    "$pm_bin" build "../recipes/$target/build.yaml"
   )
 
 fetch *args:
