@@ -53,7 +53,7 @@ ARG DEBIAN_SNAPSHOT=20260918T000000Z
 # "wasmtime-internal-<thing> requires rustc 1.94.0", which names the crate
 # that noticed rather than the pin that is wrong. Raise this when pm's tree
 # raises its floor; there is nothing here that can detect it.
-ARG RUST_VERSION=1.94.1
+ARG RUST_VERSION=1.94.0
 
 # Which LLVM the toolchain is. Named in two places below -- the compiler runtime
 # package and the unversioned symlinks -- and they have to agree, so it is one

@@ -14,14 +14,21 @@ whether they had the right versions by running a long build and watching where
 it stopped. `Containerfile` is the same list, executable, and it is the same
 image in CI and on a developer's machine.
 
-In `images.yml` that means the `container` job, which runs the gate inside it,
-and the `build` job, which builds pm, the plugin components and the image
-itself inside it. The `gates` job deliberately stays on an apt list: it is the
-fast one, it runs on every event, and having one job that does not depend on
-the image being buildable is what tells the two failures apart. It is also why
-the `build` job moved: its apt list was kept in step with `Containerfile` by
-hand and had drifted, with no mkosi, xorriso or qemu-img in it at all, so it
-could not have built an image layer even once.
+Mostly it is not invoked by hand. `./do build` checks whether the layer it is
+about to build needs the image host -- whether its recipe reaches for mkosi,
+xorriso, qemu-img or a `%{losos-mkosi:...}` symbol -- and whether this host
+actually has the pinned one, and builds in the container when it does not.
+So the image layer gets the right mkosi whether or not anyone remembered, and
+the layers below it, which need none of this, stay on the host where they are
+faster. `recipe_needs_image_host` and `build_in_container` in `do` are the two
+halves of that.
+
+The `gates` job in `images.yml` deliberately stays on an apt list of its own.
+It is the fast one, it runs on every event, and having one job that does not
+depend on this image being buildable is what tells a broken tree and a broken
+Containerfile apart. The `container` job is the one that runs the gate inside
+the image, and it is the only job that can fail when the Containerfile is
+wrong.
 
 ```sh
 ./do container build      # build the image

@@ -118,7 +118,7 @@ rust:
 # take the default set.
 exceptions:
   - package: musl
-    drops: [cfi, target, hardening]
+    drops: [cfi, lto, target, hardening]
     why: >
       libc is the one library CFI cannot cover from the outside. musl's
       dynamic linker resolves and calls functions before any CFI runtime
@@ -134,7 +134,17 @@ exceptions:
       -D_FORTIFY_SOURCE is circular: it expands calls into musl's own __*_chk
       functions, which do not exist yet. -fPIC and -pie fight musl's own build,
       which decides those per output because libc.so and libc.a need different
-      answers. musl keeps LTO.
+      answers.
+
+      It drops LTO too, which this file used to say it kept. The dynamic
+      linker is why. ldso/dlstart.c calls __dls2, a hidden symbol defined in
+      ldso/dynlink.c and reached from nowhere else, on a path that runs before
+      relocation; ThinLTO sees no live reference and internalises it away, and
+      linking libc.so fails with `undefined hidden symbol: __dls2 ... did you
+      mean __dls3`. It is not a flag that can be dropped for ldso alone, since
+      an exception here is per package. Nothing is lost that CFI needed: musl
+      already drops CFI, and LTO is only mandatory for the packages that keep
+      it.
   - package: linux
     drops: [cfi, lto, hardening]
     why: >

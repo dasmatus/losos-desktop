@@ -159,83 +159,6 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-  # TEMPORARY, and not meant to reach the default branch.
-  #
-  # The permanent home for this is .github/workflows/pin-sources.yml, but a
-  # workflow_dispatch workflow is only dispatchable once its file exists on the
-  # repository's DEFAULT branch -- and that file is on a topic branch, so the
-  # API answers 404. Dispatching an already-registered workflow, on the other
-  # hand, runs the file as it exists on the dispatched ref. So the fetch is
-  # bootstrapped from here until pin-sources.yml has landed, at which point
-  # this job goes away.
-  #
-  # It commits the lock rather than only uploading it, because the artifact
-  # lands in blob storage that the environment this is driven from cannot
-  # reach. The hashes are written by tools/fetch-sources from the bytes it
-  # actually downloaded; nothing here composes one.
-  pin-bootstrap:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install what the fetcher needs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-yaml
-
-      - name: Make room for the mirror
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          df -h /
-
-      # Three upstreams moved and their old URLs now 404. The replacements are
-      # committed, but qrencode's is a git archive for want of a dist tarball,
-      # so this reports whether a real one has reappeared anywhere reachable --
-      # a runner can see hosts the development environment cannot.
-      - name: Probe the upstreams that moved
-        if: always()
-        run: |
-          for u in \
-            https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.gz \
-            https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.bz2 \
-            https://deb.debian.org/debian/pool/main/q/qrencode/qrencode_4.1.1.orig.tar.bz2 \
-            https://gitlab.freedesktop.org/polkit/polkit/-/archive/125/polkit-125.tar.gz ; do
-            printf '%s -> %s\n' "$u" "$(curl -sS -o /dev/null -L --max-time 30 -w '%{http_code}' "$u" || echo error)"
-          done
-
-      # --update is what fills a TODO. It exits non-zero if anything is still
-      # unavailable, and the lock is committed either way: 99 resolved hashes
-      # are worth keeping even when the hundredth is not.
-      - name: Fetch every source and record its hash
-        id: fetch
-        continue-on-error: true
-        run: python3 tools/fetch-sources --update
-
-      - name: Commit the resolved lock
-        if: always()
-        run: |
-          echo "unresolved after this run: $(grep -c 'sha256: TODO' manifest/sources.lock || true)"
-          if git diff --quiet -- manifest/sources.lock; then
-            echo "lock unchanged; nothing to commit"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add manifest/sources.lock
-          git commit \
-            -m "chore: pin upstream source hashes" \
-            -m "Written by tools/fetch-sources --update from the bytes it downloaded, on a runner that can reach the hosts manifest/sources.lock names. No hash here was composed by hand: pm verifies a dl_urls digest before it parses the build file, so a wrong value is indistinguishable from a compromised mirror."
-          git push origin HEAD:${GITHUB_REF_NAME}
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: sources-lock
-          path: manifest/sources.lock
-
   build:
     needs: [gates, pinned, channel]
     if: needs.pinned.outputs.ready == 'true'
@@ -260,43 +183,41 @@ jobs:
         # that was never checked.
         with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          # python3-jinja2: fwupd's meson runs `python3 -c 'import jinja2'`
+          # and errors out without it, and a build step cannot set PYTHONPATH,
+          # so it has to be importable by the host's python3. See
+          # docs/host-requirements.md.
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm libclang-rt-18-dev python3-yaml python3-jinja2 \
+            ninja-build cmake bison flex bc xz-utils
+
+      # losos-security is a cargo build and everything above the toolchain
+      # layer is musl, so --target needs that target's std installed. Without
+      # it the failure is a rustc error about a missing core, several layers
+      # into a build that has already run for minutes.
+      - name: Add the Rust musl target
+        run: rustup target add ${{ matrix.arch }}-unknown-linux-musl
+
       # pm's jail is a user namespace, and Ubuntu 24.04 ships
       # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
       # uid_map write hakoniwa needs. Without this every pm build fails with
       # "Operation not permitted" from inside the sandbox -- which reads like a
-      # permissions problem with the workspace and is not. It is a host
-      # setting: the container below inherits it and cannot set it itself.
+      # permissions problem with the workspace and is not.
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      # Everything from here runs inside the build host this repository
-      # describes, rather than against an apt list kept in step with it by
-      # hand. That list is how this job used to get its dependencies, and it
-      # could not have built the image layer: mkosi, xorriso and qemu-img were
-      # never in it, and Ubuntu's mkosi is older than the one the mkosi
-      # configuration is written against either way.
-      - name: Build the build host
-        working-directory: losos-desktop
-        run: ./do container build
-
-      # pm is built with the image's toolchain because it is run with the
-      # image's libraries. The plugin components are not committed, so they
-      # are built here too -- without them pm loads no plugins, and the image
-      # layer's `%{losos-mkosi:esp}` expands to nothing at all, which reads as
-      # a broken recipe rather than as a missing component.
-      - name: Build pm and the plugin components in it
-        working-directory: losos-desktop
-        run: |
-          python3 tools/container run cargo build --release \
-            --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
-          ./do container plugins
+      - name: Build pm
+        run: cargo build --release --manifest-path pm/Cargo.toml
 
       # pm's downloader compiles Mozilla's roots in and reads no CA setting, so
       # it cannot fetch through a TLS-terminating proxy. Mirroring first and
       # serving over loopback keeps the SHA-256 pins exactly as they are.
       - name: Mirror the pinned sources
         working-directory: losos-desktop
-        run: python3 tools/container run python3 tools/fetch-sources
+        run: python3 tools/fetch-sources
 
       # The channel comes from the `channel` job, not from the event read a
       # second time here: a tag builds stable, everything else nightly, and
@@ -324,30 +245,34 @@ jobs:
           fi
           echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
 
-      # The mirror is not started here any more. `./do build` starts one
-      # itself on the same port, and it has to be the container's loopback
-      # rather than the runner's: pm fetches from inside the image, where
-      # 127.0.0.1 is not the host's.
       - name: Build the image
         working-directory: losos-desktop
+        env:
+          PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
-          python3 tools/container run python3 tools/configure \
-            --arch ${{ matrix.arch }} --channel "$CHANNEL" \
+          python3 tools/configure --arch ${{ matrix.arch }} --channel "$CHANNEL" \
             --version "$LOSOS_VERSION" --mirror http://127.0.0.1:8730
-          python3 tools/container run ./do build losos-90-image
+          python3 tools/serve-sources --port 8730 &
+          ./do build losos-90-image
 
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
         run: |
-          python3 tools/container run python3 tools/stage-release \
-            --arch ${{ matrix.arch }} --version "$LOSOS_VERSION" --out release
-          python3 tools/container run python3 tools/release-manifest \
-            --arch ${{ matrix.arch }} --version "$LOSOS_VERSION" release
+          python3 tools/stage-release --arch ${{ matrix.arch }} \
+            --version "$LOSOS_VERSION" --out release
+          python3 tools/release-manifest --arch ${{ matrix.arch }} \
+            --version "$LOSOS_VERSION" release
 
+      # always(): a build that stopped at some package never reached
+      # stage-release, but whatever the layers below it produced is still the
+      # only output this tree has ever made. if-no-files-found: warn keeps that
+      # from failing a job that already said what went wrong.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
           path: losos-desktop/release/
+          if-no-files-found: warn
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
@@ -456,9 +381,15 @@ jobs:
     # to pass. An automated channel that published unbootable images would make
     # the nightly tag meaningless, and `losos-desktop_<v>` is a URL some
     # machine's sysupdate is pointed at.
+    #
+    # `build` is a matrix, so its result is 'success' only when EVERY
+    # architecture succeeded -- one arch failing would otherwise throw away a
+    # good image from the other. What matters is whether anything was
+    # uploaded, so this asks only that the job ran; download-artifact fails
+    # loudly on its own if nothing did.
     if: >-
       always() && github.event_name != 'pull_request' &&
-      needs.build.result == 'success' &&
+      needs.build.result != 'skipped' && needs.build.result != 'cancelled' &&
       (github.event_name == 'workflow_dispatch' ||
        (needs.verify.result == 'success' && needs.ota.result == 'success'))
     runs-on: ubuntu-24.04
@@ -473,7 +404,23 @@ jobs:
       # The release tag is the channel, and it is moved rather than recreated:
       # sysupdate's Path= must stay the same URL across releases, because it is
       # baked into the image that is trying to update itself.
+      # A build that stopped part-way uploads nothing, and there is then
+      # nothing to publish. That is not this job's failure -- the build job is
+      # already red and says where it stopped -- so this reports it and stops
+      # rather than adding a second red job that names no cause.
+      - name: See what the build produced
+        id: produced
+        run: |
+          if [ -n "$(find release -type f -print -quit 2>/dev/null)" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+            find release -type f | sort
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+            echo "The build uploaded no artifacts; nothing to publish."
+          fi
+
       - name: Publish to the channel release
+        if: steps.produced.outputs.any == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -482,3 +429,73 @@ jobs:
           gh release create "$channel" --repo "$GITHUB_REPOSITORY" \
             --title "LosOS $channel" --notes "Rolling $channel channel." \
             --prerelease release/*
+
+      # The same files also live on a branch of their own, under Git LFS.
+      #
+      # A branch rather than a second release, because a release tag is moved
+      # on every publish and keeps no history: the branch records what each
+      # run produced and gives every build a path that does not change shape.
+      # LFS because these are a compressed root filesystem and a UKI -- tens of
+      # megabytes of incompressible binary that would otherwise be packed into
+      # the repository's own history forever, and be cloned by everyone who
+      # ever checks the source out.
+      #
+      # `images` is an ordinary branch and never merges into the default one.
+      # It is not created by hand: the first publish makes it, because a job
+      # that needs a human to have prepared a branch is a job that fails once
+      # and then never runs again.
+      #
+      # NOTE: raw.githubusercontent.com serves an LFS-tracked file as its
+      # pointer, not its contents, so this branch is storage, not an update
+      # server. The release above is what sysupdate's Path= is aimed at.
+      - name: Host the images on the images branch
+        if: steps.produced.outputs.any == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          channel="${{ needs.channel.outputs.name }}"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git lfs install --skip-repo
+
+          # --depth 1: the branch's history is every image ever published, and
+          # this job needs none of it. Without it each run would fetch every
+          # LFS object that has ever been on the branch.
+          if ! git clone --depth 1 --branch images "$remote" images; then
+            mkdir images
+            git -C images init -q -b images
+            git -C images remote add origin "$remote"
+          fi
+
+          cd images
+          # Written before the files are staged: git consults the working
+          # tree's .gitattributes as it adds, so a tarball committed before
+          # this existed would go in as an ordinary blob and stay one.
+          # printf rather than a heredoc: the terminator of an unindented
+          # heredoc has to sit in column one, which it cannot inside a YAML
+          # block scalar, and an indented terminator never terminates.
+          #
+          # SHA256SUMS is deliberately not tracked: it is small, it is text,
+          # and it is the one file worth reading in a diff.
+          printf '%s\n' \
+            '*.raw.xz filter=lfs diff=lfs merge=lfs -text' \
+            '*.efi filter=lfs diff=lfs merge=lfs -text' > .gitattributes
+
+          # Replaced, not added to: the channel directory mirrors what the
+          # channel release holds right now. Old versions stay reachable
+          # through this branch's history rather than piling up in a listing
+          # that SHA256SUMS does not mention.
+          rm -rf "$channel"
+          mkdir -p "$channel"
+          cp -a ../release/. "$channel"/
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "images branch already holds these files."
+            exit 0
+          fi
+          git commit -q -m "chore(images): $channel from run ${GITHUB_RUN_NUMBER}"
+          git push origin HEAD:images

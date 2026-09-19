@@ -44,6 +44,34 @@ start_mirror() {
   return 1
 }
 
+recipe_needs_image_host() {
+  local recipe="$repo/out/recipes/$1/build.yaml"
+  [ -f "$recipe" ] || return 1
+  grep -Eq '(%\{losos-mkosi:|(^|[[:space:]])mkosi([[:space:]]|$)|(^|[[:space:]])qemu-img([[:space:]]|$)|(^|[[:space:]])xorriso([[:space:]]|$))' "$recipe"
+}
+
+image_build_prereqs_ready() {
+  local mkosi_path mkosi_resolved qemu_path xorriso_path
+  mkosi_path=$(command -v mkosi 2>/dev/null) || return 1
+  qemu_path=$(command -v qemu-img 2>/dev/null) || return 1
+  xorriso_path=$(command -v xorriso 2>/dev/null) || return 1
+  case "$qemu_path" in /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) ;; *) return 1 ;; esac
+  case "$xorriso_path" in /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) ;; *) return 1 ;; esac
+  [ "$mkosi_path" = "/usr/bin/mkosi" ] || return 1
+  [ -L "$mkosi_path" ] || return 1
+  mkosi_resolved=$(readlink -f "$mkosi_path") || return 1
+  [ "$mkosi_resolved" = "/usr/lib/mkosi/bin/mkosi" ] || return 1
+  [ -f "$repo/plugins/dist/losos-image.wasm" ] || return 1
+  [ -f "$repo/plugins/dist/losos-mkosi.wasm" ] || return 1
+}
+
+build_in_container() {
+  local target="$1"
+  echo "do: host lacks the pinned mkosi image-build prerequisites; building $target in the container host" >&2
+  python3 "$repo/tools/container" build
+  python3 "$repo/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; export LOSOS_MIRROR_PORT; ./do plugins && ./do build "$2"' _ "$mirror_port" "$target"
+}
+
 cmd_configure() {
   # Generate against the local mirror when one is available. pm's downloader
   # trusts only the Mozilla roots compiled into it and reads no CA setting, so
@@ -92,6 +120,12 @@ cmd_lint() {
   # adds the cases that prove the gate can fail. A gate never shown to
   # fail is a gate nobody should trust.
   python3 "$repo/tools/gates/versions.py" --self-test
+  # tools/check-latest writes sources.lock and recipe versions from what
+  # upstream answers, and the part that can be wrong without saying so is the
+  # matching: a pattern that stops matching reports a source as `current`
+  # forever. Its self-test needs no network, so it runs here rather than only
+  # in the workflow that uses it.
+  python3 "$repo/tools/check-latest" --self-test >/dev/null
   "$repo/tools/gates/explain-all"
 }
 
@@ -143,6 +177,10 @@ print(layers[-1]['name'] if layers else '')
   # brought up.
   cmd_configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
+  if recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
+    build_in_container "$target"
+    return
+  fi
   "$repo/tools/sign-all" >/dev/null
   echo "== building $target"
   ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )

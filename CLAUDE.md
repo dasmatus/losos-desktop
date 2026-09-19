@@ -145,6 +145,30 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   bytes actually hashed to; `tools/configure` refuses to generate while any
   remain unless passed `--allow-unresolved`.
 
+## Keeping the pins current
+
+`tools/check-latest` asks every upstream what its newest stable release is.
+Most of them answer with a directory listing; the thirty-two on github.com have
+none, so those are asked over `api.github.com` and the answer carries the
+download URL, which is why no GitHub URL is composed by string surgery. Set
+`GITHUB_TOKEN` or the sweep runs out of anonymous quota a third of the way
+through and reports the rest as `unknown`.
+
+`--apply` moves three things together, and moving fewer is how the tree starts
+lying about what it contains: the lock's url and version, the lock's hash back
+to `TODO`, and the `version:` list of the recipe that downloads it (which
+`tools/gates/versions.py` checks against the lock). `HOLD` in that file names
+the sources whose newest release is not this tree's to take, with the reason --
+`COMPILER_RT` is version-locked to the host clang.
+
+`.github/workflows/update-sources.yml` runs that weekly and tests **each
+candidate alone** in its own matrix leg -- fetch the new bytes, hash them, run
+`./do check` -- before collecting the survivors into one pull request. A leg
+proves the URL exists and the tree still lints. It compiles nothing: nothing
+here validates a recipe's `-D` options against sources it does not have (see
+the tombstone in `tools/gates/`), so a bump that crosses a major version still
+needs a human and a release note.
+
 ## Conventions
 
 - Commits are Conventional Commits (`feat:`, `fix:`, `docs:`), written from the
