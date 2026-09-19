@@ -271,42 +271,14 @@ exceptions:
       default, which no musl sysroot here has and which the unwinder does not
       use. Upstream adds -nostdlib++ to its own link for this reason; it
       cannot help with cmake's project() compiler test, which links before
-      any of upstream's CMakeLists has run. zstd drops it for that second
-      reason alone; see its entry.
+      any of upstream's CMakeLists has run. This is the only package that
+      drops it.
 
       CFI and LTO come off for a reason beyond cost. cfi_diag calls into this
       library to report a violation, so instrumenting it puts the reporter
       inside the thing being reported on, and a CFI failure on the unwind path
       recurses instead of printing. It is the same argument that keeps musl
       out, one layer up.
-  # losos-10-base. One package, and only because of cmake.
-  - package: zstd
-    drops: [stdlibxx]
-    why: >
-      zstd is a C library and this tree compiles no C++ of its own from it,
-      which is exactly what makes this worth writing down: the package needs
-      no C++ runtime and still could not configure without saying so.
-
-      build/cmake/CMakeLists.txt:33 names CXX in its project() languages, for
-      the contributed test code under contrib/ that this recipe does not
-      build. project() tests every language it names, and cmake's test links
-      a C++ binary with clang++, which links libstdc++ by default. No musl
-      sysroot here has one, so the configure step died with `mold: fatal:
-      library not found: stdc++` before a line of zstd compiled -- the same
-      failure libunwind hit above, from the same cmake test, for an entirely
-      different reason: there most of the package really is C++, here none of
-      what is built is.
-
-      So this drops `stdlibxx` and nothing else. Everything in `target` is
-      kept: unlike musl and libunwind, zstd builds against a sysroot that
-      already holds a libc, compiler-rt and an unwinder. The flag is
-      link-time and lands in ldflags-zstd.rsp, which is what cmake's test
-      puts on its link line; a C link accepts it and has no -lstdc++ to drop,
-      so the real libzstd.so link is unaffected.
-
-      lz4 sits beside this one in the layer and needs no entry: its
-      project() names C alone, so cmake never looks for a C++ compiler.
-
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.
