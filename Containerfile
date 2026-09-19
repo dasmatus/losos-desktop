@@ -145,6 +145,14 @@ RUN apt-get update --error-on=any \
       just \
       make pkgconf tar xz-utils zstd cpio patch \
       \
+      `# bzip2 is the odd one here: no recipe names it and nothing spells it` \
+      `# on a command line. tar reaches for it by itself for the seven` \
+      `# .tar.bz2 sources in the lock -- and Debian's tar is built to try` \
+      `# lbzip2 first, falling back to bzip2 -- so with neither installed a` \
+      `# fetch step dies with "tar (child): lbzip2: Cannot exec", naming a` \
+      `# program no file in this tree mentions.` \
+      bzip2 \
+      \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
       `# deliberately absent -- but ninja and cmake are invoked as first words.` \
       ninja-build cmake \
