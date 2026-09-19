@@ -250,6 +250,16 @@ jobs:
           fi
           echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
 
+      # docs/limits.md says the intermediates "plausibly run to tens of
+      # gigabytes" -- plausibly, because nobody has measured it. Each layer's
+      # archive carries the one below it whole (C5, C6), so nine layers
+      # duplicate the base nine times, and a runner has a fixed disk. Finding
+      # that out four hours in reads as a corrupt archive or a killed process,
+      # not as a full disk, so the budget is printed before the build starts
+      # and what was actually written is printed after it, pass or fail.
+      - name: Disk before the build
+        run: df -h / "${TMPDIR:-/tmp}"
+
       - name: Build the image
         working-directory: losos-desktop
         env:
@@ -272,6 +282,15 @@ jobs:
             --version "$LOSOS_VERSION" --out release
           just release-manifest -- --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" release
+
+      # always(): the number is worth having most when the build died, since
+      # a full disk is one of the things that kills it.
+      - name: Disk after the build
+        if: always()
+        run: |
+          df -h / "${TMPDIR:-/tmp}"
+          du -sh losos-desktop/out/pkgs losos-desktop/out/tmp \
+            losos-desktop/out/sources 2>/dev/null || true
 
       # always(): a build that stopped at some package never reached
       # stage-release, but whatever the layers below it produced is still the
