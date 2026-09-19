@@ -134,7 +134,12 @@ which would grant the whole layer network access (C8).
 
 ## The gates
 
-`just check` runs with no network, no KVM and no nix:
+`just check` runs with no network, no KVM and no nix, once `just plugins` has
+compiled pm's plugin components into the clone. That step is the tree's only
+network dependency outside `just fetch`, and it is what `explain-all` below is
+checking against: the components are built from `plugins/` rather than
+committed, so a clone that skipped it has no `%{losos-mkosi:esp}` to expand.
+
 
 | Gate | What it proves |
 |---|---|

@@ -46,13 +46,21 @@ the build cannot drift apart — 149 of them, and a missing one fails the build.
 cd ../pm && cargo build --release   # the pm binary this repo drives
 cd ../losos-desktop
 
+just plugins            # compile pm's plugin components, once per clone
 just check              # the gate: generate, sign, prove the digest, lint
 just fetch -- --update  # mirror the upstream sources, pinning any TODO hash
 just build              # the real build
 ```
 
-`just check` runs anywhere: no network, no KVM, no nix, no root beyond working
-user namespaces. It validates every generated build file against pm's schema,
+`just plugins` is run once per clone and needs the network and a
+`wasm32-unknown-unknown` target: the WebAssembly components pm loads are
+compiled from `plugins/` rather than committed, so a fresh clone has none.
+Without them pm loads no plugins, the image layer's `%{losos-mkosi:esp}`
+expands to nothing, and the gate rejects the recipe rather than passing over
+the hole.
+
+Past that one step `just check` runs anywhere: no network, no KVM, no nix, no
+root beyond working user namespaces. It validates every generated build file against pm's schema,
 checks that every source URL is in the normal form pm hashes, re-applies pm's
 fingerprint table past the one permitted wrapper, tests the initramfs and UKI
 writers, proves the download-path derivation against a real `pm build`, and

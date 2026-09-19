@@ -27,8 +27,12 @@ The `gates` job in `images.yml` deliberately stays on an apt list of its own.
 It is the fast one, it runs on every event, and having one job that does not
 depend on this image being buildable is what tells a broken tree and a broken
 Containerfile apart. The `container` job is the one that runs the gate inside
-the image, and it is the only job that can fail when the Containerfile is
-wrong.
+the image, so it is where a wrong Containerfile shows up as itself rather than
+as something else. It is not the only job it can take down: `build` routes the
+whole chain through the same image when the host has no pinned mkosi
+(`build_in_container`), so a Containerfile that does not build, or that is
+missing a tool a recipe reaches for, fails there too -- several layers in, with
+the failure wearing the name of whichever recipe hit it first.
 
 ```sh
 just container build      # build the image
