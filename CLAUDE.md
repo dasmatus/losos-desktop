@@ -145,6 +145,15 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   build. Anything
   else multi-call — busybox, a `*-config` symlink farm — has the same problem,
   and it only ever shows up in a real build.
+- **Autotools needs `--host`, even when the architectures match.** The build
+  host runs glibc and everything above `losos-00-toolchain` is compiled against
+  musl, so every `configure` in this tree is a cross build. Without `--host`
+  autoconf tries to *run* what it compiles, and a musl-dynamic test program
+  cannot run in a jail that mirrors the host's `/lib` (C7): `configure: error:
+  cannot run C compiled programs`. `--target=` on the compile line tells clang
+  what to emit and tells configure nothing, which is how thirty-six recipes
+  came to be written without it. `tools/gates/cross-configure.py` is what stops
+  the thirty-seventh; musl and openssl are exempt there, with reasons.
 - **A compiled-in absolute path resolves into the host mirror.** pm's run jail
   extracts a package at `/pkg` *and* mirrors the host's `/usr` read-only, so a
   binary that opens `/usr/lib/os-release` gets the build host's file and reports

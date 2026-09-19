@@ -31,7 +31,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/sqlite /build/src/sqlite/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ --disable-static --disable-readline
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/sqlite /build/src/sqlite/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ --disable-static --disable-readline
 
 - stage: Build
   name: compile
