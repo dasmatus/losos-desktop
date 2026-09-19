@@ -299,6 +299,12 @@ exceptions:
 
       It keeps LTO, hardening and the target flags. Only CFI is lost, on a
       library whose input is capability text from the system's own units.
+      Not a new kind of exception either: musl drops CFI at the top of this
+      same list, and every binary in the tree links against musl.
+
+      Do not reach for the per-scheme spelling gjs uses. _cfi_for only emits
+      -fvisibility=hidden while at least one scheme survives, so naming all
+      of them drops the flag identically, four times as long.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.
