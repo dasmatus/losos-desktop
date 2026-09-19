@@ -9,19 +9,27 @@ the console and powers off. So a passing run means "systemd reached a good
 state", not "the kernel started", and a hanging run fails on the timeout rather
 than being reported green.
 
-Two modes:
+Three modes:
 
     tools/vm-test boot --arch x86_64 --uki out/.../losos.efi
+    tools/vm-test disk --arch x86_64 --disk out/.../losos.qcow2
     tools/vm-test ota  --arch x86_64 --uki <stable UKI> --serve <dir of nightly>
 
-`boot` is the gate. `ota` additionally serves a release directory over the
+`boot` is the gate. `disk` is the same claim about the shipped disk image
+rather than about the kernel inside it: the guest is handed the qcow2 and
+nothing else, so a partition table, an ESP or a root filesystem that the
+writers got wrong fails here rather than on a user's machine. It is the only
+test that exercises `systemd-gpt-auto-generator` finding the root partition by
+its GPT type, which is why this OS ships no /etc/fstab.
+
+`ota` additionally serves a release directory over the
 guest's user-mode network and requires the guest to update itself to the
 version in it, reboot, and report the new one -- which is the only way to find
 out whether a systemd-sysupdate transfer definition is actually correct, since
 a wrong MatchPattern produces no error at all, just an update that finds
 nothing.
 
-# Why there is no mkfs here
+# Why `boot` stages its ESP with QEMU rather than with the repo's own writer
 
 The ESP is handed to QEMU as `-drive file=fat:rw:<dir>`, which presents a host
 directory as a FAT filesystem. That needs no mkfs.vfat, no loop device and no
@@ -29,6 +37,12 @@ root, which matters because this has to run on a CI runner and inside a
 container. The cost is that it is read-mostly and QEMU's VVFAT is not a
 general-purpose filesystem; for booting a UKI that firmware loads once, it is
 exactly enough.
+
+Deliberately NOT `mkfat.py`, even though this repository now has one. `boot`
+exists to test the kernel image; if it staged its ESP with the same writer the
+shipped disk uses, a bug in that writer would take both tests down together and
+leave nothing saying which half was wrong. `disk` is where the writers are on
+trial, and it uses no QEMU filesystem emulation at all.
 """
 
 import argparse
@@ -119,7 +133,10 @@ def qemu_command(arch, firmware, esp=None, disk=None, network=False):
         # VVFAT: a host directory presented as FAT. No mkfs, no loop, no root.
         command += ["-drive", f"file=fat:rw:{esp},format=raw,if=virtio"]
     if disk is not None:
-        command += ["-drive", f"file={disk},if=virtio"]
+        # The format is stated rather than probed: qemu refuses to guess for a
+        # writable image, and a guessed raw image of a qcow2 file boots to a
+        # disk full of qcow2 metadata.
+        command += ["-drive", f"file={disk},format=qcow2,if=virtio"]
 
     if network:
         # User-mode networking: the host is 10.0.2.2 from inside the guest,
@@ -198,6 +215,46 @@ def mode_boot(args):
     return 0
 
 
+def mode_disk(args):
+    """Boot the shipped disk image itself, with no ESP staged for it.
+
+    `boot` copies a UKI into a directory and lets QEMU present it as FAT, which
+    proves the kernel image is bootable and proves nothing about the disk the
+    OS actually ships on. Here the firmware is given the qcow2 and has to find
+    the ESP in its partition table, load systemd-boot from it, find the unified
+    kernel image beside it, and hand the kernel a root partition discovered by
+    GPT type. Each of those is a field one of the writers in
+    recipes/90-image/losos-image/files fills in.
+    """
+    arch = args.arch
+    firmware = find_firmware(arch)
+    with tempfile.TemporaryDirectory(prefix="losos-vm-disk-") as tmp:
+        work = Path(tmp)
+        # Copied because the guest writes to it: systemd-repart lays out /home
+        # on first boot, and a read-only disk would fail in a way that reads
+        # like a partitioning bug.
+        disk = work / "disk.qcow2"
+        shutil.copy2(args.disk, disk)
+        log = Path(args.log) if args.log else work / "console.log"
+        output = run_vm(
+            qemu_command(arch, firmware, disk=disk), args.timeout, log
+        )
+
+    if MARKER not in output:
+        print(
+            f"vm-test: FAILED -- {MARKER} never appeared.\n"
+            f"  The console log is at {log}.\n"
+            "  A disk that firmware cannot boot prints nothing at all: check\n"
+            "  that the ESP partition holds a FAT volume with\n"
+            "  EFI/BOOT/BOOT<arch>.EFI in it, and that the root partition's\n"
+            "  GPT type matches gpt_root in manifest/architectures.yaml.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"vm-test: the disk image booted and reported {MARKER}")
+    return 0
+
+
 class Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("vm-test/http: " + (fmt % args) + "\n")
@@ -268,9 +325,10 @@ def mode_ota(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("mode", choices=["boot", "ota"])
+    parser.add_argument("mode", choices=["boot", "disk", "ota"])
     parser.add_argument("--arch", default="x86_64", choices=sorted(QEMU))
-    parser.add_argument("--uki", required=True)
+    parser.add_argument("--uki", help="boot and ota: the unified kernel image")
+    parser.add_argument("--disk", help="disk: the qcow2 to boot")
     parser.add_argument("--serve", help="ota: directory of the release to offer")
     parser.add_argument("--port", type=int, default=8731)
     parser.add_argument("--log", help="where to write the serial console log")
@@ -285,8 +343,12 @@ def main():
 
     if args.mode == "ota" and not args.serve:
         sys.exit("vm-test: ota needs --serve")
+    if args.mode == "disk" and not args.disk:
+        sys.exit("vm-test: disk needs --disk")
+    if args.mode in ("boot", "ota") and not args.uki:
+        sys.exit(f"vm-test: {args.mode} needs --uki")
 
-    return mode_boot(args) if args.mode == "boot" else mode_ota(args)
+    return {"boot": mode_boot, "disk": mode_disk, "ota": mode_ota}[args.mode](args)
 
 
 if __name__ == "__main__":

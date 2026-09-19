@@ -71,8 +71,27 @@ separate rather than unified behind a condition for exactly that reason.
 
 ## Making the medium
 
-Write `losos-rootfs.tar.xz` onto a disk's root partition and
-`losos-installer.efi` onto its ESP at `EFI/Linux/`, or boot the installer UKI
-however your firmware prefers. The installer needs nothing else: `bootctl` and
-`systemd-repart` are in the image already, and so is the OS it is about to
-copy.
+`./do build` produces `losos.iso`, and writing it to a USB stick is the whole
+procedure:
+
+```sh
+dd if=losos-desktop_<version>_x86_64.iso of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+It is a hybrid image, so the same file also boots from a DVD and can be handed
+to QEMU as a CD. Firmware booting the DVD follows the El Torito catalog to the
+ESP; firmware booting the USB stick finds the ESP through the GPT. Both are the
+same bytes, and the root partition the installer copies is on the medium beside
+them — which is what `CopyBlocks=auto` above means in practice.
+
+`losos.qcow2` is the same OS as a disk that boots straight to the desktop, for
+a VM. It runs the installer on nothing; it is already installed.
+
+The older path still works and needs no image at all: write
+`losos-rootfs.tar.xz` onto a disk's root partition and `losos-installer.efi`
+onto its ESP at `EFI/Linux/`, or boot the installer UKI however your firmware
+prefers. The installer needs nothing else: `bootctl` and `systemd-repart` are
+in the image already, and so is the OS it is about to copy.
+
+`docs/images.md` says how the media are built, and why by this repository
+rather than by `xorriso` and `mkfs`.

@@ -64,6 +64,16 @@ cmd_lint() {
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
   python3 "$repo/tools/gates/test-image.py"
+  # assert-media.py is the build's last word on whether the disk and the ISO
+  # came out right, and it runs once, four hours in, on the real artefacts.
+  # Wrong in the accepting direction it never says so: the build goes green
+  # and the failure surfaces as a machine that powers on to an empty boot
+  # menu. So it is fed images written from the format here instead.
+  python3 "$repo/tools/gates/test-media.py"
+  # The libvirt domain, checked for what it must NOT hand the guest. A domain
+  # that boots a kernel the host supplied shows a desktop and says nothing
+  # about the image's own partition table.
+  python3 "$repo/tools/gates/test-libvirt.py"
   # The release names and the shipped sysupdate MatchPatterns are one contract
   # written in two files. A mismatch does not fail an update -- sysupdate
   # reports "no update available", which is indistinguishable from being up to
@@ -116,12 +126,22 @@ print(layers[-1]['name'] if layers else '')
   [ -n "$target" ] || { echo "nothing to build" >&2; exit 1; }
 
   start_mirror || echo "do: no local source mirror; pm will fetch upstream" >&2
+  # Regenerate with the settings the last configure was given, not with the
+  # defaults. The generated tree carries an architecture, a channel and a
+  # version substituted into it and says so nowhere, so re-generating with the
+  # defaults silently turns an aarch64 tree into an x86_64 one and builds it.
+  local remembered=()
+  if [ -f "$repo/out/configure.args" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && remembered+=("$line")
+    done < "$repo/out/configure.args"
+  fi
   # Generate the whole tree, then insist only that the layers this build
   # actually walks are pinned. Refusing because some unrelated upper layer has
   # an unfetched source would make a partial tree unbuildable for no reason --
   # and a partial tree is the normal state while a distribution is being
   # brought up.
-  cmd_configure --allow-unresolved
+  cmd_configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
   echo "== building $target"
@@ -146,6 +166,18 @@ cmd_clean() {
   echo "clean: kept out/sources (the fetched tarballs) and .pm-config"
 }
 
+# Every command above assumes the host provides docs/host-requirements.md.
+# This one provides it instead: `./do container check` runs the gate inside the
+# image the Containerfile describes, which is the same image CI uses.
+cmd_container() {
+  local verb="${1:-}"
+  case "$verb" in
+    build) shift; python3 "$repo/tools/container" build "$@" ;;
+    "")    python3 "$repo/tools/container" run ;;
+    *)     python3 "$repo/tools/container" run ./do "$@" ;;
+  esac
+}
+
 case "${1:-}" in
   configure) shift; cmd_configure "$@" ;;
   sign)      shift; "$repo/tools/sign-all" ;;
@@ -156,6 +188,7 @@ case "${1:-}" in
   serve)     shift; python3 "$repo/tools/serve-sources" --port "$mirror_port" ;;
   plugins)   shift; cmd_plugins "$@" ;;
   clean)     shift; cmd_clean ;;
+  container) shift; cmd_container "$@" ;;
   *)
     cat <<USAGE
 ./do <command>
@@ -172,10 +205,17 @@ case "${1:-}" in
   plugins [crate]             build the pm plugin components into plugins/dist
                               (needs the wasm32 Rust target; not part of check)
   clean                       remove out/recipes, out/pkgs, out/tmp
+  container build             build the image the Containerfile describes
+  container [command]         run ./do <command> inside it, or a shell with
+                              no command. The image is the build host: it is
+                              what docs/host-requirements.md asks for, pinned.
 
 Environment:
   PM                   path to the pm binary (default ../pm/target/release/pm)
   LOSOS_MIRROR_PORT    loopback port for the source mirror (default 8730)
+  PM_ROOT              path to the sibling pm checkout (default ../pm). Two
+                       gates read pm's source, not its binary, and both
+                       downgrade to a pass when they cannot find it.
 USAGE
     ;;
 esac

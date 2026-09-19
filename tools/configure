@@ -218,6 +218,11 @@ def main():
                         help="target architecture from manifest/architectures.yaml")
     parser.add_argument("--channel", default="stable", choices=["stable", "nightly"],
                         help="which sysupdate channel the overlay points at")
+    parser.add_argument("--version", default="0",
+                        help="the release version baked into the ESP's kernel "
+                             "filename, which is where systemd-sysupdate reads "
+                             "it from; CI passes the version it is about to "
+                             "publish")
     parser.add_argument("--ota-port", type=int, default=8731,
                         help="loopback port tools/vm-test offers a release on")
     parser.add_argument("--mirror", metavar="URL",
@@ -267,9 +272,26 @@ def main():
         subs[f"@ARCH_{key.upper()}@"] = str(value)
     subs["@ARCH@"] = args.arch
     subs["@CHANNEL@"] = args.channel
+    # The version reaches exactly one place: the name of the UKI on the ESP the
+    # image ships with. sysupdate parses the version out of that filename and
+    # out of nothing else, so an image whose kernel is not named for its version
+    # cannot be told apart from any other and `ProtectVersion=%A` protects
+    # nothing. Everything else that needs a version -- the published filenames,
+    # SHA256SUMS -- is named after the build by tools/stage-release.
+    subs["@VERSION@"] = args.version
     # The loopback port tools/vm-test serves a test release on. Written here
     # rather than in the unit so the harness and the guest cannot disagree.
     subs["@OTA_PORT@"] = str(args.ota_port)
+    # Every partition UUID in the image is derived from this, so two builds of
+    # one version agree and two versions differ. systemd-repart takes a UUID
+    # and nothing else, so the version string is hashed into one rather than
+    # spelled into it.
+    subs["@IMAGE_SEED@"] = str(
+        __import__("uuid").uuid5(
+            __import__("uuid").NAMESPACE_URL,
+            f"https://losos.invalid/image/{args.arch}/{args.version}",
+        )
+    )
 
     # The toolchain: one manifest, every flag in the tree. A recipe that
     # spelled its own -O2 would be outside the CFI scheme with nothing saying
@@ -379,6 +401,18 @@ def main():
             )
 
         previous = name
+
+    # Record the settings, because `./do build` re-generates before it builds
+    # and would otherwise do so with the defaults -- producing, from a tree
+    # configured for aarch64 and version 20260918.7, a build for x86_64 and
+    # version 0. Nothing in the generated tree says which architecture it is
+    # for, so the substitution would simply be wrong and the build would
+    # succeed.
+    remembered = [f"--arch={args.arch}", f"--channel={args.channel}",
+                  f"--version={args.version}", f"--ota-port={args.ota_port}"]
+    if args.mirror:
+        remembered.append(f"--mirror={args.mirror}")
+    (out / "configure.args").write_text("\n".join(remembered) + "\n")
 
     print(f"configure: generated {len(layers)} layer bundle(s) into {recipes_out}")
     if unresolved:

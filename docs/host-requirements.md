@@ -6,6 +6,12 @@ recipe invokes directly is a host requirement, not something this tree can
 supply — there is no bootstrap step that could install it, because installing it
 would itself be a step whose first word had to resolve on the host.
 
+`Containerfile` is this list, executable — `./do container check` runs the gate
+inside an image that has all of it, pinned, and CI uses the same image. See
+[`container.md`](container.md). What follows is still the definition; the
+Containerfile is one way of satisfying it, not a replacement for knowing what
+it asks for.
+
 That makes the list below part of the build definition rather than a
 convenience, and it is short by design: everything else a build needs is
 compiled here and reached through a meson native file, an explicit `make`

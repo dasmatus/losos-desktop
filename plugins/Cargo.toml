@@ -6,7 +6,7 @@
 # they are encoded into, at run time, from a directory.
 [workspace]
 resolver = "3"
-members = ["losos-image", "losos-systemd"]
+members = ["losos-image", "losos-mkosi", "losos-systemd"]
 
 [workspace.package]
 version = "0.1.0"
