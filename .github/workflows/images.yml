@@ -98,7 +98,7 @@ jobs:
       # call is actually caught -- not that a YAML file says CFI is on.
       - name: Toolchain report
         working-directory: losos-desktop
-        run: just toolchain-report -- --verify-cfi
+        run: just toolchain-report --verify-cfi
 
   # The same gate, in the build host this repository describes rather than in
   # whatever the runner image happens to have installed. It is slower -- the
@@ -255,7 +255,7 @@ jobs:
         env:
           PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
-          just configure -- --mirror http://127.0.0.1:8730 \
+          just configure --mirror http://127.0.0.1:8730 \
             --arch ${{ matrix.arch }} --channel "$CHANNEL" \
             --version "$LOSOS_VERSION"
           just serve &
@@ -264,9 +264,9 @@ jobs:
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
         run: |
-          just stage-release -- --arch ${{ matrix.arch }} \
+          just stage-release --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" --out release
-          just release-manifest -- --arch ${{ matrix.arch }} \
+          just release-manifest --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" release
 
       # always(): a build that stopped at some package never reached
@@ -312,7 +312,7 @@ jobs:
 
       - name: Boot the kernel image
         run: |
-          just vm-test boot -- --arch ${{ matrix.arch }} \
+          just vm-test boot --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --log console.log
 
@@ -323,7 +323,7 @@ jobs:
       # the step above exercises, because it stages its ESP with QEMU.
       - name: Boot the disk image
         run: |
-          just vm-test disk -- --arch ${{ matrix.arch }} \
+          just vm-test disk --arch ${{ matrix.arch }} \
             --disk release/losos-desktop_*_${{ matrix.arch }}.qcow2 \
             --log disk-console.log
 
@@ -365,7 +365,7 @@ jobs:
 
       - name: Apply an update inside the VM
         run: |
-          just vm-test ota -- --arch ${{ matrix.arch }} \
+          just vm-test ota --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --serve release --log ota-console.log
 
