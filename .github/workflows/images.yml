@@ -141,8 +141,8 @@ jobs:
         run: |
           just container-run cargo build --release \
             --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
-          just container plugins
-          just container check
+          just container-plugins
+          just container-check
 
   # Whether the sources are pinned decides whether anything below can run at
   # all. Reported as an output rather than a failure: an unpinned tree is the
@@ -255,18 +255,23 @@ jobs:
         env:
           PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
-          just configure --mirror http://127.0.0.1:8730 \
+          just configure -- --mirror http://127.0.0.1:8730 \
             --arch ${{ matrix.arch }} --channel "$CHANNEL" \
             --version "$LOSOS_VERSION"
           just serve &
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            python3 tools/serve-sources --port 8730 --check && break
+            sleep 0.3
+          done
+          python3 tools/serve-sources --port 8730 --check
           just build losos-90-image
 
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
         run: |
-          just stage-release --arch ${{ matrix.arch }} \
+          just stage-release -- --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" --out release
-          just release-manifest --arch ${{ matrix.arch }} \
+          just release-manifest -- --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" release
 
       # always(): a build that stopped at some package never reached
@@ -312,7 +317,7 @@ jobs:
 
       - name: Boot the kernel image
         run: |
-          just vm-test boot --arch ${{ matrix.arch }} \
+          just vm-test boot -- --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --log console.log
 
@@ -323,7 +328,7 @@ jobs:
       # the step above exercises, because it stages its ESP with QEMU.
       - name: Boot the disk image
         run: |
-          just vm-test disk --arch ${{ matrix.arch }} \
+          just vm-test disk -- --arch ${{ matrix.arch }} \
             --disk release/losos-desktop_*_${{ matrix.arch }}.qcow2 \
             --log disk-console.log
 
@@ -365,7 +370,7 @@ jobs:
 
       - name: Apply an update inside the VM
         run: |
-          just vm-test ota --arch ${{ matrix.arch }} \
+          just vm-test ota -- --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --serve release --log ota-console.log
 

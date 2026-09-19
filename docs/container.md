@@ -16,7 +16,7 @@ image in CI and on a developer's machine.
 
 ```sh
 just container build      # build the image
-just container check      # run the gate inside it
+just container-check      # run the gate inside it
 just container            # a shell in it, with the repository mounted
 ```
 

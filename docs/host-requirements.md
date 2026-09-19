@@ -6,7 +6,7 @@ recipe invokes directly is a host requirement, not something this tree can
 supply — there is no bootstrap step that could install it, because installing it
 would itself be a step whose first word had to resolve on the host.
 
-`Containerfile` is this list, executable — `just container check` runs the gate
+`Containerfile` is this list, executable — `just container-check` runs the gate
 inside an image that has all of it, pinned, and CI uses the same image. See
 [`container.md`](container.md). What follows is still the definition; the
 Containerfile is one way of satisfying it, not a replacement for knowing what

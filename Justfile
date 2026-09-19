@@ -29,9 +29,13 @@ default:
     '                             (needs the wasm32 Rust target; not part of check)' \
     '  clean                      remove out/recipes, out/pkgs, out/tmp' \
     '  container build            build the image the Containerfile describes' \
-    '  container [command]        run `just <command>` inside it, or a shell with' \
-    '                             no command. The image is the build host: it is' \
-    '                             what docs/host-requirements.md asks for, pinned.' \
+    '  container [command]        run an arbitrary command inside it, or a shell' \
+    '                             with no command. The image is the build host:' \
+    '                             it is what docs/host-requirements.md asks for,' \
+    '                             pinned.' \
+    '  container-check [args...]  run `just check` inside the container host' \
+    '  container-plugins [args...]' \
+    '                             run `just plugins` inside the container host' \
     '  container-run <command>    run an arbitrary command inside the container host' \
     '' \
     'Environment:' \
@@ -250,16 +254,29 @@ container-run *args:
   #!/usr/bin/env bash
   python3 "{{repo}}/tools/container" run "$@"
 
+container-check *args:
+  #!/usr/bin/env bash
+  if [ $# -eq 0 ]; then
+    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" check
+  else
+    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" check -- "$@"
+  fi
+
+container-plugins *args:
+  #!/usr/bin/env bash
+  if [ $# -eq 0 ]; then
+    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins
+  else
+    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins -- "$@"
+  fi
+
 container *args:
   #!/usr/bin/env bash
-  set -- {{args}}
   if [ $# -eq 0 ]; then
     python3 "{{repo}}/tools/container" run
   elif [ "$1" = build ]; then
     shift
     python3 "{{repo}}/tools/container" build "$@"
-  elif [[ " configure sign digest lint check fetch serve plugins clean container-build container-run container check-latest release-manifest stage-release toolchain-report vm-test build " == *" $1 "* ]]; then
-    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" "$@"
   else
     python3 "{{repo}}/tools/container" run "$@"
   fi
