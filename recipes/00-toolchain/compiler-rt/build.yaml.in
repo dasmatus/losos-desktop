@@ -56,6 +56,27 @@ steps:
 # whole of asan/tsan/msan for a target we do not test them on would multiply
 # the build time and ship libraries nothing links.
 #
+# COMPILER_RT_BUILD_SANITIZERS stays ON because lib/cfi lives under it, and
+# COMPILER_RT_SANITIZERS_TO_BUILD is what makes that ON mean what the
+# paragraph above claims. Left at its default of `all` it builds every
+# sanitizer there is, and two of them do not survive this sysroot: gwp_asan
+# includes <execinfo.h>, which musl does not have, and tsan's shared library
+# wants -lstdc++, -lgcc_s and crtbeginS.o from a sysroot that at this point
+# holds a freshly built musl and nothing else. `cfi` alone still brings
+# sanitizer_common, interception, stats, lsan and ubsan, which lib/cfi needs
+# and which lib/CMakeLists.txt adds whenever sanitizers are on at all; the
+# result is libclang_rt.cfi, cfi_diag, ubsan_standalone and their supports.
+#
+# COMPILER_RT_HAS_VERSION_SCRIPT is a detected capability, and forcing it off
+# says something untrue about the linker, which does support version scripts.
+# It is here because it is the only switch compiler-rt offers over the thing
+# that actually matters: it is the `if` around every SHARED runtime, and a
+# shared runtime is what fails the link above. Nothing here loads a sanitizer
+# runtime dynamically -- cross-DSO CFI links libclang_rt.cfi_diag.a into each
+# DSO, statically, which is the whole point of building it here -- so the
+# libraries this turns off are ones nothing would have opened. Measured: with
+# these two set, the generated build has no shared target left in it at all.
+#
 # COMPILER_RT_STANDALONE_BUILD is what lets this be built without the rest of
 # the LLVM tree present -- but "the rest of the tree" does not include the
 # shared cmake modules, which a standalone build still reads and which the
@@ -108,7 +129,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DLLVM_COMMON_CMAKE_UTILS=/build/src/llvm-cmake -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
+  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DLLVM_COMMON_CMAKE_UTILS=/build/src/llvm-cmake -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_SANITIZERS_TO_BUILD=cfi -DCOMPILER_RT_HAS_VERSION_SCRIPT=OFF -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
 
 - stage: Build
   name: compile
