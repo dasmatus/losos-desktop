@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 
 # A step that runs a source tree's `configure`. The leading slash keeps this
 # off tools/configure, which recipes mention in comments.
-CONFIGURE = re.compile(r"/configure(?=\s)")
+CONFIGURE = re.compile(r"/configure(?=\s|$)")
 
 # Packages whose `configure` is not autoconf's and does not take --host.
 EXEMPT = {
