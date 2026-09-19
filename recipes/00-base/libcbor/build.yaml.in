@@ -19,11 +19,30 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_LIBCBOR@ --no-same-owner -C /build/src/libcbor --strip-components=1
 
+# CMAKE_CXX_COMPILER_WORKS stops cmake compiling and *linking* a C++ test
+# program before it reads a line of this project. libcbor's root CMakeLists.txt
+# says `project(libcbor)` with no language list, and a bare project() means
+# `C CXX` -- so the C++ toolchain is exercised by a library that is pure C. The
+# test links, clang++ puts libstdc++ on the line by default, and no musl sysroot
+# in this tree has one: `mold: fatal: library not found: stdc++`.
+#
+# libcbor really does compile no C++. src/CMakeLists.txt lists twenty .c files
+# and nothing else; WITH_TESTS is OFF by default and is not turned on here; the
+# two examples WITH_EXAMPLES builds are readfile.c and create_items.c. So the
+# skip asserts nothing untrue -- it is the same finding and the same fix as
+# zstd's, and the same tombstone applies: a `drops: [stdlibxx]` exception is not
+# the answer, because -nostdlib++ leaves the CFI layer's
+# libclang_rt.ubsan_standalone_cxx with no C++ ABI to resolve against.
+#
+# Hidden visibility is not a problem here the way it was for zstd's CLI:
+# src/CMakeLists.txt runs generate_export_header(cbor), so every public symbol
+# carries an explicit visibility("default") and the examples link against the
+# same shared library the sysroot gets.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DBUILD_SHARED_LIBS=ON
+  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile
