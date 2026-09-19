@@ -82,6 +82,11 @@ them installed, which is the whole reason `Containerfile` exists. What runs
 inside the build is `assert-media.py`, which reads the finished files back and
 asserts the qcow2 is a qcow2 with an ESP and a discoverable root in it and that
 the ISO's boot catalog and its ESP partition entry point at the same bytes.
+`tools/gates/test-media.py` is what makes that claim worth anything: it feeds
+`assert-media.py` the shape the image layer produces and nine near-misses, and
+requires it to reject all nine. Without it the assertion could be vacuous and
+would report so as success.
+
 That proves the structures are the structures they claim to be. It proves
 nothing about firmware, and **nobody has put this ISO in front of any.**
 

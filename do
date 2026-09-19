@@ -64,6 +64,12 @@ cmd_lint() {
   python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
   python3 "$repo/tools/gates/fingerprint-lint.py"
   python3 "$repo/tools/gates/test-image.py"
+  # assert-media.py is the build's last word on whether the disk and the ISO
+  # came out right, and it runs once, four hours in, on the real artefacts.
+  # Wrong in the accepting direction it never says so: the build goes green
+  # and the failure surfaces as a machine that powers on to an empty boot
+  # menu. So it is fed images written from the format here instead.
+  python3 "$repo/tools/gates/test-media.py"
   # The libvirt domain, checked for what it must NOT hand the guest. A domain
   # that boots a kernel the host supplied shows a desktop and says nothing
   # about the image's own partition table.

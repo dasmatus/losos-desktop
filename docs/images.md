@@ -118,6 +118,22 @@ with ext4 in it, and does the ISO's boot catalog point at the same bytes as its
 ESP partition entry. Partitions are looked up by type GUID rather than by
 position, because xorriso puts the ISO 9660 image area in the table too.
 
+That check runs once, four hours in, and only if everything before it
+succeeded, which is the worst possible schedule for a check that could be
+wrong in the accepting direction -- a build that goes green and an image that
+powers on to an empty boot menu. So `tools/gates/test-media.py` feeds it
+images written here from the format: one with the shape the image layer
+produces, and nine one-mutation near-misses it has to reject. The mutation
+that matters most is a root partition typed as plain Linux data. Such an image
+builds, and mounts by hand, and never boots, because there is no `/etc/fstab`
+and no `root=` for systemd-gpt-auto-generator to fall back on -- and no other
+gate in the tree would notice.
+
+The fixtures are not the build's images and are not meant to be. Whether mkosi
+and xorriso write a correct GPT is upstream's, and re-deriving it here would
+be testing them; whether this repository reads one back correctly is this
+repository's.
+
 Reading a structure back is not booting it. `tools/vm-test disk` hands the qcow2
 to QEMU with UEFI firmware and requires the guest to report that it came up, and
 that is the test that settles it; CI runs it on both architectures.
