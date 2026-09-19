@@ -160,7 +160,7 @@ build target="":
   build_in_container() {
     echo "just: host lacks the pinned mkosi image-build prerequisites; building $1 in the container host" >&2
     just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" container-build
-    python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM_ROOT; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins && just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"
+    python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"
   }
 
   start_mirror || echo "just: no local source mirror; pm will fetch upstream" >&2
