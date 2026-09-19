@@ -120,6 +120,46 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # TEMPORARY, and not meant to reach the default branch.
+  #
+  # The permanent home for this is .github/workflows/pin-sources.yml, but a
+  # workflow_dispatch workflow is only dispatchable once its file exists on the
+  # repository's DEFAULT branch -- and that file is on a topic branch, so the
+  # API answers 404. Dispatching an already-registered workflow, on the other
+  # hand, runs the file as it exists on the dispatched ref. So the fetch is
+  # bootstrapped from here, once, to produce the sources.lock that lets `build`
+  # run at all. Delete this job once pin-sources.yml has landed.
+  pin-bootstrap:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install what the fetcher needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml
+
+      - name: Make room for the mirror
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Fetch every source and record its hash
+        run: python3 tools/fetch-sources --update
+
+      - name: Show what is still unresolved
+        if: always()
+        run: |
+          echo "unresolved after this run: $(grep -c 'sha256: TODO' manifest/sources.lock || true)"
+          git --no-pager diff --stat -- manifest/sources.lock
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sources-lock
+          path: manifest/sources.lock
+
   build:
     needs: [gates, pinned, channel]
     if: needs.pinned.outputs.ready == 'true'
