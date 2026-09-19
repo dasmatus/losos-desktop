@@ -341,7 +341,23 @@ jobs:
       # The release tag is the channel, and it is moved rather than recreated:
       # sysupdate's Path= must stay the same URL across releases, because it is
       # baked into the image that is trying to update itself.
+      # A build that stopped part-way uploads nothing, and there is then
+      # nothing to publish. That is not this job's failure -- the build job is
+      # already red and says where it stopped -- so this reports it and stops
+      # rather than adding a second red job that names no cause.
+      - name: See what the build produced
+        id: produced
+        run: |
+          if [ -n "$(find release -type f -print -quit 2>/dev/null)" ]; then
+            echo "any=true" >> "$GITHUB_OUTPUT"
+            find release -type f | sort
+          else
+            echo "any=false" >> "$GITHUB_OUTPUT"
+            echo "The build uploaded no artifacts; nothing to publish."
+          fi
+
       - name: Publish to the channel release
+        if: steps.produced.outputs.any == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -350,3 +366,73 @@ jobs:
           gh release create "$channel" --repo "$GITHUB_REPOSITORY" \
             --title "LosOS $channel" --notes "Rolling $channel channel." \
             --prerelease release/*
+
+      # The same files also live on a branch of their own, under Git LFS.
+      #
+      # A branch rather than a second release, because a release tag is moved
+      # on every publish and keeps no history: the branch records what each
+      # run produced and gives every build a path that does not change shape.
+      # LFS because these are a compressed root filesystem and a UKI -- tens of
+      # megabytes of incompressible binary that would otherwise be packed into
+      # the repository's own history forever, and be cloned by everyone who
+      # ever checks the source out.
+      #
+      # `images` is an ordinary branch and never merges into the default one.
+      # It is not created by hand: the first publish makes it, because a job
+      # that needs a human to have prepared a branch is a job that fails once
+      # and then never runs again.
+      #
+      # NOTE: raw.githubusercontent.com serves an LFS-tracked file as its
+      # pointer, not its contents, so this branch is storage, not an update
+      # server. The release above is what sysupdate's Path= is aimed at.
+      - name: Host the images on the images branch
+        if: steps.produced.outputs.any == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          channel="${{ needs.channel.outputs.name }}"
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+          git lfs install --skip-repo
+
+          # --depth 1: the branch's history is every image ever published, and
+          # this job needs none of it. Without it each run would fetch every
+          # LFS object that has ever been on the branch.
+          if ! git clone --depth 1 --branch images "$remote" images; then
+            mkdir images
+            git -C images init -q -b images
+            git -C images remote add origin "$remote"
+          fi
+
+          cd images
+          # Written before the files are staged: git consults the working
+          # tree's .gitattributes as it adds, so a tarball committed before
+          # this existed would go in as an ordinary blob and stay one.
+          # printf rather than a heredoc: the terminator of an unindented
+          # heredoc has to sit in column one, which it cannot inside a YAML
+          # block scalar, and an indented terminator never terminates.
+          #
+          # SHA256SUMS is deliberately not tracked: it is small, it is text,
+          # and it is the one file worth reading in a diff.
+          printf '%s\n' \
+            '*.raw.xz filter=lfs diff=lfs merge=lfs -text' \
+            '*.efi filter=lfs diff=lfs merge=lfs -text' > .gitattributes
+
+          # Replaced, not added to: the channel directory mirrors what the
+          # channel release holds right now. Old versions stay reachable
+          # through this branch's history rather than piling up in a listing
+          # that SHA256SUMS does not mention.
+          rm -rf "$channel"
+          mkdir -p "$channel"
+          cp -a ../release/. "$channel"/
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "images branch already holds these files."
+            exit 0
+          fi
+          git commit -q -m "chore(images): $channel from run ${GITHUB_RUN_NUMBER}"
+          git push origin HEAD:images
