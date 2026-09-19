@@ -24,9 +24,16 @@ steps:
   name: fetch
   dl_urls:
     @URL_COMPILER_RT@: '@SHA256_COMPILER_RT@'
+    @URL_LLVM_CMAKE@: '@SHA256_LLVM_CMAKE@'
   run:
-  - mkdir -p /build/src/compiler-rt /build/b/compiler-rt
+  - mkdir -p /build/src/compiler-rt /build/src/llvm-cmake /build/b/compiler-rt
   - tar -xf @DL_COMPILER_RT@ --no-same-owner -C /build/src/compiler-rt --strip-components=1
+  # The second tarball is eight kilobytes of cmake modules shared by every
+  # LLVM sub-project. compiler-rt's own cmake/ carries none of them, and
+  # base-config-ix.cmake includes two -- ExtendPath and GetClangResourceDir --
+  # on its first pass, so without this the configure step dies before it looks
+  # at a single option.
+  - tar -xf @DL_LLVM_CMAKE@ --no-same-owner -C /build/src/llvm-cmake --strip-components=1
 
 # COMPILER_RT_BUILD_* is mostly off: this is not a sanitizer distribution, it
 # is the handful of objects CFI and the stack protector need. Building the
@@ -34,7 +41,13 @@ steps:
 # the build time and ship libraries nothing links.
 #
 # COMPILER_RT_STANDALONE_BUILD is what lets this be built without the rest of
-# the LLVM tree present, which is the only reason a single tarball is enough.
+# the LLVM tree present -- but "the rest of the tree" does not include the
+# shared cmake modules, which a standalone build still reads and which the
+# compiler-rt tarball does not ship. CMAKE_MODULE_PATH points at the separate
+# cmake-<ver>.src tarball unpacked above. compiler-rt's CMakeLists.txt puts
+# its own cmake/Modules at position 0 of that list with `list(INSERT ...)`
+# rather than overwriting it, so a value given here survives and is searched
+# second: compiler-rt's own modules still win where both define a name.
 #
 # CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY is the one that makes this
 # configure at all, and it is a bootstrap problem rather than a preference.
@@ -53,7 +66,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF -DLLVM_CONFIG_PATH=
+  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DCMAKE_MODULE_PATH=/build/src/llvm-cmake/Modules -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF -DLLVM_CONFIG_PATH=
 
 - stage: Build
   name: compile

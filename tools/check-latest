@@ -97,6 +97,13 @@ HOLD = {
         "(recipes/00-toolchain/compiler-rt/build.yaml.in, "
         "docs/host-requirements.md). Bump the host toolchain first."
     ),
+    "LLVM_CMAKE": (
+        "the shared cmake modules of the same LLVM release as COMPILER_RT, and "
+        "held for the same reason: the two are one release split across two "
+        "tarballs and compiler-rt configures against these modules, so a bump "
+        "that moved one alone would pair 18.1.8 sources with another release's "
+        "module set. Bump it with COMPILER_RT or not at all."
+    ),
 }
 
 

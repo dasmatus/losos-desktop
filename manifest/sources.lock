@@ -505,6 +505,18 @@ COMPILER_RT:
   version: '18.1.8'
   sha256: e054e99a9c9240720616e927cb52363abbc8b4f1ef0286bad3df79ec8fdf892f
 
+# The shared cmake modules of the same LLVM release, which compiler-rt needs
+# and its own tarball does not carry: base-config-ix.cmake includes ExtendPath
+# and GetClangResourceDir, both of which live only here. A standalone build
+# without them dies at configure with `include could not find requested file:
+# ExtendPath`, which reads as a broken checkout rather than a missing source.
+# Eight kilobytes, and the same version as COMPILER_RT by construction -- they
+# are two files of one release, so they move together or not at all.
+LLVM_CMAKE:
+  url: https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/cmake-18.1.8.src.tar.xz
+  version: '18.1.8'
+  sha256: 59badef592dd34893cd319d42b323aaa990b452d05c7180ff20f23ab1b41e837
+
 NVIDIA_OPEN:
   url: https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/580.95.05.tar.gz
   version: 580.95.05
