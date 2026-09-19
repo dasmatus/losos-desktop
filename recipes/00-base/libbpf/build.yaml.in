@@ -19,24 +19,49 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_LIBBPF@ --no-same-owner -C /build/src/libbpf --strip-components=1
 
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libbpf /build/src/libbpf --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig
-
+# libbpf ships no meson.build, and no configure either: the whole build is
+# src/Makefile, which is why there is no configure step here. It reads
+# ../include and ../include/uapi relative to itself and greps libbpf.map in
+# its own directory, so it has to run with src/ as the working directory --
+# `make -C` is what gives it that. OBJDIR keeps the objects, the .so and the
+# generated .pc out of the source tree the way every other recipe here does.
+#
+# EXTRA_CFLAGS and EXTRA_LDFLAGS rather than CFLAGS and LDFLAGS: the Makefile
+# spells `CFLAGS ?= -g -O2 -Werror -Wall -std=gnu89` and libbpf's sources are
+# written against that dialect, so assigning CFLAGS would silently take
+# -std=gnu89 away. The EXTRA_ pair appends, and appends *last*, so the layer's
+# own -O2 and hardening still win where the two disagree.
+#
+# NO_PKG_CONFIG=1 puts -lelf -lz on the link directly instead of asking
+# pkg-config for them. Not a shortcut: the pkg-config a step finds is the
+# build host's, and the recipe has no way to point it at the sysroot -- meson
+# takes --pkg-config-path and configure takes PKG_CONFIG_PATH=, but a make
+# variable is not the environment, and `env` is banned. -lelf and -lz resolve
+# against --sysroot=/build/sysroot in the response file, which is where
+# elfutils and zlib have just installed them.
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - ninja -C /build/b/libbpf -j @JOBS@
+  - make -C /build/src/libbpf/src -j @JOBS@ OBJDIR=/build/b/libbpf PREFIX=/usr LIBDIR=/usr/lib CC=@CC@ AR=@AR@ EXTRA_CFLAGS=@CFLAGS_RSP@ EXTRA_LDFLAGS=@LDFLAGS_RSP@ NO_PKG_CONFIG=1
 
+# LIBDIR is not optional and not cosmetic. Left unset the Makefile derives it
+# from `$(CC) -dumpmachine` and picks lib64 for any triple ending in 64 --
+# which both x86_64 and aarch64 do -- and the library would install to
+# /usr/lib64, where nothing in this tree looks.
+#
+# The rm is the price of this build system: `all` builds libbpf.a
+# unconditionally and `install` copies it beside the shared library, with no
+# option to ask for neither. Everything else in this layer is configured
+# shared-only, and a static libbpf left in the sysroot is something a later
+# link can silently prefer.
 - stage: Build
   name: install
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/libbpf --destdir /dest --no-rebuild
-  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/libbpf --destdir /build/sysroot --no-rebuild
+  - make -C /build/src/libbpf/src install DESTDIR=/dest OBJDIR=/build/b/libbpf PREFIX=/usr LIBDIR=/usr/lib CC=@CC@ AR=@AR@ EXTRA_CFLAGS=@CFLAGS_RSP@ EXTRA_LDFLAGS=@LDFLAGS_RSP@ NO_PKG_CONFIG=1
+  - make -C /build/src/libbpf/src install DESTDIR=/build/sysroot OBJDIR=/build/b/libbpf PREFIX=/usr LIBDIR=/usr/lib CC=@CC@ AR=@AR@ EXTRA_CFLAGS=@CFLAGS_RSP@ EXTRA_LDFLAGS=@LDFLAGS_RSP@ NO_PKG_CONFIG=1
+  - rm -f /dest/usr/lib/libbpf.a /build/sysroot/usr/lib/libbpf.a
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
 - stage: Test
@@ -44,3 +69,5 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libbpf.so
+  - test -e /dest/usr/include/bpf/libbpf.h
+  - test -e /dest/usr/lib/pkgconfig/libbpf.pc
