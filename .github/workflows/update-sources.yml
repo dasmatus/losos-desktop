@@ -232,13 +232,31 @@ jobs:
       # nothing in this tree composes one, because pm verifies a dl_urls
       # digest before it parses the build file and a wrong value is
       # indistinguishable from a compromised mirror.
+      #
+      # Every key the bump moved, not just the one that named the leg. A
+      # lockstep pair is one leg -- the matrix collapses a group to its
+      # representative -- and `--apply` resets the hash of every member to the
+      # TODO sentinel. Fetching only the representative leaves the sibling
+      # unresolved, tools/configure refuses to generate while any TODO
+      # remains, and the leg fails at `gate` for a reason that reads as the
+      # bump's fault. moved.json is the record of what --apply actually
+      # wrote, which is a better source for this than re-deriving the group.
       - name: Fetch it and record what it hashed to
         id: fetch
         continue-on-error: true
         working-directory: losos-desktop
         env:
           KEY: ${{ matrix.key }}
-        run: just fetch -- --update --only "$KEY"
+        run: |
+          moved=$(python3 -c 'import json,sys;print(" ".join(sorted(e["key"] for e in json.load(open(sys.argv[1]))["outdated"])))' \
+            "$GITHUB_WORKSPACE/moved.json")
+          # An empty list means the bump wrote nothing, which the verdict step
+          # reports on its own. Saying so here too beats fetching the
+          # representative anyway and calling an unmoved tree fetched.
+          [ -n "$moved" ] || { echo "fetch: the bump moved nothing" >&2; exit 1; }
+          for key in $moved; do
+            just fetch -- --update --only "$key"
+          done
 
       # The second: the whole tree still configures, signs, proves its
       # download-path digest against pm, and passes every lint.
@@ -284,13 +302,20 @@ jobs:
           STATUS="$status" FAILED_AT="$failed_at" python3 - <<'PY' > "$GITHUB_WORKSPACE/bump/$KEY.json"
           import json, os, pathlib
           moved = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "moved.json"
-          entry = {}
+          candidates = []
           if moved.exists():
-              for candidate in json.loads(moved.read_text())["outdated"]:
-                  if candidate["key"] == os.environ["KEY"]:
-                      entry = candidate
+              candidates = json.loads(moved.read_text())["outdated"]
+          entry = next((c for c in candidates if c["key"] == os.environ["KEY"]), {})
           print(json.dumps({
+              # The representative: what the leg is named after, what its
+              # patch and verdict files are called, and what `propose` applies.
               "key": os.environ["KEY"],
+              # Every key the leg moved. For a lockstep pair that is both
+              # halves, and the proposal table names both -- a row that named
+              # one while the diff moved two is the tree lying about what it
+              # contains, which is the thing the group machinery exists to
+              # prevent.
+              "keys": sorted(c["key"] for c in candidates) or [os.environ["KEY"]],
               # From the leg's own bump, not the survey's: minutes passed
               # between them and an upstream can cut a release in minutes.
               "from": entry.get("from", "?"),
@@ -432,7 +457,11 @@ jobs:
                   verdict = "passed alone, but does not apply alongside the rest"
               else:
                   verdict = "ok"
-              print(f'| `{v["key"]}` | {v["from"]} | {v["to"]} | {verdict} |')
+              # A lockstep pair is one release in two tarballs, so it is one
+              # row with both keys and one from/to, not two rows claiming to
+              # be independent bumps.
+              names = " + ".join(f'`{k}`' for k in v.get("keys") or [v["key"]])
+              print(f'| {names} | {v["from"]} | {v["to"]} | {verdict} |')
           for e in survey["held"]:
               print(f'| `{e["key"]}` | {e["from"]} | {e["to"]} | held: {e["why"]} |')
           unknown = survey["unknown"]
