@@ -388,18 +388,33 @@ def bump_recipes(repo, key, version, gate=None):
     without this every candidate bump would be rejected by `./do check` before
     anything got the chance to test the bump itself.
 
-    A recipe that downloads more than one source is skipped, exactly as the
-    gate skips it: there is no single upstream version for it to agree with.
+    A recipe that downloads more than one source is handled the way the gate
+    handles it, which is not the same as ignoring it. Where its sources carry
+    different versions there is no single upstream version to follow and the
+    recipe is left alone; where they all carry the SAME version -- two tarballs
+    cut from one release, which is compiler-rt and its LLVM cmake modules --
+    that version is the recipe's and it is written.
+
+    The lock is read here rather than passed in because the caller has already
+    written this bump to it: what matters is whether the recipe's sources agree
+    AFTER the move, not before. A bump that moves one half of such a pair
+    therefore writes no recipe at all, and leaves a tree the gate skips rather
+    than one it rejects -- the honest state for a pair that has half moved.
     """
     gate = gate or _versions_gate()
+    lock = yaml.safe_load((repo / "manifest" / "sources.lock").read_text()) or {}
     touched = []
     items = "\n".join(f"- '{part}'" for part in version.split("."))
 
     for template in sorted((repo / "recipes").glob("*/*/build.yaml.in")):
         text = template.read_text()
         keys = set(gate.URL_TOKEN.findall(text))
-        if keys != {key}:
+        if key not in keys:
             continue
+        if len(keys) > 1:
+            versions = {str((lock.get(other) or {}).get("version", "")) for other in keys}
+            if versions != {version}:
+                continue
         if not gate.VERSION_BLOCK.search(text):
             continue
         old = gate.recipe_version(text)
@@ -736,6 +751,43 @@ def self_test():
         failures, _ = gate.check(root)
         check("and nothing the gate would reject was written",
               [f for f in failures if "zlib" in f], [])
+
+        # The other half of the same rule: a two-source recipe whose sources
+        # DO agree is the shape compiler-rt has, and leaving it alone would
+        # strand the one recipe in the tree that is version-locked on purpose
+        # at whatever version it was written with.
+        (root / "manifest" / "sources.lock").write_text(
+            "CRT:\n  url: https://example.invalid/compiler-rt-19.1.7.src.tar.xz\n"
+            "  version: '19.1.7'\n  sha256: TODO\n"
+            "CRT_CMAKE:\n  url: https://example.invalid/cmake-19.1.7.src.tar.xz\n"
+            "  version: '19.1.7'\n  sha256: TODO\n")
+        pair = root / "recipes" / "00-toolchain" / "compiler-rt"
+        pair.mkdir(parents=True)
+        (pair / "build.yaml.in").write_text(
+            "# compiler-rt 18.1.8\nname: compiler-rt\nversion:\n- '18'\n- '1'\n"
+            "- '8'\ndependencies: []\nsteps:\n- stage: Prepare\n  name: fetch\n"
+            "  dl_urls:\n    @URL_CRT@: '@SHA256_CRT@'\n"
+            "    @URL_CRT_CMAKE@: '@SHA256_CRT_CMAKE@'\n  run:\n  - true\n")
+
+        touched = bump_recipes(root, "CRT", "19.1.7", gate=gate)
+        check("a two-source recipe whose sources agree IS bumped",
+              touched, ["recipes/00-toolchain/compiler-rt/build.yaml.in"])
+        check("to the version both of them carry",
+              gate.recipe_version((pair / "build.yaml.in").read_text()),
+              ["19", "1", "7"])
+
+        # And the half-moved pair, which is what one leg of the update matrix
+        # produces: nothing written, because there is nothing true to write.
+        (root / "manifest" / "sources.lock").write_text(
+            "CRT:\n  url: https://example.invalid/compiler-rt-20.1.0.src.tar.xz\n"
+            "  version: '20.1.0'\n  sha256: TODO\n"
+            "CRT_CMAKE:\n  url: https://example.invalid/cmake-19.1.7.src.tar.xz\n"
+            "  version: '19.1.7'\n  sha256: TODO\n")
+        check("but half a pair moves no recipe",
+              bump_recipes(root, "CRT", "20.1.0", gate=gate), [])
+        check("and the recipe still says what both sources last agreed on",
+              gate.recipe_version((pair / "build.yaml.in").read_text()),
+              ["19", "1", "7"])
 
     print("check-latest --self-test: " + ("all cases behave" if ok else "FAILED"))
     return 0 if ok else 1

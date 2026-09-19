@@ -188,6 +188,16 @@ jobs:
         with: { name: pm-binary, path: pm-bin }
       - run: chmod +x pm-bin/pm
 
+      # explain-all needs pm's plugin components installed, and they are
+      # compiled rather than committed -- a fresh checkout has none, and the
+      # gate below fails on the image layer with the components' own names.
+      # Not part of `just check` itself, which has to run with no network and
+      # no wasm toolchain.
+      - name: Build the plugin components
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm just plugins
+
       # Moves the lock's url and version, resets its hash to the TODO
       # sentinel, and moves the `version:` list of the recipe that downloads
       # it. All three or none: tools/gates/versions.py rejects a tree where
@@ -327,6 +337,16 @@ jobs:
           path: bump
       - uses: actions/download-artifact@v4
         with: { name: survey, path: survey }
+
+      # explain-all needs pm's plugin components installed, and they are
+      # compiled rather than committed -- a fresh checkout has none, and the
+      # gate below fails on the image layer with the components' own names.
+      # Not part of `just check` itself, which has to run with no network and
+      # no wasm toolchain.
+      - name: Build the plugin components
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm just plugins
 
       # Each bump that applies is committed as it lands, so a bump that does
       # NOT apply can be cleaned up with a hard reset without taking the ones
