@@ -76,19 +76,24 @@ class Toolchain:
             flags.append(f"-resource-dir={resource_dir}")
         return flags
 
-    def runtime_flags(self):
+    def runtime_flags(self, drops=()):
         """Which runtime library and unwinder clang links against.
 
         Link-time only, deliberately. They are accepted on a compile line and
         do nothing there, and clang then warns about an unused argument for
         every translation unit in the distribution.
+
+        `unwindlib` is droppable on its own, which no other flag here is. The
+        unwinder cannot be handed itself: libunwind's own shared library links
+        with --rtlib=compiler-rt like everything else, and a --unwindlib
+        naming the library being linked resolves to nothing.
         """
         flags = []
         rtlib = self.target.get("rtlib")
         if rtlib:
             flags.append(f"--rtlib={rtlib}")
         unwindlib = self.target.get("unwindlib")
-        if unwindlib:
+        if unwindlib and "unwindlib" not in drops:
             flags.append(f"--unwindlib={unwindlib}")
         return flags
 
@@ -138,7 +143,10 @@ class Toolchain:
         # packages that drop `target` -- musl and the kernel -- are exactly the
         # two that must not be handed compiler-rt. musl is building the sysroot
         # these would resolve out of, and the kernel supplies its own.
-        flags = [] if "target" in drops else self.target_flags() + self.runtime_flags()
+        flags = (
+            [] if "target" in drops
+            else self.target_flags() + self.runtime_flags(drops)
+        )
         if linker:
             # CFI needs a linker that understands the bitcode it is merging.
             flags.append(f"-fuse-ld={linker}")

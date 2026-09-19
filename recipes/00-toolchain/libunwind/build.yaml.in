@@ -1,0 +1,96 @@
+# LLVM libunwind 18.1.8
+#
+# The unwinder, and the reason a CFI violation can name the call site it
+# happened at. musl has none, and until this existed -fno-sanitize-trap=cfi had
+# nowhere to resolve _Unwind_Backtrace from, so the whole distribution ran with
+# CFI trapping silently instead of reporting.
+#
+# Last in the layer: the shared library is the first thing in the tree to link
+# against compiler-rt's crt objects out of the resource directory, which the
+# member before it has just staged.
+name: libunwind
+version:
+- '18'
+- '1'
+- '8'
+dependencies: []
+steps:
+
+# Three tarballs of one LLVM release, and the layout is not free. libunwind's
+# CMakeLists sets LLVM_COMMON_CMAKE_UTILS to ../cmake with a plain set(), which
+# overrides anything passed with -D, and reaches ../runtimes/cmake/Modules the
+# same way. So the three are extracted as siblings under /build/src/llvm rather
+# than into one directory each.
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBUNWIND@: '@SHA256_LIBUNWIND@'
+    @URL_LLVM_CMAKE@: '@SHA256_LLVM_CMAKE@'
+    @URL_LLVM_RUNTIMES@: '@SHA256_LLVM_RUNTIMES@'
+  run:
+  - mkdir -p /build/src/llvm/libunwind /build/src/llvm/cmake /build/src/llvm/runtimes /build/b/libunwind
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBUNWIND@ --no-same-owner -C /build/src/llvm/libunwind --strip-components=1
+  - tar -xf @DL_LLVM_CMAKE@ --no-same-owner -C /build/src/llvm/cmake --strip-components=1
+  - tar -xf @DL_LLVM_RUNTIMES@ --no-same-owner -C /build/src/llvm/runtimes --strip-components=1
+
+# One patch, and without it this recipe produces an unwinder that cannot
+# unwind. libunwind's CMakeLists has no project() call, so configured directly
+# there is no ASM language and cmake drops UnwindRegistersSave.S and
+# UnwindRegistersRestore.S rather than failing on them. See the patch for the
+# measurement. Applied with no fuzz, so a version bump that moves those lines
+# fails here rather than applying somewhere it was not meant to.
+- stage: Build
+  name: patch
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/libunwind/patches /build/src/llvm/libunwind
+
+# LIBUNWIND_USE_COMPILER_RT because there is no libgcc in this sysroot and no
+# gcc on the build host, which is the same reason target.rtlib exists.
+# Assertions off: upstream leaves them ON by default even in a release build,
+# and an abort inside the unwinder during a CFI report is the least useful
+# failure this tree could ship.
+#
+# Both shared and static, deliberately. -lunwind takes the shared one, which is
+# what C++ exception unwinding across a DSO boundary needs -- two copies of the
+# unwinder in one process disagree about who owns a stack. The archive is kept
+# for anything that has to be self-contained.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - cmake -S /build/src/llvm/libunwind -B /build/b/libunwind -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_ASM_COMPILER=@CC@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_ASM_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBUNWIND@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP_LIBUNWIND@ -DCMAKE_ASM_FLAGS=@CFLAGS_RSP_LIBUNWIND@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBUNWIND@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBUNWIND@ -DLIBUNWIND_ENABLE_SHARED=ON -DLIBUNWIND_ENABLE_STATIC=ON -DLIBUNWIND_ENABLE_ASSERTIONS=OFF -DLIBUNWIND_USE_COMPILER_RT=ON -DLIBUNWIND_INSTALL_LIBRARY=ON
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cmake --build /build/b/libunwind -j @JOBS@
+
+# The sysroot install goes through make rather than `cmake --install --prefix`.
+# DESTDIR=/dest is in the environment of every step and cmake prepends it to
+# whatever --prefix says, so that spelling writes the tree into
+# /dest/build/sysroot/usr and leaves the sysroot empty. A variable set on
+# make's command line is exported, which is the DESTDIR cmake_install.cmake
+# actually reads.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - cmake --install /build/b/libunwind
+  - make -C /build/b/libunwind install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+# `test -f libunwind.a` is not the check here, because the failure this recipe
+# exists to prevent produces a perfectly good-looking archive that is missing
+# the assembly. Name the symbols instead; see files/check-unwinder.sh.
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -f /dest/usr/lib/libunwind.a
+  - test -e /dest/usr/lib/libunwind.so
+  - /bin/sh @RECIPE@/files/libunwind/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.a
+  - /bin/sh @RECIPE@/files/libunwind/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.so

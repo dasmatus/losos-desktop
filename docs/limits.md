@@ -67,55 +67,59 @@ means pinning compiler-rt to the container's clang or the other way round.
 That choice is open with Matus, along with the same question on the LLVM pin
 itself.
 
-## CFI traps instead of diagnosing, because there is no unwinder
+## The unwinder is ours, and it took a patch to get the assembly compiled
 
-`manifest/toolchain.yaml` sets `cfi.trap: true`, and it is marked temporary
-there. The distribution wants the other mode: `-fno-sanitize-trap=cfi` makes a
-violation print the call site it happened at, which systemd-coredump can then
-record, instead of raising SIGILL with nothing attached.
+Closed, and kept here because the way it was nearly not closed is the useful
+part. This entry read "CFI traps instead of diagnosing, because there is no
+unwinder", and it said restoring diagnose mode meant pinning the full LLVM
+source tree, because the supported entry point is `runtimes/` with
+`-DLLVM_ENABLE_RUNTIMES=libunwind` and that needs `GetHostTriple.cmake`, which
+ships in no release tarball smaller than 130 MB.
 
-That mode is unavailable, not unchosen. `-fno-sanitize-trap` puts
-`libclang_rt.cfi_diag` on the link line; cfi_diag walks the stack to find the
-call site; the walk calls `_Unwind_Backtrace` and `_Unwind_GetIP`:
+That was wrong, and it was wrong in the direction that makes a cost look
+prohibitive. libunwind configures perfectly well on its own. What it needs is
+a three-line patch declaring the project, and two more tarballs of the same
+release it already pins: `libunwind-18.1.8.src.tar.xz` at 119 KB and
+`runtimes-18.1.8.src.tar.xz` at 6.8 KB, the second of which exists only to
+supply `HandleFlags.cmake`. The earlier conclusion came from trying the
+`runtimes/` build entry point, failing, and reading that as the direct path
+being unavailable, when the direct path needed the patch that had already been
+identified.
+
+**The patch is not a convenience.** `libunwind/CMakeLists.txt` has no
+`project()` call and no `enable_language()`, because it is written to be
+included from a build that declares the languages for it. Configured directly,
+cmake has no ASM language, and cmake's response to a source it cannot compile
+is to drop it:
 
 ```
-ld.lld: error: undefined symbol: _Unwind_Backtrace
->>> referenced by sanitizer_unwind_linux_libcdep.cpp.o
-    in archive .../libclang_rt.cfi_diag-x86_64.a
+$ cmake --build b && echo $?        # unpatched
+0
+$ grep -c "ASM object" build.log
+0
+$ llvm-nm --defined-only lib/libunwind.a | grep -c __unw_getcontext
+0
 ```
 
-musl has no unwinder, `libgcc_s` is not in this sysroot, and LLVM's libunwind
-is not built here. `libclang_rt.cfi`, which trap mode links instead, carries no
-`_Unwind` reference at all.
+A 171 KB archive, a clean build, and no `__unw_getcontext` -- the function that
+captures the register state every unwind starts from. Nothing says so until
+something links against it. `recipes/00-toolchain/libunwind` therefore ends in
+a step that names the three symbols rather than testing that a file exists.
 
-**What is lost is the call site, and nothing else.** CFI is still enforced —
-every scheme, cross-DSO included — and a violation still stops the process. It
-stops with SIGILL, so the report says that a program died rather than which
-indirect call was wrong.
+With the patch, `manifest/toolchain.yaml` sets `cfi.trap: false` and
+`target.unwindlib: libunwind`, and a violation reports itself:
 
-The way back is an unwinder for the musl target in the sysroot, and then
-`target.unwindlib: libunwind`. `-lunwind` is an ordinary library name and
-resolves through `--sysroot`, so unlike the resource-directory problem above it
-needs no change to how clang is pointed at anything. It is not one recipe,
-though, and the reason is worth writing down because the first attempt looks
-like it worked:
+```
+t.c:6:5: runtime error: control flow integrity check for type
+    'long (long, long, long)' failed during indirect function call
+ld-temp.o: note: add defined here
+```
 
-- `libunwind/CMakeLists.txt` in 18.1.8 has no `project()` and no
-  `enable_language(ASM)` of its own — it is meant to be added as a
-  subdirectory, not configured. Configured directly it configures, builds and
-  installs without a warning, **silently dropping** `UnwindRegistersSave.S` and
-  `UnwindRegistersRestore.S`. The `libunwind.a` that comes out has no
-  `__unw_getcontext` in it, and the only symptom is the next link.
-- The supported entry point is `runtimes/` with
-  `-DLLVM_ENABLE_RUNTIMES=libunwind`. That needs `GetHostTriple.cmake`, which
-  ships in neither `llvm-N-dev` nor `cmake-N.src.tar.xz` — only in the full
-  LLVM source tree. `AddLLVM.cmake` and `HandleLLVMOptions.cmake` do come from
-  `llvm-N-dev`, so it is that one module that would force the pin.
-
-So restoring diagnose mode costs a new pinned source (the LLVM tarball, for one
-cmake module), a patch to `runtimes/CMakeLists.txt`, or a libunwind build that
-does not go through cmake. That is a pin this tree would carry for years, which
-is why it is a decision written down here rather than one taken in passing.
+libunwind itself is the one package that drops `unwindlib` alone, because
+`--unwindlib=libunwind` on its own shared link resolves to the library being
+linked. It drops CFI and LTO too, for a reason beyond cost: `cfi_diag` calls
+into this library to report a violation, so instrumenting it would put the
+reporter inside the thing being reported on.
 
 ## Cross-DSO CFI is claimed, and a version script can quietly revoke it
 
