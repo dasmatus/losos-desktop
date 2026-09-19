@@ -165,8 +165,8 @@ build target="":
     # configure rewrites sources to 127.0.0.1:$LOSOS_MIRROR_PORT when the local
     # mirror exists, so the fallback container needs the host network to reach it.
     # The recursive `just build` reads out/configure.args back from disk, so keep
-    # the mounted copy in sync with the effective remembered arguments here.
-    printf '%s\n' "${remembered[@]}" > "{{repo}}/out/configure.args"
+    # the mounted copy in sync with the effective configure arguments here.
+    printf '%s\n' "${configure_args[@]}" > "{{repo}}/out/configure.args"
     PM="{{pm}}" PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"
   }
 
