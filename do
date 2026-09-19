@@ -169,11 +169,11 @@ print(layers[-1]['name'] if layers else '')
   # and a partial tree is the normal state while a distribution is being
   # brought up.
   cmd_configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
+  python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   if recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
     build_in_container "$target"
     return
   fi
-  python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
   echo "== building $target"
   ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )
