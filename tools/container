@@ -151,7 +151,23 @@ def run(engine, args):
         command.append("-t")
         command.append("-i")
     command.append(IMAGE)
-    command += args.command or ["bash"]
+
+    # `just container-run -- cargo build ...` forwards that `--` as a literal
+    # first argument rather than consuming it: it is just's own end-of-options
+    # marker, and just passes the marker along with everything after it. It then
+    # survives argparse too, because REMAINDER keeps a `--` instead of eating it.
+    # Left in place it becomes the container's pid1, and the failure names
+    # nothing that points at a separator:
+    #
+    #   ERROR (catatonit:2): failed to exec pid1: No such file or directory
+    #
+    # which reads as a program missing from the image. Dropping one leading `--`
+    # here covers every caller -- the Justfile's container recipes and a direct
+    # invocation alike -- and no one ever means to run a command called `--`.
+    inner = list(args.command or [])
+    if inner and inner[0] == "--":
+        inner.pop(0)
+    command += inner or ["bash"]
     return subprocess.call(command)
 
 
