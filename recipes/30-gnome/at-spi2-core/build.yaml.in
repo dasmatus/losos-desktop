@@ -1,11 +1,12 @@
-# at-spi2-core 2.54.0
+# at-spi2-core 2.62.0.1
 #
 # Accessibility bus. gtk4 hard-depends on it.
 name: at-spi2-core
 version:
 - '2'
-- '54'
+- '62'
 - '0'
+- '1'
 dependencies: []
 steps:
 

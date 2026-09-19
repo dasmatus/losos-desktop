@@ -1,11 +1,11 @@
-# gdk-pixbuf 2.42.12
+# gdk-pixbuf 2.44.8
 #
 # Image loading for gtk.
 name: gdk-pixbuf
 version:
 - '2'
-- '42'
-- '12'
+- '44'
+- '8'
 dependencies: []
 steps:
 

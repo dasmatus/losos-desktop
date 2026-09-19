@@ -1,4 +1,4 @@
-# fwupd 2.0.3
+# fwupd 2.1.7
 #
 # Firmware updates, and the firmware half of the security report. Both matter
 # on an OS with no package manager to push a microcode or UEFI fix: without
@@ -25,8 +25,8 @@
 name: fwupd
 version:
 - '2'
-- '0'
-- '3'
+- '1'
+- '7'
 dependencies: []
 steps:
 

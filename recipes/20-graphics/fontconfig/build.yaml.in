@@ -1,10 +1,10 @@
-# fontconfig 2.15.0
+# fontconfig 2.16.0
 #
 # Font discovery.
 name: fontconfig
 version:
 - '2'
-- '15'
+- '16'
 - '0'
 dependencies: []
 steps:

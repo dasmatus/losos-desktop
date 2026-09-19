@@ -1,9 +1,9 @@
-# gdm 47.0
+# gdm 51.0
 #
 # The display manager, and this OS's entire login path. It creates logind sessions and resolves users through NSS, which userdbd and homed answer.
 name: gdm
 version:
-- '47'
+- '51'
 - '0'
 dependencies: []
 steps:
