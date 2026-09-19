@@ -225,8 +225,10 @@ container *args:
   elif [ "$1" = build ]; then
     shift
     python3 "{{repo}}/tools/container" build "$@"
-  else
+  elif [[ " configure sign digest lint check fetch serve plugins clean container-build container-run container check-latest release-manifest stage-release toolchain-report vm-test build " == *" $1 "* ]]; then
     python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" "$@"
+  else
+    python3 "{{repo}}/tools/container" run "$@"
   fi
 
 check-latest *args:
