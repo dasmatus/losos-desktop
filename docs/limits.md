@@ -127,7 +127,7 @@ Consequently **no upstream package in this tree has been compiled**. What has
 been built end to end, by pm, in the jail: `losos-00-hosttools` (meson, from a
 pinned sdist) and `losos-05-core` (`losos-release`, compiled from this
 repository's own C by that meson, and run out of its own archive). The recipe
-tree above that is validated by `./do check` — schema, URL form, fingerprints,
+tree above that is validated by `just check` — schema, URL form, fingerprints,
 and `pm explain` over every command — which proves it is executable-in-principle
 and proves nothing about whether each package configures.
 
