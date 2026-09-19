@@ -419,6 +419,8 @@ def main():
     # succeed.
     remembered = [f"--arch={args.arch}", f"--channel={args.channel}",
                   f"--version={args.version}", f"--ota-port={args.ota_port}"]
+    if args.allow_unresolved:
+        remembered.append("--allow-unresolved")
     if args.mirror:
         remembered.append(f"--mirror={args.mirror}")
     (out / "configure.args").write_text("\n".join(remembered) + "\n")
