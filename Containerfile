@@ -189,6 +189,16 @@ RUN pacman -Syu --noconfirm --needed \
       just \
       make pkgconf tar xz zstd cpio patch \
       \
+      `# bzip2 is the odd one here: no recipe names it and nothing spells` \
+      `# it on a command line. tar picks a decompressor from the file` \
+      `# itself, and seven sources in manifest/sources.lock are .tar.bz2,` \
+      `# so a host without it stops at the first of them -- pcre2 -- with` \
+      `# a tar child that cannot exec a program no file in this tree` \
+      `# mentions. Arch's base group already carries it, the way it` \
+      `# carries systemd; naming it keeps the requirement written down` \
+      `# rather than inherited from a base image that is free to drop it.` \
+      bzip2 \
+      \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
       `# deliberately absent -- but ninja and cmake are invoked as first words.` \
       ninja cmake \

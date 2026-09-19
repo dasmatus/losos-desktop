@@ -251,10 +251,17 @@ jobs:
           # link through -fuse-ld=mold, and mold does LTO through the
           # LLVMgold.so only that package carries. lld is still here for the
           # kernel's LLVM=1. See docs/host-requirements.md.
+          #
+          # bzip2 is not named by any recipe and appears on no command line.
+          # tar reaches for it on its own for the .tar.bz2 sources in the
+          # lock, and Debian's tar tries lbzip2 before it; the runner image
+          # has neither, so pcre2's fetch step dies with
+          # "tar (child): lbzip2: Cannot exec" -- a program this tree never
+          # mentions. xz-utils beside it is there for the same reason.
           sudo apt-get install -y --no-install-recommends \
             clang lld mold llvm llvm-18-linker-tools libclang-rt-18-dev \
             just python3-yaml python3-jinja2 \
-            ninja-build cmake bison flex bc xz-utils
+            ninja-build cmake bison flex bc xz-utils bzip2
 
       # losos-security is a cargo build and everything above the toolchain
       # layer is musl, so --target needs that target's std installed. Without
