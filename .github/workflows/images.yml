@@ -312,7 +312,7 @@ jobs:
 
       - name: Boot the kernel image
         run: |
-          just vm-test boot --arch ${{ matrix.arch }} \
+          just vm-test boot -- --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --log console.log
 
@@ -323,7 +323,7 @@ jobs:
       # the step above exercises, because it stages its ESP with QEMU.
       - name: Boot the disk image
         run: |
-          just vm-test disk --arch ${{ matrix.arch }} \
+          just vm-test disk -- --arch ${{ matrix.arch }} \
             --disk release/losos-desktop_*_${{ matrix.arch }}.qcow2 \
             --log disk-console.log
 
@@ -365,7 +365,7 @@ jobs:
 
       - name: Apply an update inside the VM
         run: |
-          just vm-test ota --arch ${{ matrix.arch }} \
+          just vm-test ota -- --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --serve release --log ota-console.log
 

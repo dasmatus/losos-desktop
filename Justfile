@@ -224,7 +224,7 @@ container *args:
     shift
     python3 "{{repo}}/tools/container" build "$@"
   else
-    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" -- "$@"
+    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" "$@"
   fi
 
 check-latest *args:
