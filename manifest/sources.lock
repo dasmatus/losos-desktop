@@ -10,11 +10,11 @@
 # must already be in that form: https, lowercase host, no default port, no
 # dot-segments, no query, no fragment. tools/gates/url-canonical.py enforces it.
 #
-# Every `version:` is QUOTED, and must stay quoted. Unquoted, YAML reads 2.70
-# as the float 2.7 and 1.50 as 1.5, so @VERSION_LIBCAP@ rendered "2.7" -- a
+# Every `version:` is QUOTED, and must stay quoted. Unquoted, YAML reads 2.70 as
+# the float 2.7 and 1.50 as 1.5, so @VERSION_LIBCAP@ rendered "2.7" -- a
 # directory name that does not exist, in a recipe that looked correct.
 # tools/gates/versions.py compares these against each recipe's own `version:`
-# list and would report the truncation as a mismatch.
+# list and reports the truncation as a mismatch.
 
 MESON:
   url: https://files.pythonhosted.org/packages/48/91/d58a3eb45ed54bf32b96806dd2f4efd407f7a9675953e15e8ef257840a0d/meson-1.12.0.tar.gz
@@ -498,7 +498,7 @@ COMPILER_RT:
 
 NVIDIA_OPEN:
   url: https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/580.95.05.tar.gz
-  version: '580.95.05'
+  version: 580.95.05
   sha256: TODO
 
 # ---- fwupd and its stack -------------------------------------------------
@@ -514,25 +514,25 @@ NVIDIA_OPEN:
 # bulk-controller plugin, which this build disables).
 LIBUSB:
   url: https://github.com/libusb/libusb/releases/download/v1.0.27/libusb-1.0.27.tar.bz2
-  version: '1.0.27'
+  version: 1.0.27
   sha256: TODO
 
 LIBXMLB:
   url: https://github.com/hughsie/libxmlb/releases/download/0.3.19/libxmlb-0.3.19.tar.xz
-  version: '0.3.19'
+  version: 0.3.19
   sha256: TODO
 
 LIBJCAT:
   url: https://github.com/hughsie/libjcat/releases/download/0.2.1/libjcat-0.2.1.tar.xz
-  version: '0.2.1'
+  version: 0.2.1
   sha256: TODO
 
 SQLITE:
   url: https://www.sqlite.org/2024/sqlite-autoconf-3470200.tar.gz
-  version: '3.47.2'
+  version: 3.47.2
   sha256: TODO
 
 FWUPD:
   url: https://github.com/fwupd/fwupd/releases/download/2.0.3/fwupd-2.0.3.tar.xz
-  version: '2.0.3'
+  version: 2.0.3
   sha256: TODO

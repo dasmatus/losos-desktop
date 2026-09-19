@@ -45,11 +45,4 @@ for crate in $crates; do
     "$encoder" "$module" "$out/$crate.wasm"
 done
 
-# Record what each component was built from, so tools/gates/plugins.py can tell
-# a stale component from a current one. Not mtimes: git does not record them, so
-# in a fresh clone every file is stamped at checkout time and a comparison
-# decides by accident. The gate owns the hash function and writes it here, so
-# there is one implementation.
-python3 "$here/../tools/gates/plugins.py" --write-hashes
-
 echo "built into $out"
