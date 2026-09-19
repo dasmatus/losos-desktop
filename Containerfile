@@ -58,7 +58,7 @@ ARG RUST_VERSION=1.94.0
 # Which LLVM the toolchain is. Named in two places below -- the compiler runtime
 # package and the unversioned symlinks -- and they have to agree, so it is one
 # argument rather than two literals that can drift apart.
-ARG LLVM_VERSION=18
+ARG LLVM_VERSION=19
 
 # No SHELL directive: podman builds OCI images by default and ignores one with
 # a warning, so anything relying on `sh -eux` would be relying on a line that
