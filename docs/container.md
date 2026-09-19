@@ -14,6 +14,26 @@ whether they had the right versions by running a long build and watching where
 it stopped. `Containerfile` is the same list, executable, and it is the same
 image in CI and on a developer's machine.
 
+Mostly it is not invoked by hand. `./do build` checks whether the layer it is
+about to build needs the image host -- whether its recipe reaches for mkosi,
+xorriso, qemu-img or a `%{losos-mkosi:...}` symbol -- and whether this host
+actually has the pinned one, and builds in the container when it does not.
+So the image layer gets the right mkosi whether or not anyone remembered, and
+the layers below it, which need none of this, stay on the host where they are
+faster. `recipe_needs_image_host` and `build_in_container` in `do` are the two
+halves of that.
+
+The `gates` job in `images.yml` deliberately stays on an apt list of its own.
+It is the fast one, it runs on every event, and having one job that does not
+depend on this image being buildable is what tells a broken tree and a broken
+Containerfile apart. The `container` job is the one that runs the gate inside
+the image, so it is where a wrong Containerfile shows up as itself rather than
+as something else. It is not the only job it can take down: `build` routes the
+whole chain through the same image when the host has no pinned mkosi
+(`build_in_container`), so a Containerfile that does not build, or that is
+missing a tool a recipe reaches for, fails there too -- several layers in, with
+the failure wearing the name of whichever recipe hit it first.
+
 ```sh
 just container build      # build the image
 just container-check      # run the gate inside it
@@ -92,6 +112,25 @@ passes `seccomp=unconfined` and `apparmor=unconfined` for that reason. Rootless
 podman needs neither and is preferred when both are installed, because it also
 maps the invoking user into the container, so artifacts the build writes into
 the repository are not left owned by root.
+
+**And `/proc` has to be unmasked, which is a different problem wearing the same
+error.** Creating the namespace is only half of it; pm then mounts a fresh
+procfs inside it, and the kernel refuses that in a non-initial user namespace
+unless the caller can already see a *fully visible* procfs — one with nothing
+mounted over any part of it. Both engines mask `/proc/kcore`, `/proc/keys` and
+half a dozen others with bind mounts and remount `/proc/sys` read-only, which
+is precisely what makes procfs no longer fully visible. The result is
+
+```
+hakoniwa: mount(Some("proc"), "/proc", Some("proc"), ...) => EPERM
+```
+
+and `check-digest` then reports `INCONCLUSIVE` and suggests
+`kernel.apparmor_restrict_unprivileged_userns=0`, which is the right advice on
+a bare host and does nothing here, because the host is not what is refusing.
+`tools/container` passes `unmask=ALL` to podman and `systempaths=unconfined` to
+docker; neither engine accepts the other's spelling, so it is the one option
+there that has to know which is running.
 
 **`TMPDIR` must be on real disk.** Every pm workspace lives under it and a
 large package needs several gigabytes; on a tmpfs the build dies partway

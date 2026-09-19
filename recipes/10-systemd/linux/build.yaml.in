@@ -9,6 +9,14 @@
 # kernel's own merge_config.sh -- never a hand-maintained .config, which goes
 # stale silently on every version bump.
 #
+# LLVM=1 on every make against this tree, config and install included. The
+# build host carries clang, lld and the llvm-* binutils and no GNU toolchain
+# at all (docs/host-requirements.md), so the kernel's GNU defaults resolve to
+# nothing; LLVM=1 is its own documented switch for naming the whole LLVM
+# toolchain at once. It is on the config steps too because the config records
+# which compiler it was made for, and a later step that disagreed would
+# reconfigure the tree underneath itself.
+#
 # `all` rather than `bzImage`: only x86 produces a bzImage. arm64's bootable
 # output is an uncompressed Image with the EFI stub built in, at a different
 # path entirely, so both the target and the path come from
@@ -33,7 +41,7 @@ steps:
   name: config
   dl_urls: null
   run:
-  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ @ARCH_KERNEL_DEFCONFIG@
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 @ARCH_KERNEL_DEFCONFIG@
   # merge_config.sh is a shell script in the kernel tree, and the wrapper puts
   # it in the build directory because it writes .config relative to $PWD.
   #
@@ -44,7 +52,7 @@ steps:
   # unclassified program past `pm explain`. tools/gates/fingerprint-lint.py
   # catches exactly that, and caught exactly this.
   - /bin/sh @RECIPE@/in-dir.sh /build/b/linux /bin/sh /build/src/linux/scripts/kconfig/merge_config.sh -m -O /build/b/linux /build/b/linux/.config @RECIPE@/files/linux/losos.config
-  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ olddefconfig
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 olddefconfig
 
 - stage: Build
   name: compile
@@ -52,13 +60,13 @@ steps:
   run:
   # LEX/YACC are named explicitly: flex comes from the sysroot and cannot be
   # found on the jail's fixed PATH.
-  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LEX=/build/sysroot/usr/bin/flex YACC=/usr/bin/bison -j @JOBS@ all modules
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 LEX=/build/sysroot/usr/bin/flex YACC=/usr/bin/bison -j @JOBS@ all modules
 
 - stage: Build
   name: bpftool
   dl_urls: null
   run:
-  - make -C /build/src/linux/tools/bpf/bpftool O=/build/b/bpftool -j @JOBS@
+  - make -C /build/src/linux/tools/bpf/bpftool O=/build/b/bpftool LLVM=1 -j @JOBS@
   - install -Dm755 /build/b/bpftool/bpftool /build/sysroot/usr/bin/bpftool
   - install -Dm755 /build/b/bpftool/bpftool /dest/usr/bin/bpftool
 
@@ -66,8 +74,8 @@ steps:
   name: install
   dl_urls: null
   run:
-  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ INSTALL_MOD_PATH=/dest/usr modules_install
-  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ INSTALL_MOD_PATH=/build/sysroot/usr modules_install
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 INSTALL_MOD_PATH=/dest/usr modules_install
+  - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 INSTALL_MOD_PATH=/build/sysroot/usr modules_install
   # The UKI needs the kernel image at a stable path; @VERSION_LINUX@ is the
   # only place the version is written, and it comes from sources.lock.
   - install -Dm644 /build/b/linux/@ARCH_KERNEL_IMAGE@ /dest/usr/lib/modules/@VERSION_LINUX@/vmlinuz

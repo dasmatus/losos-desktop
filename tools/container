@@ -14,9 +14,10 @@ confusing failure if it does not:
     from inside pm's sandbox, which reads as a problem with the workspace.
   * **pm resolves a step's first word on the host** (C3), and here the host is
     the container. That is the whole reason this exists.
-  * **TMPDIR must be on real disk** (C11). `./do` already redirects it into
-    `out/tmp`, which is bind-mounted, so a build's several GB land on the
-    repository's filesystem and not in the container's RAM.
+  * **TMPDIR must be on real disk** (C11). The Justfile already redirects it
+    into `out/tmp`, which is bind-mounted, so a build's several GB land on the
+    repository's filesystem and not in the container's RAM -- and the engine
+    itself reads that same TMPDIR, which is why `ensure_tmpdir` below exists.
 
 The sibling `pm` checkout is mounted too, at the same relative position it has
 outside, because two gates resolve pm's *source* independently of `$PM` and
@@ -51,6 +52,29 @@ def runtime():
         "  The Containerfile is the build host; without a runtime you are back\n"
         "  to installing docs/host-requirements.md by hand."
     )
+
+
+def ensure_tmpdir():
+    """Make TMPDIR exist before the container engine is handed it.
+
+    The Justfile exports `TMPDIR=<repo>/out/tmp` for every recipe, because pm's
+    workspaces have to land on real disk rather than in a tmpfs (C11). Only the
+    recipes that go on to run pm create the directory, though, and the container
+    recipes do not -- so on a fresh checkout, where `out/` does not exist at all,
+    podman inherits a TMPDIR that is not there and dies before it has read a line
+    of the Containerfile:
+
+      Error: creating build container: ... creating a temporary directory:
+      stat .../out/tmp: no such file or directory
+
+    which reads as a broken Containerfile, or as a missing image, and is neither.
+    It belongs here rather than in each of the four container recipes because
+    this program is also run directly, and because the engine's need for a usable
+    TMPDIR is this program's business and not the Justfile's.
+    """
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        Path(tmpdir).mkdir(parents=True, exist_ok=True)
 
 
 def pm_root():
@@ -89,6 +113,27 @@ def run(engine, args):
         # it per-mount; disabling it wholesale keeps a first run from rewriting
         # every file's label.
         "--security-opt", "label=disable",
+        # And the one that is not about a security profile at all.
+        #
+        # pm's jail mounts a fresh procfs inside the user namespace it creates.
+        # The kernel refuses that in a non-initial user namespace unless the
+        # caller can already see a *fully visible* procfs: one with nothing
+        # mounted over any part of it. Both engines mask `/proc/kcore`,
+        # `/proc/keys` and half a dozen others with bind mounts and remount
+        # `/proc/sys` read-only, which is exactly what makes procfs no longer
+        # fully visible. So the mount returns EPERM, pm reports
+        #
+        #   hakoniwa: mount(Some("proc"), "/proc", ...) => EPERM
+        #
+        # and `check-digest` reports INCONCLUSIVE and suggests a host sysctl --
+        # which is the right advice on a bare host and has no effect here,
+        # because the host is not what is refusing. Unmasking `/proc` inside
+        # this container is what lets pm's sandbox start at all.
+        #
+        # The two engines spell it differently and neither accepts the other's
+        # spelling, so this is the one option that has to know which is running.
+        *(("--security-opt", "unmask=ALL") if engine == "podman"
+          else ("--security-opt", "systempaths=unconfined")),
         "-v", f"{REPO}:{REPO}",
         "-v", f"{pm}:{pm}",
         "-w", str(REPO),
@@ -106,7 +151,23 @@ def run(engine, args):
         command.append("-t")
         command.append("-i")
     command.append(IMAGE)
-    command += args.command or ["bash"]
+
+    # `just container-run -- cargo build ...` forwards that `--` as a literal
+    # first argument rather than consuming it: it is just's own end-of-options
+    # marker, and just passes the marker along with everything after it. It then
+    # survives argparse too, because REMAINDER keeps a `--` instead of eating it.
+    # Left in place it becomes the container's pid1, and the failure names
+    # nothing that points at a separator:
+    #
+    #   ERROR (catatonit:2): failed to exec pid1: No such file or directory
+    #
+    # which reads as a program missing from the image. Dropping one leading `--`
+    # here covers every caller -- the Justfile's container recipes and a direct
+    # invocation alike -- and no one ever means to run a command called `--`.
+    inner = list(args.command or [])
+    if inner and inner[0] == "--":
+        inner.pop(0)
+    command += inner or ["bash"]
     return subprocess.call(command)
 
 
@@ -129,6 +190,7 @@ def main():
     runner.set_defaults(handler=run)
 
     args = parser.parse_args()
+    ensure_tmpdir()
     return args.handler(runtime(), args)
 
 

@@ -20,6 +20,144 @@ host (C3). The new toolchain would be reachable only through native-file
 injection, per build system, for every package. That is a change to pm, not to
 this tree, and it is the honest ceiling of the current design.
 
+## The resource directory is ours; the headers in it are the build host's
+
+This entry used to read "the CFI runtime we build is not the one that gets
+linked", and it was the largest honest limit in this file. It is closed, and
+the tombstone is worth more than the removal: clang resolves a sanitizer
+runtime out of its own **resource directory** — `clang -print-resource-dir`,
+then `lib/linux/libclang_rt.<component>-<arch>.a` — and consults neither
+`--sysroot` nor `-L` nor `-B` on the way. So every CFI-built package linked the
+build host's glibc-compiled copy into a musl binary, and this file predicted
+the failure would be silent.
+
+It was not. The first link the tree ever asked for against the musl sysroot
+said so outright:
+
+```
+ld.lld: error: undefined symbol: dlvsym
+>>> referenced by interception_linux.cpp.o in archive
+    /usr/lib/llvm-19/lib/clang/19/lib/linux/libclang_rt.cfi-aarch64.a
+>>> defined in: /build/sysroot/usr/lib/libc.so
+ld.lld: error: undefined symbol: __confstr_chk
+ld.lld: error: undefined symbol: __vsyslog_chk
+```
+
+`dlvsym` is a GNU extension musl does not have; `__confstr_chk` and
+`__vsyslog_chk` are glibc's `_FORTIFY_SOURCE` symbols. The fix is the one this
+entry named as the supported way out: `manifest/toolchain.yaml` sets
+`target.resource_dir` to `/build/sysroot/usr/lib/losos-clang`, which is
+`recipes/00-toolchain/compiler-rt`'s install prefix, and every compile and link
+line now carries `-resource-dir=` pointing at it. `libclang_rt.cfi`,
+`libclang_rt.builtins` and `clang_rt.crtbegin`/`crtend` are all resolved out of
+that directory, as is `share/cfi_ignorelist.txt`, which `-fsanitize=cfi`
+refuses to run without.
+
+**What remains is narrower, and it is a version question rather than a libc
+one.** A resource directory has to carry clang's builtin headers — `stddef.h`,
+`stdarg.h`, `limits.h`, the per-architecture intrinsics — and those belong to
+the compiler rather than to compiler-rt, so nothing in this tree builds them.
+The compiler-rt recipe copies them out of the build host's clang, asked for
+with `clang -print-resource-dir` rather than spelled. That makes the directory
+half ours and half the container's, and it is only coherent while the two
+agree: `sources.lock` pins compiler-rt at 18.1.8 and the `Containerfile`
+installs clang 19. Headers and runtimes one major version apart is a
+combination LLVM supports in practice and does not promise, and closing it
+means pinning compiler-rt to the container's clang or the other way round.
+That choice is open with Matus, along with the same question on the LLVM pin
+itself.
+
+## CFI traps instead of diagnosing, because there is no unwinder
+
+`manifest/toolchain.yaml` sets `cfi.trap: true`, and it is marked temporary
+there. The distribution wants the other mode: `-fno-sanitize-trap=cfi` makes a
+violation print the call site it happened at, which systemd-coredump can then
+record, instead of raising SIGILL with nothing attached.
+
+That mode is unavailable, not unchosen. `-fno-sanitize-trap` puts
+`libclang_rt.cfi_diag` on the link line; cfi_diag walks the stack to find the
+call site; the walk calls `_Unwind_Backtrace` and `_Unwind_GetIP`:
+
+```
+ld.lld: error: undefined symbol: _Unwind_Backtrace
+>>> referenced by sanitizer_unwind_linux_libcdep.cpp.o
+    in archive .../libclang_rt.cfi_diag-x86_64.a
+```
+
+musl has no unwinder, `libgcc_s` is not in this sysroot, and LLVM's libunwind
+is not built here. `libclang_rt.cfi`, which trap mode links instead, carries no
+`_Unwind` reference at all.
+
+**What is lost is the call site, and nothing else.** CFI is still enforced —
+every scheme, cross-DSO included — and a violation still stops the process. It
+stops with SIGILL, so the report says that a program died rather than which
+indirect call was wrong.
+
+The way back is an unwinder for the musl target in the sysroot, and then
+`target.unwindlib: libunwind`. `-lunwind` is an ordinary library name and
+resolves through `--sysroot`, so unlike the resource-directory problem above it
+needs no change to how clang is pointed at anything. It is not one recipe,
+though, and the reason is worth writing down because the first attempt looks
+like it worked:
+
+- `libunwind/CMakeLists.txt` in 18.1.8 has no `project()` and no
+  `enable_language(ASM)` of its own — it is meant to be added as a
+  subdirectory, not configured. Configured directly it configures, builds and
+  installs without a warning, **silently dropping** `UnwindRegistersSave.S` and
+  `UnwindRegistersRestore.S`. The `libunwind.a` that comes out has no
+  `__unw_getcontext` in it, and the only symptom is the next link.
+- The supported entry point is `runtimes/` with
+  `-DLLVM_ENABLE_RUNTIMES=libunwind`. That needs `GetHostTriple.cmake`, which
+  ships in neither `llvm-N-dev` nor `cmake-N.src.tar.xz` — only in the full
+  LLVM source tree. `AddLLVM.cmake` and `HandleLLVMOptions.cmake` do come from
+  `llvm-N-dev`, so it is that one module that would force the pin.
+
+So restoring diagnose mode costs a new pinned source (the LLVM tarball, for one
+cmake module), a patch to `runtimes/CMakeLists.txt`, or a libunwind build that
+does not go through cmake. That is a pin this tree would carry for years, which
+is why it is a decision written down here rather than one taken in passing.
+
+## Cross-DSO CFI is claimed, and a version script can quietly revoke it
+
+`manifest/toolchain.yaml` sets `cfi.cross_dso: true`, which is what makes an
+indirect call checked across a shared-library boundary rather than only within
+one. The mechanism is that a caller's check falls through to
+`__cfi_slowpath`, the runtime finds which DSO the target address lives in, and
+it calls **that DSO's own `__cfi_check`** -- which it locates by walking the
+library's dynamic symbol table by name.
+
+So `__cfi_check` has to be in `.dynsym`, and in zlib it is not:
+
+```
+$ llvm-nm libz.so.1.3.1 | grep __cfi_check
+000000000000b000 t __cfi_check          # local, not exported
+$ llvm-nm --dynamic libz.so.1.3.1 | grep -i cfi
+                 U __cfi_slowpath       # it calls out, nothing can call in
+```
+
+The cause is zlib's own version script. `zlib.map` ends in `local: *;`, which
+localises every symbol the script does not name, and `__cfi_check` is not a
+symbol upstream knows to name. Measured: adding
+`-Wl,--export-dynamic-symbol=__cfi_check` does not override it, because the
+version script wins.
+
+This is not zlib-specific and it is not fixed by the visibility patch in
+`recipes/00-base/zlib`, which is about zlib's own API. Every library in this
+tree that ships a version script ending in `local: *` has the same hole, and
+that includes libsystemd, glib and mesa. A cross-DSO indirect call into such a
+library reaches a DSO the runtime cannot check; in the trap mode
+`manifest/toolchain.yaml` currently sets, the honest reading is that it stops
+the process rather than silently passing, but that has not been observed here
+because nothing in this tree has run yet.
+
+**This is open and it is a design decision, not a patch.** The options are a
+per-library version-script patch (which does not scale and has to be redone at
+every version bump), dropping version scripts across the tree (which throws
+away symbol versioning, an ABI regression), or accepting that cross-DSO CFI
+covers only the libraries without one and saying so in
+`manifest/toolchain.yaml` instead of claiming the whole set. Nothing here
+picks one.
+
 ## pm has no package store
 
 Dependencies are carried, not consumed (C5): a dependency's archive is copied

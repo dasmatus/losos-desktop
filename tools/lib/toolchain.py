@@ -63,11 +63,33 @@ class Toolchain:
     def target_flags(self):
         triple = self.target.get("triple")
         sysroot = self.target.get("sysroot")
+        resource_dir = self.target.get("resource_dir")
         flags = []
         if triple:
             flags.append(f"--target={triple}")
         if sysroot:
             flags.append(f"--sysroot={sysroot}")
+        if resource_dir:
+            # Compile and link both: the resource directory is where clang's
+            # builtin headers come from as well as its runtimes, so dropping it
+            # from the compile line loses stddef.h.
+            flags.append(f"-resource-dir={resource_dir}")
+        return flags
+
+    def runtime_flags(self):
+        """Which runtime library and unwinder clang links against.
+
+        Link-time only, deliberately. They are accepted on a compile line and
+        do nothing there, and clang then warns about an unused argument for
+        every translation unit in the distribution.
+        """
+        flags = []
+        rtlib = self.target.get("rtlib")
+        if rtlib:
+            flags.append(f"--rtlib={rtlib}")
+        unwindlib = self.target.get("unwindlib")
+        if unwindlib:
+            flags.append(f"--unwindlib={unwindlib}")
         return flags
 
     def cflags(self, package=None):
@@ -111,7 +133,12 @@ class Toolchain:
     def ldflags(self, package=None):
         drops = self._drops(package)
         linker = self.compiler.get("linker")
-        flags = [] if "target" in drops else list(self.target_flags())
+        # The runtime flags ride with `target` rather than with `hardening`:
+        # they name what the target's libc is built alongside, and the two
+        # packages that drop `target` -- musl and the kernel -- are exactly the
+        # two that must not be handed compiler-rt. musl is building the sysroot
+        # these would resolve out of, and the kernel supplies its own.
+        flags = [] if "target" in drops else self.target_flags() + self.runtime_flags()
         if linker:
             # CFI needs a linker that understands the bitcode it is merging.
             flags.append(f"-fuse-ld={linker}")
@@ -129,6 +156,23 @@ class Toolchain:
         return flags
 
     # -- what the generator consumes --------------------------------------
+
+    def resource_dir_prefix(self):
+        """`target.resource_dir` as a path inside the sysroot rather than under it.
+
+        The manifest spells the resource directory the way clang is handed it,
+        which is absolute and already inside the jail's sysroot. A recipe that
+        installs into it needs the same location twice -- staged at /dest<tail>
+        and live at /build/sysroot<tail> -- so what a recipe can use is the
+        tail. Derived here rather than spelled a second time in
+        tools/configure: a copy of a manifest value that nothing compares back
+        is a copy that drifts.
+        """
+        resource_dir = self.target.get("resource_dir", "")
+        sysroot = self.target.get("sysroot", "/build/sysroot")
+        if resource_dir.startswith(sysroot):
+            return resource_dir[len(sysroot):]
+        return resource_dir
 
     def placeholders(self, resolve):
         """The @TOKEN@ map. `resolve` turns a program name into a host path."""
@@ -155,6 +199,7 @@ class Toolchain:
             "@RUSTFLAGS_CARGO@": _toml_list(self.rustflags()),
             "@TRIPLE@": self.target.get("triple", ""),
             "@SYSROOT@": self.target.get("sysroot", "/build/sysroot"),
+            "@RESOURCE_DIR_PREFIX@": self.resource_dir_prefix(),
         }
         # meson native files want a TOML-ish list, not a shell string.
         subs["@MESON_C_ARGS@"] = _ini_list(self.cflags())

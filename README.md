@@ -46,13 +46,21 @@ the build cannot drift apart — 149 of them, and a missing one fails the build.
 cd ../pm && cargo build --release   # the pm binary this repo drives
 cd ../losos-desktop
 
+just plugins            # compile pm's plugin components, once per clone
 just check              # the gate: generate, sign, prove the digest, lint
 just fetch -- --update  # mirror the upstream sources, pinning any TODO hash
 just build              # the real build
 ```
 
-`just check` runs anywhere: no network, no KVM, no nix, no root beyond working
-user namespaces. It validates every generated build file against pm's schema,
+`just plugins` is run once per clone and needs the network and a
+`wasm32-unknown-unknown` target: the WebAssembly components pm loads are
+compiled from `plugins/` rather than committed, so a fresh clone has none.
+Without them pm loads no plugins, the image layer's `%{losos-mkosi:esp}`
+expands to nothing, and the gate rejects the recipe rather than passing over
+the hole.
+
+Past that one step `just check` runs anywhere: no network, no KVM, no nix, no
+root beyond working user namespaces. It validates every generated build file against pm's schema,
 checks that every source URL is in the normal form pm hashes, re-applies pm's
 fingerprint table past the one permitted wrapper, tests the initramfs and UKI
 writers, proves the download-path derivation against a real `pm build`, and
@@ -98,6 +106,25 @@ Read `docs/limits.md` before trusting anything here. The short version:
   `/lib`, `/usr` and friends read-only into the build jail, and it has no
   package store, so a compiled artifact is coherent only on a host whose glibc
   matches. This is the ceiling of the current design, not an oversight.
+- **Clang's builtin headers still come from the build host.** `00-toolchain`
+  builds the CFI runtimes against musl and the tree points `-resource-dir` at
+  them, so the runtime that reaches the link line is the one this repo built --
+  that used to be the sharp edge here and it is closed. What a resource
+  directory also has to carry is `stddef.h` and the rest of clang's builtin
+  headers, which belong to the compiler rather than to compiler-rt, and those
+  are copied out of the container's clang. The pins are one major version
+  apart. `docs/limits.md` has the measurement.
+- **Cross-DSO CFI has a hole where a version script is.** The runtime finds a
+  library's `__cfi_check` by name in its dynamic symbol table, and a version
+  script ending in `local: *` -- zlib's, systemd's, glib's -- localises it.
+  Those libraries are inside the scheme as callers and outside it as callees.
+  Open, and a design decision rather than a patch; `docs/limits.md` has the
+  measurement and the three options.
+- **CFI traps rather than diagnoses, for now.** A violation stops the process
+  but does not name the call site it happened at, because the diagnosing
+  runtime walks the stack and there is no unwinder for the musl target in this
+  tree yet. Every scheme is still enforced, cross-DSO included. It is marked
+  temporary in `manifest/toolchain.yaml` with the condition that reverses it.
 - **`pm` does not consume dependencies.** A dependency's archive is *carried*
   into the dependent at `/dest/deps/`, and nothing unpacks it. The sysroot
   pattern in `tools/lib/sysroot.sh` is this repo's workaround, not a `pm`

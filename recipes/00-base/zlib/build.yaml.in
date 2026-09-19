@@ -19,6 +19,19 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_ZLIB@ --no-same-owner -C /build/src/zlib --strip-components=1
 
+# One patch, and without it this recipe produces a library with no ABI rather
+# than a build failure. zlib spells its public API with macros that expand to
+# nothing on ELF, so -fvisibility=hidden -- which the manifest sets as CFI's
+# precondition -- hides all 88 exported symbols. See the patch for the
+# measurement. Applied with no fuzz, so the day upstream annotates the macros
+# themselves this fails here rather than applying somewhere it was not meant
+# to.
+- stage: Build
+  name: patch
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/zlib/patches /build/src/zlib
+
 - stage: Build
   name: configure
   dl_urls: null
@@ -45,8 +58,12 @@ steps:
   - make -C /build/b/zlib install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# `test -e` was this whole step once, and it passed against a libz.so with an
+# empty dynamic symbol table. A file existing is not a library; see
+# files/check-exports.sh.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libz.so
+  - /bin/sh @RECIPE@/files/zlib/check-exports.sh @NM@ /dest/usr/lib/libz.so

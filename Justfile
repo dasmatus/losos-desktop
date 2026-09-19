@@ -1,4 +1,17 @@
+# This `set shell` governs the *plain* recipes only. A recipe whose body starts
+# with a shebang is written to a file and executed, so it gets bash's defaults
+# and none of these flags -- which is why every shebang body below repeats
+# `set -euo pipefail` on its own line. Without it a failing command is ignored
+# and the recipe still exits 0, and `check` in particular printed "check: green"
+# over a configure step that had already failed. A gate that cannot go red is
+# worse than no gate, because CI reports it as proof.
 set shell := ["bash", "-euo", "pipefail", "-c"]
+
+# `*args` recipes are invoked as `just <recipe> -- --flag`, because without the
+# separator just parses `--flag` as an option to itself. just does not consume
+# the separator, though: it forwards it as the recipe's first argument, and
+# Python's argparse then reports every flag after it as unrecognized. So each
+# such recipe drops one leading `--` before it forwards anything.
 set positional-arguments
 
 repo := justfile_directory()
@@ -12,6 +25,7 @@ export XDG_CONFIG_HOME := repo + "/.pm-config"
 
 default:
   #!/usr/bin/env bash
+  set -euo pipefail
   printf '%s\n' \
     'just <command>' \
     '' \
@@ -47,6 +61,8 @@ default:
 
 configure *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   if [ -d "{{repo}}/out/sources" ]; then
     python3 "{{repo}}/tools/configure" --mirror "{{mirror_url}}" "$@"
@@ -56,11 +72,13 @@ configure *args:
 
 sign:
   #!/usr/bin/env bash
+  set -euo pipefail
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   "{{repo}}/tools/sign-all"
 
 digest:
   #!/usr/bin/env bash
+  set -euo pipefail
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   if [ ! -x "{{pm}}" ]; then
     echo "no pm binary at {{pm}}" >&2
@@ -71,6 +89,7 @@ digest:
 
 lint:
   #!/usr/bin/env bash
+  set -euo pipefail
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   if [ ! -x "{{pm}}" ]; then
     echo "no pm binary at {{pm}}" >&2
@@ -94,6 +113,8 @@ lint:
 
 check *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   if [ ! -x "{{pm}}" ]; then
     echo "no pm binary at {{pm}}" >&2
@@ -113,6 +134,7 @@ check *args:
 
 build target="":
   #!/usr/bin/env bash
+  set -euo pipefail
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   pm_bin="${PM:-{{pm}}}"
   if [ ! -x "$pm_bin" ]; then
@@ -201,14 +223,14 @@ build target="":
   remembered=()
   if [ -f "{{repo}}/out/configure.args" ]; then
     while IFS= read -r line; do
-      [ -n "$line" ] && remembered+=("$line")
+      if [ -n "$line" ]; then remembered+=("$line"); fi
     done < "{{repo}}/out/configure.args"
   fi
 
   configure_args=("${remembered[@]}")
   have_allow_unresolved=0
   for arg in "${configure_args[@]}"; do
-    [ "$arg" = "--allow-unresolved" ] && have_allow_unresolved=1
+    if [ "$arg" = "--allow-unresolved" ]; then have_allow_unresolved=1; fi
   done
   if [ "$target" != "$top_target" ] && [ "$have_allow_unresolved" -eq 0 ]; then
     configure_args=(--allow-unresolved "${configure_args[@]}")
@@ -230,6 +252,8 @@ build target="":
 
 fetch *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   python3 "{{repo}}/tools/fetch-sources" "$@"
 
@@ -239,6 +263,8 @@ serve:
 
 plugins *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   "{{repo}}/plugins/build.sh" "$@"
 
@@ -249,14 +275,20 @@ clean:
 
 container-build *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/container" build "$@"
 
 container-run *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/container" run "$@"
 
 container-check *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   container_pm="{{pm}}"
   case "$container_pm" in
     "{{pm_root}}"/*) ;;
@@ -266,6 +298,8 @@ container-check *args:
 
 container-plugins *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   container_pm="{{pm}}"
   case "$container_pm" in
     "{{pm_root}}"/*) ;;
@@ -275,6 +309,8 @@ container-plugins *args:
 
 container *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   if [ $# -eq 0 ]; then
     python3 "{{repo}}/tools/container" run
   elif [ "$1" = build ]; then
@@ -292,20 +328,30 @@ container *args:
 
 check-latest *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/check-latest" "$@"
 
 release-manifest *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/release-manifest" "$@"
 
 stage-release *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/stage-release" "$@"
 
 toolchain-report *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/gates/toolchain-report.py" "$@"
 
 vm-test *args:
   #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/vm-test" "$@"

@@ -46,6 +46,13 @@ ARG DEBIAN_SNAPSHOT=20260918T000000Z
 # The Rust toolchain is pinned separately because it does not come from Debian:
 # `rustup target add <arch>-unknown-linux-musl` is a host requirement (see
 # docs/host-requirements.md) and Debian's rustc cannot satisfy it.
+#
+# It also has to be new enough to build pm, which is a constraint from another
+# repository: pm depends on wasmtime for the plugin sandbox, and wasmtime 47
+# requires 1.94.0. Too old and the failure is forty lines of
+# "wasmtime-internal-<thing> requires rustc 1.94.0", which names the crate
+# that noticed rather than the pin that is wrong. Raise this when pm's tree
+# raises its floor; there is nothing here that can detect it.
 ARG RUST_VERSION=1.94.0
 
 # Which LLVM the toolchain is. Named in two places below -- the compiler runtime
@@ -115,6 +122,14 @@ RUN apt-get update --error-on=any \
       `# cannot tell whether CFI works from a flag that never compiled.` \
       clang lld llvm libclang-rt-${LLVM_VERSION}-dev \
       \
+      `# llvm-*-dev is here for its cmake package, not its headers.` \
+      `# compiler-rt configures standalone and calls find_package(LLVM);` \
+      `# when that fails it falls back to CompilerRTMockLLVMCMakeConfig,` \
+      `# which includes AddLLVM.cmake from the LLVM *source* tree and` \
+      `# hard-errors that LLVM_CMAKE_DIR does not exist. Nothing in the` \
+      `# gates can see this: they never run a build.` \
+      llvm-${LLVM_VERSION}-dev \
+      \
       `# The Justfile is the repository entrypoint, and the rest below are` \
       `# named directly by recipes and all in pm's fingerprint table.` \
       just \
@@ -129,7 +144,11 @@ RUN apt-get update --error-on=any \
       python3 python3-yaml python3-jinja2 \
       \
       `# Build systems reach for these for themselves during configure.` \
-      bison flex bc gperf gettext \
+      `# rsync is the odd one: no recipe names it, but the kernel's` \
+      `# headers_install copies the sanitised headers with it, so without it` \
+      `# the very first step of the very first layer stops with` \
+      `# "rsync: not found" and an exit 127 that reads as a broken recipe.` \
+      bison flex bc gperf gettext rsync \
       \
       `# The image tooling. Before this image these were the reason the tree` \
       `# carried hand-written ext4, FAT, GPT, ISO and qcow2 writers: not that` \
@@ -171,7 +190,7 @@ RUN for tool in ar nm ranlib strip objcopy objdump readelf; do \
 # distribution's pm plugins to components.
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
+    PATH=$PATH:/usr/local/cargo/bin
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --no-modify-path --profile minimal \
           --default-toolchain "$RUST_VERSION" \
@@ -179,6 +198,55 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       x86_64-unknown-linux-musl \
       aarch64-unknown-linux-musl \
       wasm32-unknown-unknown \
+ `# Everything from here to chmod is one fix, and it needs both halves.` \
+ `#` \
+ `# rustup ships cargo, rustc and rustdoc as SYMLINKS to rustup, and the` \
+ `# binary works out which tool it is from the name it was invoked under.` \
+ `# pm canonicalises a step first word on the host (C3), and canonicalising` \
+ `# resolves the symlink, so a recipe asking for cargo reaches the jail as` \
+ `# rustup holding cargo arguments:` \
+ `#` \
+ `#     error: unexpected argument --release found` \
+ `#     Usage: rustup[EXE] <+toolchain>` \
+ `#` \
+ `# Links to the real binaries, ahead of rustup own bin on PATH, give the` \
+ `# canonical path a cargo again.` \
+ `#` \
+ `# They go in /usr/local/bin rather than a directory of their own, because` \
+ `# they have to satisfy two different PATH lookups and only one of them is` \
+ `# this image to configure. pm canonicalises against the host PATH, and any` \
+ `# directory would do for that. The step it then starts gets a PATH of its` \
+ `# own -- fixed at /usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:` \
+ `# /sbin, pm sandbox.rs CONTAINER_PATH -- and nothing in this file can add` \
+ `# to it, so a directory outside that list is invisible to everything a` \
+ `# step spawns. Measured by running a step that printed its own PATH.` \
+ `#` \
+ `# rustc is what a step spawns, and that is the half that is easy to miss.` \
+ `# The rustup cargo shim sets the toolchain up for its child processes; the` \
+ `# real cargo does not, so it looks rustc up on PATH once per crate. With` \
+ `# the links in a directory of their own that lookup found nothing at all:` \
+ `#` \
+ `#     error: could not execute process rustc -vV (never executed)` \
+ `#` \
+ `# and with them in rustup own bin it found a shim, which decides the` \
+ `# toolchain wants syncing and tries to install a component into an image` \
+ `# that is finished:` \
+ `#` \
+ `#     error: component download failed for rust-src: could not rename` \
+ `#     downloaded file ... No such file or directory` \
+ `#` \
+ `# Both surface as a cargo build failing on some dependency, naming neither` \
+ `# rustup nor this file.` \
+ `#` \
+ `# rustup itself keeps its own name and its own bin, moved to the END of` \
+ `# PATH so that bin cannot shadow the links again: rustup target add above` \
+ `# and anyone updating this image still need it. What is given up is` \
+ `# toolchain switching through these three names -- no +toolchain, no` \
+ `# rust-toolchain.toml -- which an image that pins RUST_VERSION and installs` \
+ `# exactly that toolchain has no use for.` \
+ && for tool in cargo rustc rustdoc; do \
+      ln -sf "$(rustup which "$tool")" "/usr/local/bin/$tool"; \
+    done \
  && chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"
 
 # mkosi, pinned to a commit rather than taken from the archive.

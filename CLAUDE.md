@@ -27,8 +27,12 @@ cd ../pm && cargo build --release   # the pm binary; never vendored here
 ```
 
 `./do check` runs anywhere: no network, no KVM, no nix, no root beyond working
-user namespaces. **Run it before trusting a change.** `./do build` needs the
-sources mirrored first.
+user namespaces — **once `./do plugins` has been run in the clone**. That one
+step is the exception and it does need the network and a `wasm32-unknown-unknown`
+target, because the components are compiled rather than committed. Without them
+pm loads no plugins, the image layer's `%{losos-mkosi:esp}` expands to nothing,
+and `explain-all` rejects the recipe. **Run `./do check` before trusting a
+change.** `./do build` needs the sources mirrored first.
 
 ## Architecture (cross-file big picture)
 
@@ -118,6 +122,29 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   word. The same applies to every build-time helper a build system looks up for
   itself — gperf, flex, msgfmt, bpftool, wayland-scanner: they reach the build
   through a meson `--native-file` `[binaries]` section, never through `PATH`.
+- **A program that decides what it is from its own name cannot survive C3.**
+  pm canonicalises a step's first word on the host, and canonicalising resolves
+  symlinks. rustup ships `cargo`, `rustc` and `clippy` as symlinks to `rustup`,
+  which reads back the name it was invoked under to know which tool to proxy —
+  so `cargo build --release` arrives in the jail as `rustup`, invoked as
+  `rustup`, and dies with `error: unexpected argument '--release' found` and a
+  `Usage: rustup[EXE] <+toolchain>` that names a program the recipe never
+  mentioned. The `Containerfile` puts links to the real `cargo`, `rustc` and
+  `rustdoc` in `/usr/local/bin`, ahead of rustup's own bin, for exactly this
+  reason — and that directory is not free to choose. pm hands the jail an
+  absolute program path, but the step it starts gets a `PATH` of its own, fixed
+  at `/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin`
+  (`CONTAINER_PATH` in pm's `sandbox.rs`), and nothing on the host can add to
+  it; links anywhere else are invisible to everything the step spawns. `rustc`
+  is one of the three because dropping the `cargo` shim drops the toolchain
+  setup it did for its children: the real cargo looks `rustc` up on `PATH` once
+  per crate and finds either nothing — `could not execute process rustc -vV
+  (never executed)` — or, if the links sit in rustup's own bin, a shim, which
+  decides the toolchain wants syncing and tries to install a component into a
+  finished image. `docs/host-requirements.md` says the same for a native
+  build. Anything
+  else multi-call — busybox, a `*-config` symlink farm — has the same problem,
+  and it only ever shows up in a real build.
 - **A compiled-in absolute path resolves into the host mirror.** pm's run jail
   extracts a package at `/pkg` *and* mirrors the host's `/usr` read-only, so a
   binary that opens `/usr/lib/os-release` gets the build host's file and reports
@@ -160,6 +187,13 @@ to `TODO`, and the `version:` list of the recipe that downloads it (which
 `tools/gates/versions.py` checks against the lock). `HOLD` in that file names
 the sources whose newest release is not this tree's to take, with the reason --
 `COMPILER_RT` is version-locked to the host clang.
+
+Where one recipe downloads several sources, they are one upstream release
+split across tarballs, and `tools/gates/versions.py` reads the version they
+agree on as the recipe's. `enforce_lockstep` refuses an `--apply` that would
+move some of a group and not the rest, because the result is not a tree the
+gate rejects -- it is one the gate passes over, which is worse. `--only` is
+repeatable so a group can be named in one run.
 
 `.github/workflows/update-sources.yml` runs that weekly and tests **each
 candidate alone** in its own matrix leg -- fetch the new bytes, hash them, run

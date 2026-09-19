@@ -396,7 +396,14 @@ jobs:
             sleep 0.3
           done
           python3 tools/serve-sources --port 8730 --check
-          just build losos-90-image
+          # Tee'd so the last step of this job can say what failed without
+          # anyone scrolling: see `Say what failed` below for why that step
+          # exists and why it is last.
+          set +e
+          just build losos-90-image 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
 
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
@@ -435,6 +442,25 @@ jobs:
           name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
           path: losos-desktop/release/
           if-no-files-found: warn
+
+      # Last in the job, so that the end of the log is the answer rather than
+      # the disk report, the artifact upload and post-job cleanup. A failed
+      # build here is ten thousand lines of compiler output with fifteen that
+      # matter at the bottom, and pm names the package, the step and the
+      # command in those fifteen. Repeated stripped of the frame pm draws
+      # around them, and capped, because a repeat long enough to need
+      # scrolling is the thing it was meant to save.
+      - name: Say what failed
+        if: failure()
+        run: |
+          log="$GITHUB_WORKSPACE/build.log"
+          [ -f "$log" ] || { echo "the build step wrote no log"; exit 0; }
+          awk '/^Error:/{found = 1} found' "$log" | sed -e 's/^ *│ *//' -e '/^$/d' > /tmp/why
+          # No block means it died somewhere pm does not report from -- a
+          # killed process, a full disk -- and then the last lines are the
+          # only evidence there is.
+          [ -s /tmp/why ] || tail -c 900 "$log" > /tmp/why
+          head -c 1400 /tmp/why
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
