@@ -292,6 +292,25 @@ jobs:
       # pin, so a truncated or tampered cache entry fails here exactly as a bad
       # upstream would. The bytes are still pinned; only where they came from
       # has changed.
+      #
+      # Both matrix legs share this key, and nothing serialises them, so on a
+      # run that starts with no `sources-*` entry at all they can both miss and
+      # both fetch the whole mirror before either save lands. That is real and
+      # it is left alone: `cache/save` reserves the key before it uploads, so
+      # the loser warns and stays green rather than uploading a second copy,
+      # the two fetches run concurrently so the run takes no longer, and the
+      # cost is one extra 475 MB of upstream traffic on a cold cache. After a
+      # lock bump `restore-keys` gives both legs the previous mirror and each
+      # tops up only the source that moved, which is a few megabytes twice.
+      #
+      # Worth knowing that the pm cache above makes the race *more* likely, not
+      # less: on run 135 aarch64 missed the collision only because it spent
+      # 2m49s building pm for its own architecture and reached this step 99
+      # seconds after x86_64 had saved. With pm warm both legs arrive here
+      # within seconds of each other. Fixing it means a mirror job the build
+      # legs depend on, which puts a job's startup on the critical path of
+      # every run to save bandwidth on a rare one. If a third architecture is
+      # added, reconsider.
       - id: mirror
         uses: actions/cache/restore@v4
         with:
@@ -349,6 +368,21 @@ jobs:
           fi
           echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
 
+      # $GITHUB_WORKSPACE, not $TMPDIR: the Justfile's `export TMPDIR` reaches
+      # its own recipes' children and not this shell, so $TMPDIR here is unset
+      # and would report /tmp -- a filesystem the build writes nothing to. The
+      # scratch the build actually fills is out/tmp, inside the workspace.
+      #
+      # docs/limits.md says the intermediates "plausibly run to tens of
+      # gigabytes" -- plausibly, because nobody has measured it. Each layer's
+      # archive carries the one below it whole (C5, C6), so nine layers
+      # duplicate the base nine times, and a runner has a fixed disk. Finding
+      # that out four hours in reads as a corrupt archive or a killed process,
+      # not as a full disk, so the budget is printed before the build starts
+      # and what was actually written is printed after it, pass or fail.
+      - name: Disk before the build
+        run: df -h / "$GITHUB_WORKSPACE"
+
       - name: Build the image
         working-directory: losos-desktop
         env:
@@ -371,6 +405,25 @@ jobs:
             --version "$LOSOS_VERSION" --out release
           just release-manifest -- --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" release
+
+      # always(): the number is worth having most when the build died, since
+      # a full disk is one of the things that kills it.
+      # The per-directory lines say what is big; the workspace total says how
+      # much the job used, and only the total survives someone adding a
+      # directory and never coming back here. It is $GITHUB_WORKSPACE rather
+      # than the checkout, because this job also builds pm beside it and
+      # pm/target is not small. release/ is its own entry because
+      # stage-release copies into it (shutil.copy2, tools/stage-release:154)
+      # rather than renaming, so on a successful run the disk holds the image
+      # twice.
+      - name: Disk after the build
+        if: always()
+        run: |
+          df -h / "$GITHUB_WORKSPACE"
+          du -sh losos-desktop/out/pkgs losos-desktop/out/tmp \
+            losos-desktop/out/sources losos-desktop/release \
+            pm/target 2>/dev/null || true
+          du -sh "$GITHUB_WORKSPACE" 2>/dev/null || true
 
       # always(): a build that stopped at some package never reached
       # stage-release, but whatever the layers below it produced is still the
