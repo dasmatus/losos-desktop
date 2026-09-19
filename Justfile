@@ -97,7 +97,7 @@ check *args:
     exit 1
   fi
   echo "== configure"
-  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure -- --allow-unresolved "$@"
+  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure --allow-unresolved "$@"
   echo "== sign"
   just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" sign >/dev/null
   echo "== digest agreement with pm"
@@ -163,7 +163,14 @@ build target="":
     python3 "{{repo}}/tools/container" build
     # configure rewrites sources to 127.0.0.1:$LOSOS_MIRROR_PORT when the local
     # mirror exists, so the fallback container needs the host network to reach it.
-    PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; PM="$2"; PM_ROOT="$3"; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build -- "$4"' _ "{{mirror_port}}" "{{pm}}" "{{pm_root}}" "$1"
+    # Only forward a PM override when it lives under the mounted PM_ROOT; an
+    # arbitrary host path would point outside the container's filesystem.
+    container_pm="{{pm}}"
+    case "$container_pm" in
+      "{{pm_root}}"/*) ;;
+      *) container_pm='' ;;
+    esac
+    PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; if [ -n "${2:-}" ]; then PM="$2"; export PM; fi; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$3"' _ "{{mirror_port}}" "$container_pm" "$1"
   }
 
   start_mirror || echo "just: no local source mirror; pm will fetch upstream" >&2
@@ -175,7 +182,7 @@ build target="":
     done < "{{repo}}/out/configure.args"
   fi
 
-  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure -- --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
+  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
 
   if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
@@ -226,13 +233,7 @@ container *args:
     shift
     python3 "{{repo}}/tools/container" build "$@"
   elif [[ " configure sign digest lint check fetch serve plugins clean container-build container-run container check-latest release-manifest stage-release toolchain-report vm-test build " == *" $1 "* ]]; then
-    subcommand="$1"
-    shift
-    if [ $# -eq 0 ]; then
-      python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" "$subcommand"
-    else
-      python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" "$subcommand" -- "$@"
-    fi
+    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" "$@"
   else
     python3 "{{repo}}/tools/container" run "$@"
   fi
