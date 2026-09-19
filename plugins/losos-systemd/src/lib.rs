@@ -248,6 +248,9 @@ impl Guest for LososSystemd {
                 "path".into(),
                 "timer".into(),
             ],
+            // scan-source only; a symbol is something a build file substitutes
+            // into a command, and this plugin has nothing to say about commands.
+            symbols: vec![],
         }
     }
 

@@ -141,6 +141,9 @@ impl Guest for LososImage {
                 Capability::Archive,
             ],
             source_extensions: vec![],
+            // Nothing to publish: this plugin names tools, and where an image
+            // tool writes is the build file's decision, not the ecosystem's.
+            symbols: vec![],
         }
     }
 

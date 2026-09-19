@@ -31,6 +31,33 @@ have_pm() {
   fi
 }
 
+# Put this distribution's pm plugins where pm loads them from, and sign them.
+#
+# Not optional wiring. pm loads every *.wasm in $XDG_CONFIG_HOME/pm/plugins/,
+# and XDG_CONFIG_HOME here is the repo-local trust store -- so without this,
+# every pm invocation runs with no plugins at all and a recipe that calls
+# `mkosi` or `xorriso` is refused with "no built-in fingerprint matches", which
+# reads as a problem with the recipe rather than with a missing component.
+#
+# A plugin is code that runs inside pm and helps decide what a jail allows, so
+# pm holds it to the same trust store as a build file (C10).
+install_plugins() {
+  local dir="$XDG_CONFIG_HOME/pm/plugins"
+  mkdir -p "$dir"
+  # Copy rather than symlink: pm verifies a detached <file>.sig beside the
+  # component, and a signature beside a symlink is a signature in the source
+  # tree, which .gitignore would then have to know about.
+  local any=0
+  for component in "$repo"/plugins/dist/*.wasm; do
+    [ -e "$component" ] || continue
+    any=1
+    cmp -s "$component" "$dir/$(basename "$component")" && [ -e "$dir/$(basename "$component").sig" ] && continue
+    cp "$component" "$dir/"
+    "$pm" sign "$dir/$(basename "$component")" >/dev/null
+  done
+  [ "$any" = 1 ] || echo "do: no plugin components in plugins/dist; run plugins/build.sh" >&2
+}
+
 mirror_running() { python3 "$repo/tools/serve-sources" --port "$mirror_port" --check; }
 
 start_mirror() {
@@ -68,6 +95,10 @@ cmd_lint() {
   # are the only code here whose mistakes produce an image that builds and does
   # not boot, so they are checked offline rather than discovered in a VM.
   python3 "$repo/tools/gates/test-disk.py"
+  # The libvirt domain, checked for what it must NOT hand the guest. A domain
+  # that boots a kernel the host supplied shows a desktop and says nothing
+  # about the image's own partition table.
+  python3 "$repo/tools/gates/test-libvirt.py"
   # The release names and the shipped sysupdate MatchPatterns are one contract
   # written in two files. A mismatch does not fail an update -- sysupdate
   # reports "no update available", which is indistinguishable from being up to
@@ -92,6 +123,7 @@ cmd_check() {
   cmd_configure --allow-unresolved "$@"
   echo "== sign"
   "$repo/tools/sign-all" >/dev/null
+  install_plugins
   echo "== digest agreement with pm"
   PM="$pm" python3 "$repo/tools/check-digest"
   echo "== lint"
@@ -132,6 +164,7 @@ print(layers[-1]['name'] if layers else '')
   cmd_configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
+  install_plugins
   echo "== building $target"
   ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )
 }
@@ -142,15 +175,28 @@ cmd_clean() {
   echo "clean: kept out/sources (the fetched tarballs) and .pm-config"
 }
 
+# Every command above assumes the host provides docs/host-requirements.md.
+# This one provides it instead: `./do container check` runs the gate inside the
+# image the Containerfile describes, which is the same image CI uses.
+cmd_container() {
+  local verb="${1:-}"
+  case "$verb" in
+    build) shift; python3 "$repo/tools/container" build "$@" ;;
+    "")    python3 "$repo/tools/container" run ;;
+    *)     python3 "$repo/tools/container" run ./do "$@" ;;
+  esac
+}
+
 case "${1:-}" in
   configure) shift; cmd_configure "$@" ;;
-  sign)      shift; "$repo/tools/sign-all" ;;
+  sign)      shift; have_pm; "$repo/tools/sign-all"; install_plugins ;;
   lint)      shift; cmd_lint ;;
   check)     shift; cmd_check "$@" ;;
   build)     shift; cmd_build "$@" ;;
   fetch)     shift; python3 "$repo/tools/fetch-sources" "$@" ;;
   serve)     shift; python3 "$repo/tools/serve-sources" --port "$mirror_port" ;;
   clean)     shift; cmd_clean ;;
+  container) shift; cmd_container "$@" ;;
   *)
     cat <<USAGE
 ./do <command>
@@ -158,17 +204,25 @@ case "${1:-}" in
   check [--allow-unresolved]  configure, sign, prove the download-path digest,
                               then lint. The gate. No network, no KVM, no nix.
   configure                   recipes/**/*.in -> out/recipes/**
-  sign                        pm sign every generated build file
+  sign                        pm sign every generated build file, and install
+                              and sign this tree's pm plugins
   lint                        schema, URL form, fingerprints, pm explain
   build [layer]               the real build (default: top of manifest/layers.yaml)
   fetch [--update]            mirror every pinned source into out/sources,
                               filling any TODO hash
   serve                       serve out/sources over loopback for pm
   clean                       remove out/recipes, out/pkgs, out/tmp
+  container build             build the image the Containerfile describes
+  container [command]         run ./do <command> inside it, or a shell with
+                              no command. The image is the build host: it is
+                              what docs/host-requirements.md asks for, pinned.
 
 Environment:
   PM                   path to the pm binary (default ../pm/target/release/pm)
   LOSOS_MIRROR_PORT    loopback port for the source mirror (default 8730)
+  PM_ROOT              path to the sibling pm checkout (default ../pm). Two
+                       gates read pm's source, not its binary, and both
+                       downgrade to a pass when they cannot find it.
 USAGE
     ;;
 esac

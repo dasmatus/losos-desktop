@@ -61,6 +61,40 @@ jobs:
         working-directory: losos-desktop
         run: python3 tools/gates/toolchain-report.py --verify-cfi
 
+  # The same gate, in the build host this repository describes rather than in
+  # whatever the runner image happens to have installed. It is slower -- the
+  # image is built from scratch on every run until it is published to a
+  # registry -- and it is the only job that can fail when the Containerfile is
+  # wrong, which the job above cannot, because that one installs its own
+  # dependencies with apt.
+  #
+  # `./do container` passes the seccomp and AppArmor options pm's user
+  # namespace needs; GitHub's runners allow both.
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: losos-desktop }
+      - uses: actions/checkout@v4
+        with: { repository: dichhead/pm, path: pm, ref: master }
+
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Build the build host
+        working-directory: losos-desktop
+        run: ./do container build
+
+      # pm is built inside the image too, against the image's Rust, so the
+      # binary the gate runs is the one a developer following docs/container.md
+      # would get.
+      - name: Build pm and run the gate inside it
+        working-directory: losos-desktop
+        run: |
+          python3 tools/container run cargo build --release \
+            --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
+          ./do container check
+
   # Whether the sources are pinned decides whether anything below can run at
   # all. Reported as an output rather than a failure: an unpinned tree is the
   # normal state while a distribution is being brought up, and it should not
