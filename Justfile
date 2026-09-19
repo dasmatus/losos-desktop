@@ -3,6 +3,7 @@ set positional-arguments
 
 repo := justfile_directory()
 pm := env_var_or_default("PM", repo + "/../pm/target/release/pm")
+pm_root := env_var_or_default("PM_ROOT", repo + "/../pm")
 mirror_port := env_var_or_default("LOSOS_MIRROR_PORT", "8730")
 mirror_url := "http://127.0.0.1:" + mirror_port
 
@@ -162,7 +163,7 @@ build target="":
     just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" container-build
     # configure rewrites sources to 127.0.0.1:$LOSOS_MIRROR_PORT when the local
     # mirror exists, so the fallback container needs the host network to reach it.
-    LOSOS_CONTAINER_HOST_NETWORK=1     python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; PM="$2"; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$3"' _ "{{mirror_port}}" "{{pm}}" "$1"
+    PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; PM="$2"; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$3"' _ "{{mirror_port}}" "{{pm}}" "$1"
   }
 
   start_mirror || echo "just: no local source mirror; pm will fetch upstream" >&2
