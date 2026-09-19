@@ -35,6 +35,22 @@ steps:
   # at a single option.
   - tar -xf @DL_LLVM_CMAKE@ --no-same-owner -C /build/src/llvm-cmake --strip-components=1
 
+# One patch, and it is the difference between this recipe compiling and not.
+# sanitizer_common includes <linux/scc.h> unconditionally on Linux, and Linux
+# 7.2 -- the LINUX pin in manifest/sources.lock, which linux-headers puts in
+# the sysroot -- removed that header along with the AX.25 SCC drivers. Spelling
+# that pin as a token here would be worse than wrong: tools/gates/versions.py
+# reads a template's @URL_...@ tokens as its source list, so a mention in a
+# comment would make this a three-source recipe whose sources disagree, and the
+# gate would go quiet about it. Applied with
+# no fuzz, so the day upstream guards the include themselves this fails here
+# rather than applying somewhere it was not meant to.
+- stage: Build
+  name: patch
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/compiler-rt/patches /build/src/compiler-rt
+
 # COMPILER_RT_BUILD_* is mostly off: this is not a sanitizer distribution, it
 # is the handful of objects CFI and the stack protector need. Building the
 # whole of asan/tsan/msan for a target we do not test them on would multiply
