@@ -40,6 +40,19 @@ file is stamped at the moment the snapshot was taken, so anything more than a
 week old is expired by apt's clock, and every build of an older snapshot would
 fail with a date error rather than a missing package.
 
+The snapshot and the base image have to agree, and only one of them is pinned.
+`debian:trixie-slim` is a tag, so what it holds is whatever the last rebuild
+put there -- which can be a point release newer than the snapshot. A package
+taken from the snapshot that depends on an exact version of `libc6` or
+`perl-base` then cannot be installed at all, and apt reports it as two
+conflicting decisions about `perl-base` rather than as a base image that
+moved. `--allow-downgrades` on the install is what makes that survivable: apt
+may move a package to the snapshot's version even when that is backwards, and
+backwards is the direction this file wants, because the snapshot is the thing
+that was pinned and the tag is the thing that drifted. Keeping
+`DEBIAN_SNAPSHOT` at or after the base image's build date keeps the
+reconciliation to a handful of packages instead of most of them.
+
 **The Rust toolchain**, separately, because it does not come from Debian.
 `rustup target add <arch>-unknown-linux-musl` is a host requirement and
 Debian's `rustc` cannot satisfy it, so rustup is installed and given a version.

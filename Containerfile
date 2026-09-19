@@ -33,7 +33,15 @@ FROM debian:trixie-slim
 # Moving this moves every package version in the image, and nothing else does.
 # To take a newer archive: pick a timestamp from https://snapshot.debian.org/,
 # change it here, rebuild, and run ./do check.
-ARG DEBIAN_SNAPSHOT=20260901T000000Z
+#
+# It has to be at or after the day the base image above was built, which is
+# the one ordering constraint in this file. `debian:trixie-slim` is a tag and
+# tags move: the one pulled today already carries libc6 and perl-base from a
+# point release later than 2026-09-01, and a package from the snapshot that
+# depends on an exact earlier version of one of them then cannot be installed
+# at all. See `--allow-downgrades` below for what makes that survivable rather
+# than fatal.
+ARG DEBIAN_SNAPSHOT=20260918T000000Z
 
 # The Rust toolchain is pinned separately because it does not come from Debian:
 # `rustup target add <arch>-unknown-linux-musl` is a host requirement (see
@@ -90,7 +98,16 @@ RUN printf '%s\n' \
 # list and failed in `install` with "Unable to locate package" for every
 # package at once, which reads as thirty missing packages rather than as one
 # archive that was never reachable.
-RUN apt-get update --error-on=any && apt-get install -y --no-install-recommends \
+#
+# `--allow-downgrades` is what reconciles the base image with the snapshot. The
+# base is a tag, so its contents float; the snapshot does not. Where they
+# disagree apt is permitted to move a package to the snapshot's version even
+# when that is backwards -- which is the direction this file wants, since the
+# snapshot is the thing that was pinned and the tag is the thing that drifted.
+# Without it the failure is apt's solver printing two conflicting decisions
+# about perl-base, which says nothing about a base image at all.
+RUN apt-get update --error-on=any \
+ && apt-get install -y --no-install-recommends --allow-downgrades \
       \
       `# The toolchain manifest/toolchain.yaml names by unversioned name.` \
       `# libclang-rt-*-dev is not optional: without it clang errors out on` \
