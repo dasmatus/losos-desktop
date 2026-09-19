@@ -27,8 +27,12 @@ cd ../pm && cargo build --release   # the pm binary; never vendored here
 ```
 
 `./do check` runs anywhere: no network, no KVM, no nix, no root beyond working
-user namespaces. **Run it before trusting a change.** `./do build` needs the
-sources mirrored first.
+user namespaces — **once `./do plugins` has been run in the clone**. That one
+step is the exception and it does need the network and a `wasm32-unknown-unknown`
+target, because the components are compiled rather than committed. Without them
+pm loads no plugins, the image layer's `%{losos-mkosi:esp}` expands to nothing,
+and `explain-all` rejects the recipe. **Run `./do check` before trusting a
+change.** `./do build` needs the sources mirrored first.
 
 ## Architecture (cross-file big picture)
 

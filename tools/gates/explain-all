@@ -21,6 +21,18 @@ fi
 
 export XDG_CONFIG_HOME="$repo/.pm-config"
 
+# The components are compiled, not committed, so a fresh clone has none until
+# `./do plugins` has run. pm then offers no symbols, and the image layer --
+# the only recipe that uses one -- is rejected with an error about
+# `%{losos-mkosi:esp}` that reads as a broken recipe. Say what is actually
+# missing before that happens, because the fix is one command and nothing in
+# pm's output names it.
+if ! compgen -G "$XDG_CONFIG_HOME/pm/plugins/*.wasm" >/dev/null; then
+  echo "explain-all: no plugin components installed; run ./do plugins first" >&2
+  echo "explain-all: without them the image layer's %{losos-mkosi:...} symbols" >&2
+  echo "explain-all: expand to nothing and pm rejects the recipe" >&2
+fi
+
 failed=0
 count=0
 for recipe in "$repo"/out/recipes/*/build.yaml; do
