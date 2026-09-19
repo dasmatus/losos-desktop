@@ -160,7 +160,7 @@ build target="":
   build_in_container() {
     echo "just: host lacks the pinned mkosi image-build prerequisites; building $1 in the container host" >&2
     just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" container-build
-    python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; export LOSOS_MIRROR_PORT PM_ROOT; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins && just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"
+    python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM_ROOT; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins && just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"
   }
 
   start_mirror || echo "just: no local source mirror; pm will fetch upstream" >&2
@@ -175,7 +175,7 @@ build target="":
   just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
 
-  if recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
+  if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
     build_in_container "$target"
     exit 0
   fi
