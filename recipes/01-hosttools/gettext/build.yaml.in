@@ -1,11 +1,10 @@
-# gettext 0.22.5
+# gettext 1.0
 #
 # msgfmt, for systemd -Dtranslations=true. Also reaches builds only via native.ini.
 name: gettext
 version:
+- '1'
 - '0'
-- '22'
-- '5'
 dependencies: []
 steps:
 

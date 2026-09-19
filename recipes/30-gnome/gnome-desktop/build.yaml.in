@@ -1,10 +1,10 @@
-# gnome-desktop 44.1
+# gnome-desktop 51.0
 #
 # Shared desktop helpers for the shell and control centre.
 name: gnome-desktop
 version:
-- '44'
-- '1'
+- '51'
+- '0'
 dependencies: []
 steps:
 

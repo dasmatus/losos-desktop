@@ -1,10 +1,10 @@
-# freetype 2.13.3
+# freetype 2.14.3
 #
 # Font rasterisation.
 name: freetype
 version:
 - '2'
-- '13'
+- '14'
 - '3'
 dependencies: []
 steps:

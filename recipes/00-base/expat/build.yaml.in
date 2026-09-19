@@ -1,11 +1,11 @@
-# expat 2.6.3
+# expat 2.8.4
 #
 # XML parser, required by dbus and fontconfig.
 name: expat
 version:
 - '2'
-- '6'
-- '3'
+- '8'
+- '4'
 dependencies: []
 steps:
 

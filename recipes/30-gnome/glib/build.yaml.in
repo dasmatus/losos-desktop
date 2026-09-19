@@ -1,11 +1,11 @@
-# glib 2.82.1
+# glib 2.90.0
 #
 # The foundation of everything above it. Its GDBus is how GNOME talks to systemd's services.
 name: glib
 version:
 - '2'
-- '82'
-- '1'
+- '90'
+- '0'
 dependencies: []
 steps:
 
