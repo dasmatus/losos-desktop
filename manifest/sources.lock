@@ -125,9 +125,9 @@ LIBMICROHTTPD:
   sha256: a89e09fc9b4de34dde19f4fcb4faaa1ce10299b9908db1132bbfa1de47882b94
 
 LIBQRENCODE:
-  # fukuchi.org no longer serves this path (404) and the GitHub releases carry
-  # no dist tarball, so this is the git archive. NOTE: it therefore has no
-  # ./configure, which the recipe invokes -- see recipes/00-base/libqrencode.
+  # fukuchi.org no longer serves this path (404) and the GitHub release carries
+  # no asset, so this is the git archive. It has no generated ./configure, which
+  # is why the recipe builds it with cmake instead.
   url: https://github.com/fukuchi/libqrencode/archive/refs/tags/v4.1.1.tar.gz
   version: '4.1.1'
   sha256: 5385bc1b8c2f20f3b91d258bf8ccc8cf62023935df2d2676b5b67049f31a049c

@@ -24,6 +24,7 @@ manifest/sources.lock. out/ is disposable and gitignored.
 """
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -328,6 +329,28 @@ def main():
         local["@CFLAGS_RSP@"] = f"@{recipe_out}/cflags.rsp"
         local["@LDFLAGS_RSP@"] = f"@{recipe_out}/ldflags.rsp"
 
+        # A separate response file per exempt package. Written BEFORE the
+        # members render, because rendering is what consumes these names:
+        # defined afterwards, @CFLAGS_RSP_MUSL@ reached the generated recipe
+        # verbatim and clang was handed a file called '@CFLAGS_RSP_MUSL@'.
+        #
+        # manifest/toolchain.yaml manifest/toolchain.yaml
+        # lists what each drops and why -- musl cannot take --sysroot (it is
+        # creating it), -D_FORTIFY_SOURCE (circular against its own __*_chk),
+        # or CFI (its loader calls functions before any CFI runtime exists).
+        #
+        # Emitted as its own file rather than by editing the shared one so a
+        # package has to NAME its exemption to get it, and a reader of the
+        # recipe sees @CFLAGS_RSP_MUSL@ and goes looking for why.
+        for package in toolchain.exceptions:
+            token = package.upper().replace("-", "_")
+            cflags = recipe_out / f"cflags-{package}.rsp"
+            ldflags = recipe_out / f"ldflags-{package}.rsp"
+            cflags.write_text("\n".join(toolchain.cflags(package)) + "\n")
+            ldflags.write_text("\n".join(toolchain.ldflags(package)) + "\n")
+            local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
+            local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
+
         member_dirs = []
         members = []
         for package in layer.get("members") or []:
@@ -368,32 +391,18 @@ def main():
             "\n".join(toolchain.ldflags()) + "\n"
         )
 
-        # A separate response file per exempt package. manifest/toolchain.yaml
-        # lists what each drops and why -- musl cannot take --sysroot (it is
-        # creating it), -D_FORTIFY_SOURCE (circular against its own __*_chk),
-        # or CFI (its loader calls functions before any CFI runtime exists).
-        #
-        # Emitted as its own file rather than by editing the shared one so a
-        # package has to NAME its exemption to get it, and a reader of the
-        # recipe sees @CFLAGS_RSP_MUSL@ and goes looking for why.
-        for package in toolchain.exceptions:
-            token = package.upper().replace("-", "_")
-            cflags = recipe_out / f"cflags-{package}.rsp"
-            ldflags = recipe_out / f"ldflags-{package}.rsp"
-            cflags.write_text("\n".join(toolchain.cflags(package)) + "\n")
-            ldflags.write_text("\n".join(toolchain.ldflags(package)) + "\n")
-            local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
-            local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
-
         stage_support(recipe_out, member_dirs, local)
 
         # A surviving @TOKEN@ means a recipe named something sources.lock or
         # the substitution map does not define. Caught here, it is a one-line
         # generation error; caught later it is an ENOENT deep inside a build.
-        residual = sorted({
-            word for word in text.split()
-            if word.startswith("@") and word.endswith("@") and len(word) > 2
-        })
+        # Matched anywhere in the text, not just as a standalone word: the
+        # placeholders that matter arrive as `CFLAGS=@CFLAGS_RSP_MUSL@` and
+        # `-C@RECIPE@/x`, which a word-boundary test walks straight past -- it
+        # did, and the build died in musl's configure instead of here. The
+        # pattern cannot collide with the `@/path/to/file.rsp` form clang
+        # expands, because that has a slash where this needs a closing @.
+        residual = sorted(set(re.findall(r"@[A-Z0-9_]{2,}@", text)))
         if residual:
             raise SystemExit(
                 f"configure: {name}: unsubstituted placeholders: "
