@@ -31,33 +31,6 @@ have_pm() {
   fi
 }
 
-# Put this distribution's pm plugins where pm loads them from, and sign them.
-#
-# Not optional wiring. pm loads every *.wasm in $XDG_CONFIG_HOME/pm/plugins/,
-# and XDG_CONFIG_HOME here is the repo-local trust store -- so without this,
-# every pm invocation runs with no plugins at all and a recipe that calls
-# `mkosi` or `xorriso` is refused with "no built-in fingerprint matches", which
-# reads as a problem with the recipe rather than with a missing component.
-#
-# A plugin is code that runs inside pm and helps decide what a jail allows, so
-# pm holds it to the same trust store as a build file (C10).
-install_plugins() {
-  local dir="$XDG_CONFIG_HOME/pm/plugins"
-  mkdir -p "$dir"
-  # Copy rather than symlink: pm verifies a detached <file>.sig beside the
-  # component, and a signature beside a symlink is a signature in the source
-  # tree, which .gitignore would then have to know about.
-  local any=0
-  for component in "$repo"/plugins/dist/*.wasm; do
-    [ -e "$component" ] || continue
-    any=1
-    cmp -s "$component" "$dir/$(basename "$component")" && [ -e "$dir/$(basename "$component").sig" ] && continue
-    cp "$component" "$dir/"
-    "$pm" sign "$dir/$(basename "$component")" >/dev/null
-  done
-  [ "$any" = 1 ] || echo "do: no plugin components in plugins/dist; run plugins/build.sh" >&2
-}
-
 mirror_running() { python3 "$repo/tools/serve-sources" --port "$mirror_port" --check; }
 
 start_mirror() {
@@ -101,12 +74,18 @@ cmd_lint() {
   # date -- so it has to be caught here.
   python3 "$repo/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "$repo/tools/gates/plugins.py"
+  # An artifact name mismatch between two CI jobs fails only on the release
+  # path, which is the one nobody exercises until it matters.
+  python3 "$repo/tools/gates/workflow.py"
   # A patch series nobody applies is tracked, reviewed and inert: the build
   # goes green and the feature is simply absent.
   python3 "$repo/tools/gates/patches.py"
   # A recipe whose `version:` no longer matches the source it downloads builds
   # the new tarball under the old name, and nothing else notices.
-  python3 "$repo/tools/gates/versions.py"
+  # --self-test rather than a bare run: it covers the real tree too, and
+  # adds the cases that prove the gate can fail. A gate never shown to
+  # fail is a gate nobody should trust.
+  python3 "$repo/tools/gates/versions.py" --self-test
   "$repo/tools/gates/explain-all"
 }
 
@@ -119,7 +98,6 @@ cmd_check() {
   cmd_configure --allow-unresolved "$@"
   echo "== sign"
   "$repo/tools/sign-all" >/dev/null
-  install_plugins
   echo "== digest agreement with pm"
   PM="$pm" python3 "$repo/tools/check-digest"
   echo "== lint"
@@ -160,9 +138,20 @@ print(layers[-1]['name'] if layers else '')
   cmd_configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
-  install_plugins
   echo "== building $target"
   ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )
+}
+
+# Build the plugin components from source.
+#
+# Kept out of `check` on purpose. The components need the wasm32 Rust target and
+# pm's encoder, and building the encoder needs crates.io -- while `./do check`
+# is meant to run on any machine with no network and no wasm toolchain. So this
+# is its own verb: CI runs it before check, a developer runs it after touching
+# plugins/, and everyone else never needs it. Nothing reads a component out of
+# the tree, because none is committed.
+cmd_plugins() {
+  "$repo/plugins/build.sh" "$@"
 }
 
 cmd_clean() {
@@ -185,12 +174,13 @@ cmd_container() {
 
 case "${1:-}" in
   configure) shift; cmd_configure "$@" ;;
-  sign)      shift; have_pm; "$repo/tools/sign-all"; install_plugins ;;
+  sign)      shift; "$repo/tools/sign-all" ;;
   lint)      shift; cmd_lint ;;
   check)     shift; cmd_check "$@" ;;
   build)     shift; cmd_build "$@" ;;
   fetch)     shift; python3 "$repo/tools/fetch-sources" "$@" ;;
   serve)     shift; python3 "$repo/tools/serve-sources" --port "$mirror_port" ;;
+  plugins)   shift; cmd_plugins "$@" ;;
   clean)     shift; cmd_clean ;;
   container) shift; cmd_container "$@" ;;
   *)
@@ -200,13 +190,14 @@ case "${1:-}" in
   check [--allow-unresolved]  configure, sign, prove the download-path digest,
                               then lint. The gate. No network, no KVM, no nix.
   configure                   recipes/**/*.in -> out/recipes/**
-  sign                        pm sign every generated build file, and install
-                              and sign this tree's pm plugins
+  sign                        pm sign every generated build file
   lint                        schema, URL form, fingerprints, pm explain
   build [layer]               the real build (default: top of manifest/layers.yaml)
   fetch [--update]            mirror every pinned source into out/sources,
                               filling any TODO hash
   serve                       serve out/sources over loopback for pm
+  plugins [crate]             build the pm plugin components into plugins/dist
+                              (needs the wasm32 Rust target; not part of check)
   clean                       remove out/recipes, out/pkgs, out/tmp
   container build             build the image the Containerfile describes
   container [command]         run ./do <command> inside it, or a shell with

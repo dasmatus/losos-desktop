@@ -148,19 +148,17 @@ never a path.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-./build.sh                       # all three, into dist/
-./build.sh losos-mkosi           # one
-
-pm sign "$XDG_CONFIG_HOME/pm/plugins/losos-image.wasm"
-pm plugins                       # confirm all three loaded and signed
+./do plugins                     # all three, into dist/
+./do plugins losos-mkosi         # one
 ```
 
-`./do sign` — and therefore `./do check` and `./do build` — copies
-`dist/*.wasm` into the repo-local trust store and signs them there. Without
-that step pm loads no plugins at all, and a recipe calling `mkosi` is refused
-with "no built-in fingerprint matches", which reads as a problem with the
-recipe rather than with a component that was built and never installed.
+`tools/sign-all` — and therefore `./do check` and `./do build` — installs
+whatever is in `dist/` into the repo-local trust store and signs it there.
+Without that pm loads no plugins at all, and a recipe calling `mkosi` is
+refused with "no built-in fingerprint matches", which reads as a problem with
+the recipe rather than with a component that was never installed.
 
-`tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's
-and that no component is older than its source. Neither is something pm can
-catch: from pm's side, a stale plugin is simply a plugin.
+`tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's.
+That is not something pm can catch: from pm's side a plugin built against an
+older contract is simply a plugin, right up to the point where a record gains
+a field and every component stops loading.

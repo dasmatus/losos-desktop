@@ -14,17 +14,20 @@
 *.sig
 *.sig.stale
 
-# Rust build output. `plugins/` is a cargo workspace, and cargo puts both the
-# wasm32 core modules and the host-side encoder artifacts here -- 137 MB of it,
-# all reproducible from the sources beside it.
+# Build output. All of it, ignored at the root, because every branch below
+# generates some and none of it belongs in the history.
 #
-# The COMPONENTS are tracked, at plugins/dist/*.wasm: pm loads those, they are
-# what gets signed, and tools/gates/plugins.py checks none is older than its
-# source. The intermediates are not.
+# `plugins/` is a cargo workspace: target/ holds the wasm32 core modules and the
+# host-side encoder artifacts, and dist/ holds the components those are encoded
+# into. Neither is source. A compiled artifact in a git tree is a second copy of
+# something already described by the files beside it, and it goes stale silently
+# -- the only reason this repository ever needed a hash to tell whether a
+# component matched its sources is that the component was committed at all.
+# `./do plugins` builds them; nothing reads them from the tree.
 target/
+plugins/dist/
 
-# CPython bytecode caches. Tracked once by accident; they are regenerated on
-# every run of tools/configure and differ by interpreter version, so a commit
-# that touches one is noise in every review afterwards.
+# CPython bytecode. tools/configure and every gate regenerate it on each run,
+# and it differs by interpreter version.
 __pycache__/
 *.pyc

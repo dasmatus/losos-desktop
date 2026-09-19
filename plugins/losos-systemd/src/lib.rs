@@ -248,8 +248,11 @@ impl Guest for LososSystemd {
                 "path".into(),
                 "timer".into(),
             ],
-            // scan-source only; a symbol is something a build file substitutes
-            // into a command, and this plugin has nothing to say about commands.
+            // No symbols, for the same reason this plugin has an empty ceiling:
+            // it reads units, it does not tell a build file where to put them.
+            // The paths this OS uses live in overlay/ and manifest/, which are
+            // the tree's own statement of them -- publishing a second copy here
+            // would create two answers to one question.
             symbols: vec![],
         }
     }

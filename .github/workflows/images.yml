@@ -17,10 +17,34 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
 
+# Read-only by default. This workflow runs on pull_request, which means it
+# checks out and executes branch code; a token that can write to the repository
+# has no business being in that job. Only `publish` needs more, and it asks for
+# it itself.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  # The channel, decided once. It used to be derived independently in `build`
+  # (into $GITHUB_ENV) and again in `publish` (in shell), while `verify` and
+  # `ota` just hardcoded "nightly" -- so on a tag, build uploaded
+  # losos-stable-<arch> and verify asked for losos-nightly-<arch>, which does
+  # not exist. download-artifact fails on a missing name, so verify and ota
+  # failed and publish (needs: [verify, ota]) never ran: the stable release
+  # path could not complete at all. One output, referenced everywhere.
+  channel:
+    runs-on: ubuntu-24.04
+    outputs:
+      name: ${{ steps.pick.outputs.name }}
+    steps:
+      - id: pick
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "name=stable" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=nightly" >> "$GITHUB_OUTPUT"
+          fi
+
   # The gate that runs anywhere, on every event. No network to upstream, no
   # KVM, no nix. If this is red nothing below is worth running.
   gates:
@@ -29,7 +53,13 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, path: pm, ref: master }
+        # Pinned, not `master`. tools/gates/plugins.py compares
+        # plugins/wit/plugin.wit byte for byte against this checkout's copy,
+        # so following pm's tip makes this repository's CI a function of
+        # another repository's HEAD: when pm merged its plugin contract
+        # change, every open pull request here went red on a tree nobody had
+        # touched. This is the commit the vendored contract is a copy of.
+        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
       - name: Install the toolchain the gates need
         run: |
@@ -50,6 +80,15 @@ jobs:
 
       - name: Build pm
         run: cargo build --release --manifest-path pm/Cargo.toml
+
+      # The components are not committed, so CI builds them -- and this is the
+      # only place `explain-all` runs with the plugins actually loaded. It needs
+      # the wasm32 target and pm's encoder, which is why it is not part of
+      # `./do check` (that has to run with no network and no wasm toolchain).
+      - name: Build the plugin components
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm ./do plugins
 
       - name: ./do check
         working-directory: losos-desktop
@@ -76,7 +115,10 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, path: pm, ref: master }
+        # The same pin as `gates` and `build`, for the same reason: a gate run
+        # against a different pm than the others approved is checking a tree
+        # nobody else checked.
+        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -85,14 +127,16 @@ jobs:
         working-directory: losos-desktop
         run: ./do container build
 
-      # pm is built inside the image too, against the image's Rust, so the
-      # binary the gate runs is the one a developer following docs/container.md
-      # would get.
-      - name: Build pm and run the gate inside it
+      # Everything from here runs inside the image, including pm and the
+      # plugin components: the point of this job is that the binary and the
+      # components the gate uses are the ones a developer following
+      # docs/container.md would get, not the runner's.
+      - name: Run the gate inside it
         working-directory: losos-desktop
         run: |
           python3 tools/container run cargo build --release \
             --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
+          ./do container plugins
           ./do container check
 
   # Whether the sources are pinned decides whether anything below can run at
@@ -115,8 +159,85 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
+  # TEMPORARY, and not meant to reach the default branch.
+  #
+  # The permanent home for this is .github/workflows/pin-sources.yml, but a
+  # workflow_dispatch workflow is only dispatchable once its file exists on the
+  # repository's DEFAULT branch -- and that file is on a topic branch, so the
+  # API answers 404. Dispatching an already-registered workflow, on the other
+  # hand, runs the file as it exists on the dispatched ref. So the fetch is
+  # bootstrapped from here until pin-sources.yml has landed, at which point
+  # this job goes away.
+  #
+  # It commits the lock rather than only uploading it, because the artifact
+  # lands in blob storage that the environment this is driven from cannot
+  # reach. The hashes are written by tools/fetch-sources from the bytes it
+  # actually downloaded; nothing here composes one.
+  pin-bootstrap:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install what the fetcher needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml
+
+      - name: Make room for the mirror
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      # Three upstreams moved and their old URLs now 404. The replacements are
+      # committed, but qrencode's is a git archive for want of a dist tarball,
+      # so this reports whether a real one has reappeared anywhere reachable --
+      # a runner can see hosts the development environment cannot.
+      - name: Probe the upstreams that moved
+        if: always()
+        run: |
+          for u in \
+            https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.gz \
+            https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.bz2 \
+            https://deb.debian.org/debian/pool/main/q/qrencode/qrencode_4.1.1.orig.tar.bz2 \
+            https://gitlab.freedesktop.org/polkit/polkit/-/archive/125/polkit-125.tar.gz ; do
+            printf '%s -> %s\n' "$u" "$(curl -sS -o /dev/null -L --max-time 30 -w '%{http_code}' "$u" || echo error)"
+          done
+
+      # --update is what fills a TODO. It exits non-zero if anything is still
+      # unavailable, and the lock is committed either way: 99 resolved hashes
+      # are worth keeping even when the hundredth is not.
+      - name: Fetch every source and record its hash
+        id: fetch
+        continue-on-error: true
+        run: python3 tools/fetch-sources --update
+
+      - name: Commit the resolved lock
+        if: always()
+        run: |
+          echo "unresolved after this run: $(grep -c 'sha256: TODO' manifest/sources.lock || true)"
+          if git diff --quiet -- manifest/sources.lock; then
+            echo "lock unchanged; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest/sources.lock
+          git commit \
+            -m "chore: pin upstream source hashes" \
+            -m "Written by tools/fetch-sources --update from the bytes it downloaded, on a runner that can reach the hosts manifest/sources.lock names. No hash here was composed by hand: pm verifies a dl_urls digest before it parses the build file, so a wrong value is indistinguishable from a compromised mirror."
+          git push origin HEAD:${GITHUB_REF_NAME}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sources-lock
+          path: manifest/sources.lock
+
   build:
-    needs: [gates, pinned]
+    needs: [gates, pinned, channel]
     if: needs.pinned.outputs.ready == 'true'
     strategy:
       fail-fast: false
@@ -134,7 +255,10 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, path: pm, ref: master }
+        # Pinned for the reason given in `gates` above: a build running
+        # against a different pm than the gate approved is verifying a tree
+        # that was never checked.
+        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
       - name: Install build dependencies
         run: |
@@ -172,23 +296,31 @@ jobs:
         working-directory: losos-desktop
         run: python3 tools/fetch-sources
 
-      # The channel is derived from the event rather than being a matrix
-      # dimension: a tag builds stable, everything else builds nightly. Making
-      # it a dimension would double every job to publish a "stable" nobody
+      # The channel comes from the `channel` job, not from the event read a
+      # second time here: a tag builds stable, everything else nightly, and
+      # every job below has to agree on which. It is not a matrix dimension
+      # because that would double every job to publish a "stable" nobody
       # tagged.
-      #
-      # The version is decided here too, and no longer after the build: it is
-      # baked into the name of the kernel on the image's own ESP, which is the
-      # only place systemd-sysupdate can read a version from.
-      - name: Decide the channel and the version
+      - name: Take the channel
+        run: echo "CHANNEL=${{ needs.channel.outputs.name }}" >> "$GITHUB_ENV"
+
+      # The version is decided HERE, before the build, and not after it with
+      # the artifact names. It is baked into the name of the unified kernel
+      # image on the image's own ESP, and that name is the only place
+      # systemd-sysupdate can read a version from: at the default an image's
+      # kernel is unversioned, the first update installs a second one beside it
+      # and neither can ever be retired.
+      - name: Decide the version
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            echo "CHANNEL=stable" >> "$GITHUB_ENV"
-            echo "LOSOS_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          else
-            echo "CHANNEL=nightly" >> "$GITHUB_ENV"
-            echo "LOSOS_VERSION=$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          # Derived from the channel rather than by reading the ref a second
+          # time. The `channel` job is the one place that decides what this
+          # build is, and a version that asked the ref again could disagree
+          # with it.
+          version="$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
+          if [ "$CHANNEL" = stable ]; then
+            version="${GITHUB_REF_NAME#v}"
           fi
+          echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
 
       - name: Build the image
         working-directory: losos-desktop
@@ -210,13 +342,13 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: losos-${{ env.CHANNEL }}-${{ matrix.arch }}
+          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
           path: losos-desktop/release/
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
   verify:
-    needs: build
+    needs: [build, channel]
     strategy:
       fail-fast: false
       matrix:
@@ -230,7 +362,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: losos-nightly-${{ matrix.arch }}
+          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
           path: release
 
       - name: Install QEMU and UEFI firmware
@@ -272,7 +404,7 @@ jobs:
   # that matches nothing reports "no update available" rather than failing, so
   # the only way to know a transfer definition is right is to apply one.
   ota:
-    needs: [build, verify]
+    needs: [build, verify, channel]
     strategy:
       fail-fast: false
       matrix:
@@ -286,7 +418,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: losos-nightly-${{ matrix.arch }}
+          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
           path: release
 
       - name: Install QEMU and UEFI firmware
@@ -309,9 +441,27 @@ jobs:
           path: ota-console.log
 
   publish:
-    needs: [verify, ota]
-    if: github.event_name != 'pull_request'
+    needs: [build, verify, ota, channel]
+    # A dispatched run publishes what the build produced even if the image did
+    # not boot and the update did not apply, because that is what the person
+    # dispatching it asked for -- an artefact to look at, from a distribution
+    # that has never completed a build. `always()` is what lets this job run at
+    # all once a job it needs has failed.
+    #
+    # The schedule and the tag path keep the original gate: verify and ota have
+    # to pass. An automated channel that published unbootable images would make
+    # the nightly tag meaningless, and `losos-desktop_<v>` is a URL some
+    # machine's sysupdate is pointed at.
+    if: >-
+      always() && github.event_name != 'pull_request' &&
+      needs.build.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (needs.verify.result == 'success' && needs.ota.result == 'success'))
     runs-on: ubuntu-24.04
+    # The one job that writes, and it says so here rather than at the top of
+    # the file where it would also apply to every pull request.
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with: { pattern: "losos-*", path: release, merge-multiple: true }
@@ -323,8 +473,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          channel=nightly
-          [ "${GITHUB_REF_TYPE}" = "tag" ] && channel=stable
+          channel="${{ needs.channel.outputs.name }}"
           gh release delete "$channel" --repo "$GITHUB_REPOSITORY" --yes || true
           gh release create "$channel" --repo "$GITHUB_REPOSITORY" \
             --title "LosOS $channel" --notes "Rolling $channel channel." \

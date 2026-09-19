@@ -1,0 +1,64 @@
+# Resolve the `sha256: TODO` entries in manifest/sources.lock.
+#
+# This exists because the hashes cannot be resolved where the tree is usually
+# edited. tools/fetch-sources downloads the bytes and records what they
+# actually hashed to -- nothing here is ever written by hand (C9) -- and that
+# needs egress to every host sources.lock pins: download.gnome.org,
+# cdn.kernel.org, gitlab.freedesktop.org and two dozen more. A sandboxed
+# development session reaches none of them; a GitHub runner reaches all of
+# them. So the fetch runs here and the filled-in lock comes back as an
+# artifact, to be committed and reviewed like any other change.
+#
+# It is deliberately NOT part of images.yml. That workflow's `pinned` job
+# reports the lock's state and must keep reporting it honestly; a workflow that
+# silently pinned whatever upstream served today would turn "this tree builds
+# from pinned sources" into "this tree builds from whatever was there at 3am".
+# Pinning is an edit to a tracked file, made once, on purpose.
+name: pin-sources
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install what the fetcher needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml
+
+      # The mirror is written to out/sources, which for the full source set is
+      # several gigabytes -- more than the runner has spare alongside the
+      # preinstalled toolchains. Reclaiming them first is cheaper than a fetch
+      # that dies two thirds of the way through with ENOSPC.
+      - name: Make room for the mirror
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      # --update is what fills a TODO. Without it the tool reports an unpinned
+      # entry as a failure and changes nothing, which is the right default
+      # everywhere except here.
+      - name: Fetch every source and record its hash
+        run: python3 tools/fetch-sources --update
+
+      - name: Show what is still unresolved
+        if: always()
+        run: |
+          remaining=$(grep -c 'sha256: TODO' manifest/sources.lock || true)
+          echo "unresolved after this run: ${remaining:-0}"
+          git --no-pager diff --stat -- manifest/sources.lock
+
+      # The lock, not the mirror: the bytes are reproducible from the lock, and
+      # uploading a few gigabytes of tarballs to prove it is not.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sources-lock
+          path: manifest/sources.lock
