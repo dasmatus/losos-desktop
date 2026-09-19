@@ -26,6 +26,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO = Path(__file__).resolve().parent.parent.parent
 
 # A step that runs a source tree's `configure`. The leading slash keeps this
@@ -50,19 +52,22 @@ def main():
 
     for template in sorted((REPO / "recipes").glob("*/*/build.yaml.in")):
         package = template.parent.name
-        for number, line in enumerate(template.read_text().splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#") or not CONFIGURE.search(line):
+        doc = yaml.safe_load(template.read_text()) or {}
+        for step in doc.get("steps") or []:
+            for command in step.get("run") or []:
+                if not CONFIGURE.search(command):
+                    continue
+                if package in EXEMPT:
+                    continue
+                checked += 1
+                if "--host=" not in command:
+                    failures.append(
+                        f"{template.relative_to(REPO)}:{step.get('name', '?')}: "
+                        f"configure with no --host.\n    Add "
+                        f"--host=@ARCH_TRIPLE@, or name {package} in EXEMPT here "
+                        f"with the reason."
+                    )
                 continue
-            if package in EXEMPT:
-                continue
-            checked += 1
-            if "--host=" not in line:
-                failures.append(
-                    f"{template.relative_to(REPO)}:{number}: configure with no "
-                    f"--host.\n    Add --host=@ARCH_TRIPLE@, or name {package} "
-                    f"in EXEMPT here with the reason."
-                )
 
     if failures:
         print("cross-configure: FAILED", file=sys.stderr)
