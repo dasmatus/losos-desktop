@@ -16,6 +16,22 @@ template, which is a change to ninety files to catch a mistake in one. This
 checks instead, which is cheaper and catches the same thing.
 
 A recipe with no dl_urls has no upstream version to agree with and is skipped.
+
+What this gate does NOT check, and is not going to. A version bump also moves
+the options the recipe passes to the new sources' build system, and nothing
+here validates them: an option name or value kind can only be checked against
+the `meson_options.txt` of the tarball itself, and the gates run with no
+sources and no network. That gap is real and has bitten once -- fwupd's recipe
+passed `-Dintrospection=false`, but fwupd 2.0.3 declares that option
+`type: 'feature'`, which accepts only enabled/disabled/auto. `false` is valid
+syntax for a boolean option, so the mistake looked right next to the thirty
+others on the same line, and nothing said otherwise until `meson setup` ran in
+a real build and died before one object compiled.
+
+So a wrong option is invisible to `./do check`, and therefore invisible to the
+per-candidate legs in .github/workflows/update-sources.yml, which run exactly
+that. A bump crossing a major version needs a human and a release note; the
+matrix proves the tarball exists and the tree still lints, and claims no more.
 """
 
 import pathlib
