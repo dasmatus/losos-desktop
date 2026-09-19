@@ -18,11 +18,25 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_GDM@ --no-same-owner -C /build/src/gdm --strip-components=1
 
+# -Ddefault-pam-config=none, spelled rather than left at its default.
+#
+# gdm's default is `autodetect`, and autodetect is `run_command('test', '-f',
+# '/etc/arch-release')` and four siblings -- run on the BUILD HOST, not against
+# the tree being built. So whose PAM stack lands in this image is decided by
+# whichever distribution the container happens to be, and the answer changes
+# under a Containerfile edit with nothing saying so. On the current base it
+# matches nothing and gdm installs no PAM files at all; on an Arch base it
+# would install Arch's, which reference module paths and substacks this OS does
+# not have and would be broken in a way that reads as configured.
+#
+# `none` pins today's behaviour and makes the absence deliberate: this tree
+# ships no PAM configuration of its own yet, which is what stands between a
+# hardware token and the GNOME lock screen. See docs/yubikey.md.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gdm /build/src/gdm --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dsystemd-journal=true -Dsystemdsystemunitdir=/usr/lib/systemd/system -Dsystemduserunitdir=/usr/lib/systemd/user -Dwayland-support=true -Dplymouth=disabled -Dselinux=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gdm /build/src/gdm --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dsystemd-journal=true -Dsystemdsystemunitdir=/usr/lib/systemd/system -Dsystemduserunitdir=/usr/lib/systemd/user -Dwayland-support=true -Dplymouth=disabled -Dselinux=disabled -Ddefault-pam-config=none
 
 - stage: Build
   name: compile

@@ -131,6 +131,10 @@ Read `docs/limits.md` before trusting anything here. The short version:
   into the dependent at `/dest/deps/`, and nothing unpacks it. The sysroot
   pattern in `tools/lib/sysroot.sh` is this repo's workaround, not a `pm`
   feature.
+- **There is no web browser.** Not in any layer. Both candidates are very
+  large builds whose toolchain demands do not fit this tree's shape, and
+  neither has been priced. `docs/limits.md` says what it costs the FIDO2
+  support in `docs/yubikey.md`.
 - **Nothing here has booted.** No VM and no EFI firmware in the environment
   this was developed in. The UKI is verified structurally — it is a PE carrying
   the six sections systemd-stub looks for — and the ISO and QCOW2 are checked

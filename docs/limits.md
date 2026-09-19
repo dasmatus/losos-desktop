@@ -260,6 +260,26 @@ honest count after real build attempts should be expected to land well above the
 because this OS runs `systemd-networkd` rather than NetworkManager. That trade
 is deliberate — one network stack, already a systemd unit — but it is a trade.
 
+## There is no web browser
+
+`manifest/layers.yaml` names twenty-seven packages in `recipes/30-gnome` and
+none of them is a browser; neither is anything in the other six layers. A
+desktop with no way to open a web page is a strange thing to ship, and it is
+worth stating rather than leaving to be discovered by someone looking for
+Epiphany.
+
+It is not an oversight so much as an unpriced item. Both realistic candidates
+are very large builds with build systems that do not fit this tree's shape:
+Firefox wants its own rust toolchain, cbindgen, nasm, a Python environment and
+a vendored NSS; Chromium wants GN, its own clang pin and a source tree in the
+tens of gigabytes. Each also carries a second, deeper problem — both link a
+great deal of C++, and this tree's CFI and LTO settings have never been asked
+to survive a codebase that size.
+
+What follows from it here: the FIDO2 device access in `docs/yubikey.md` is
+complete and cannot be demonstrated, because demonstrating it means a browser
+doing WebAuthn and there is none to run.
+
 ## Nothing here has booted
 
 There is no VM in the development environment: no KVM, no EFI firmware, no loop
