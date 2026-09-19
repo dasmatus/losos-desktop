@@ -76,8 +76,16 @@ jobs:
           # libclang-rt-*-dev is not optional: without it clang errors out on
           # -fsanitize=cfi with a missing ignorelist, and the toolchain report
           # cannot tell whether CFI works.
+          #
+          # mold is the linker manifest/toolchain.yaml names, and
+          # llvm-18-linker-tools is what carries the LLVMgold.so it does LTO
+          # through -- nothing else here depends on that package, and every
+          # link the report makes is an LTO link. lld stays because the kernel
+          # takes ld.lld from LLVM=1. docs/host-requirements.md is the list
+          # this line is one copy of; the Containerfile is the other.
           sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev just python3-yaml
+            clang lld mold llvm llvm-18-linker-tools libclang-rt-18-dev \
+            just python3-yaml
 
       # pm's jail is a user namespace, and Ubuntu 24.04 ships
       # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
@@ -237,8 +245,15 @@ jobs:
           # and errors out without it, and a build step cannot set PYTHONPATH,
           # so it has to be importable by the host's python3. See
           # docs/host-requirements.md.
+          #
+          # mold and llvm-18-linker-tools travel together and are not optional
+          # here: this job runs the real build, every link in it is a ThinLTO
+          # link through -fuse-ld=mold, and mold does LTO through the
+          # LLVMgold.so only that package carries. lld is still here for the
+          # kernel's LLVM=1. See docs/host-requirements.md.
           sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev just python3-yaml python3-jinja2 \
+            clang lld mold llvm llvm-18-linker-tools libclang-rt-18-dev \
+            just python3-yaml python3-jinja2 \
             ninja-build cmake bison flex bc xz-utils
 
       # losos-security is a cargo build and everything above the toolchain

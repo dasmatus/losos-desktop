@@ -91,6 +91,36 @@ def host_flags(flags):
     return [f for f in flags if not f.startswith(dropped)]
 
 
+def linker_in_use(tc, notes):
+    """Ask the driver which linker `-fuse-ld=` actually resolved to.
+
+    The manifest names a linker and the report line above it echoes that name;
+    this asks the one clang found to identify itself. The two are different
+    claims, and
+    the distance between them grew when the default moved from lld to mold:
+    lld is built into clang's driver knowledge and needs nothing installed
+    beyond itself, while mold is a separate program reached through the GNU
+    linker-plugin path and needs LLVMgold.so with it (see
+    manifest/toolchain.yaml). `-Wl,--version` makes the linker print its banner
+    and exit before it opens an input, so this costs one exec and works on a
+    host with no compiler-rt -- unlike the probe below, which is why it is
+    reported separately rather than folded into it.
+    """
+    cc = tc.compiler.get("cc", "clang")
+    result = run([cc, *host_flags(tc.ldflags()), "-Wl,--version"])
+    if result.returncode != 0:
+        notes.append(
+            "the driver could not start its linker:\n" + result.stderr.strip()
+        )
+        return None
+    # A linker that exits 0 and says nothing is not a linker that answered.
+    banner = (result.stdout.splitlines() or [""])[0].strip()
+    if not banner:
+        notes.append("the linker printed no version banner")
+        return None
+    return banner
+
+
 def compile_probe(tc, work, notes):
     """Build lib + exe with the real flags. Returns True on success."""
     cc = tc.compiler.get("cc", "clang")
@@ -204,6 +234,17 @@ def main():
         print("  exceptions   none")
 
     ok = True
+
+    notes = []
+    banner = linker_in_use(tc, notes)
+    if banner:
+        print(f"  linker       {banner}")
+    else:
+        print("  linker       FAILED", file=sys.stderr)
+        for note in notes:
+            print("    " + note.replace("\n", "\n    "), file=sys.stderr)
+        ok = False
+
     with tempfile.TemporaryDirectory(prefix="losos-toolchain-") as tmp:
         work = Path(tmp)
 
