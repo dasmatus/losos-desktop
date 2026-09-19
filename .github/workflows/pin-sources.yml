@@ -31,7 +31,7 @@ jobs:
       - name: Install what the fetcher needs
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-yaml
+          sudo apt-get install -y --no-install-recommends just python3-yaml
 
       # The mirror is written to out/sources, which for the full source set is
       # several gigabytes -- more than the runner has spare alongside the
@@ -46,7 +46,7 @@ jobs:
       # entry as a failure and changes nothing, which is the right default
       # everywhere except here.
       - name: Fetch every source and record its hash
-        run: python3 tools/fetch-sources --update
+        run: just fetch -- --update
 
       - name: Show what is still unresolved
         if: always()

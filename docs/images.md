@@ -1,6 +1,6 @@
 # The disk images
 
-`./do build` ends with two whole disks — `losos.iso` and `losos.qcow2` — and
+`just build` ends with two whole disks — `losos.iso` and `losos.qcow2` — and
 the root filesystem as a partition image. All three come out of one tree that
 pm has already built, and out of three programs the build host provides:
 `mkosi`, `xorriso` and `qemu-img`.

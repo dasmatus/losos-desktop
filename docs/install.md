@@ -28,7 +28,7 @@ the machine.
 
 Both UKIs are built in one step from the same stub, kernel, initrd and
 os-release, so the installer and the thing it installs cannot be built from
-different inputs. `./do check` asserts the word is actually in the installer
+different inputs. `just check` asserts the word is actually in the installer
 UKI — without it, that image boots to a desktop and installs nothing, which is
 a failure nobody notices until after they have written the USB stick.
 
@@ -71,7 +71,7 @@ separate rather than unified behind a condition for exactly that reason.
 
 ## Making the medium
 
-`./do build` produces `losos.iso`, and writing it to a USB stick is the whole
+`just build` produces `losos.iso`, and writing it to a USB stick is the whole
 procedure:
 
 ```sh
