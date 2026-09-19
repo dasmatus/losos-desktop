@@ -46,27 +46,27 @@ the build cannot drift apart — 149 of them, and a missing one fails the build.
 cd ../pm && cargo build --release   # the pm binary this repo drives
 cd ../losos-desktop
 
-./do check              # the gate: generate, sign, prove the digest, lint
-./do fetch --update     # mirror the upstream sources, pinning any TODO hash
-./do build              # the real build
+just check              # the gate: generate, sign, prove the digest, lint
+just fetch --update     # mirror the upstream sources, pinning any TODO hash
+just build              # the real build
 ```
 
-`./do check` runs anywhere: no network, no KVM, no nix, no root beyond working
+`just check` runs anywhere: no network, no KVM, no nix, no root beyond working
 user namespaces. It validates every generated build file against pm's schema,
 checks that every source URL is in the normal form pm hashes, re-applies pm's
 fingerprint table past the one permitted wrapper, tests the initramfs and UKI
 writers, proves the download-path derivation against a real `pm build`, and
 runs `pm explain` over all 800-odd commands in the tree.
 
-`./do build` needs the sources mirrored first. It does **not** fetch through
+`just build` needs the sources mirrored first. It does **not** fetch through
 pm: pm's downloader compiles Mozilla's roots in and reads no CA setting, so it
-cannot fetch over HTTPS on a host that re-terminates TLS. `./do fetch` mirrors
-the tarballs with a tool that can, and `./do build` serves them over loopback
+cannot fetch over HTTPS on a host that re-terminates TLS. `just fetch` mirrors
+the tarballs with a tool that can, and `just build` serves them over loopback
 with the SHA-256 pins unchanged.
 
-Run `./do` with no arguments for the full list.
+Run `just` with no arguments for the full list. `./do` remains as a compatibility wrapper.
 
-What the build host itself has to provide — clang, python3 with `jinja2`,
+What the build host itself has to provide — `just`, clang, python3 with `jinja2`,
 cargo with the musl target, and working user namespaces among them — is in
 [`docs/host-requirements.md`](docs/host-requirements.md). It is short, and it
 is a list rather than a bootstrap step because pm resolves a step's first word
@@ -81,7 +81,7 @@ in cannot reach kernel.org, gnome.org, freedesktop.org or github.com/systemd, so
 What pm *has* built end to end, in the jail: `losos-00-hosttools` (meson, from a
 pinned sdist) and `losos-05-core` (`losos-release`, compiled from this
 repository's own C by that meson, packaged, and run back out of its own
-archive). Everything above that is validated by `./do check` — which proves the
+archive). Everything above that is validated by `just check` — which proves the
 tree is executable-in-principle by pm, and proves nothing about whether each
 package configures.
 
@@ -116,7 +116,7 @@ Read `docs/limits.md` before trusting anything here. The short version:
 
 ## Installation media
 
-`./do build` produces, with no tool outside this repository and none on the
+`just build` produces, with no tool outside this repository and none on the
 build host:
 
 | Artifact | What it is |

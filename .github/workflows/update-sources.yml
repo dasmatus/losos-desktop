@@ -16,9 +16,9 @@
 # What a leg actually proves, and what it does not. It proves the new URL
 # exists and serves bytes that hash (tools/fetch-sources downloads them and
 # records the digest -- no hash here is ever composed), that the lock and the
-# recipe moved together, and that the whole tree still passes `./do check`:
+# recipe moved together, and that the whole tree still passes `just check`:
 # schema, URL form, fingerprints, the download-path digest, `pm explain`. It
-# does NOT compile anything. `./do build` is the full chain from a musl
+# does NOT compile anything. `just build` is the full chain from a musl
 # toolchain upward and cannot be run once per candidate, so a bump that
 # configures wrong or drops an option still reaches the proposal -- see
 # docs/pm-constraints.md and the note on meson options in the pull request
@@ -78,7 +78,7 @@ jobs:
       - name: Install what check-latest needs
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-yaml
+          sudo apt-get install -y --no-install-recommends just python3-yaml
 
       # Every dispatch input reaches this step as an environment variable and
       # none is spliced into a command line or into Python source: an input is
@@ -100,7 +100,7 @@ jobs:
           set -- --refresh --json survey.json
           [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
           [ "$INCLUDE_HELD" = true ] && set -- "$@" --include-held
-          python3 tools/check-latest "$@"
+          just check-latest "$@"
           # The matrix is capped. A sweep after a quiet month can turn up
           # thirty outdated sources, and thirty legs each downloading a
           # tarball and running the full gate is a lot of runner time to spend
@@ -136,7 +136,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: survey, path: survey.json }
 
-  # pm, built once. Every leg below needs the binary for `./do check`, and a
+  # pm, built once. Every leg below needs the binary for `just check`, and a
   # cargo build per leg would be most of each leg's wall clock -- and would
   # let twenty legs gate against twenty separately built binaries.
   toolchain:
@@ -175,7 +175,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev python3-yaml
+            clang lld llvm libclang-rt-18-dev just python3-yaml
 
       # pm's jail is a user namespace, and Ubuntu 24.04 ships
       # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
@@ -201,7 +201,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KEY: ${{ matrix.key }}
         run: |
-          python3 tools/check-latest --only "$KEY" --include-held --apply \
+          just check-latest --only "$KEY" --include-held --apply \
             --json "$GITHUB_WORKSPACE/moved.json"
 
       # The first real test: the URL upstream advertised has to exist and
@@ -215,15 +215,15 @@ jobs:
         working-directory: losos-desktop
         env:
           KEY: ${{ matrix.key }}
-        run: python3 tools/fetch-sources --update --only "$KEY"
+        run: just fetch --update --only "$KEY"
 
       # The second: the whole tree still configures, signs, proves its
       # download-path digest against pm, and passes every lint.
-      - name: ./do check
+      - name: just check
         id: gate
         continue-on-error: true
         working-directory: losos-desktop
-        run: PM=$GITHUB_WORKSPACE/pm-bin/pm ./do check
+        run: PM=$GITHUB_WORKSPACE/pm-bin/pm just check
 
       # Always, pass or fail: a leg that says nothing is a leg `propose`
       # cannot tell apart from one that never ran.
@@ -311,7 +311,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev python3-yaml
+            clang lld llvm libclang-rt-18-dev just python3-yaml
 
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -365,10 +365,10 @@ jobs:
       # A leg only ever saw its own bump. Two sources that each pass alone can
       # still disagree once both are in the tree, so the combination is gated
       # as a tree in its own right.
-      - name: ./do check over the combination
+      - name: just check over the combination
         if: steps.apply.outputs.applied != ''
         working-directory: losos-desktop
-        run: PM=$GITHUB_WORKSPACE/pm-bin/pm ./do check
+        run: PM=$GITHUB_WORKSPACE/pm-bin/pm just check
 
       - name: Write the proposal
         if: steps.apply.outputs.applied != ''
@@ -417,9 +417,9 @@ jobs:
                 "`tools/fetch-sources --update` then writes the hash the bytes "
                 "actually produced -- no hash here was composed.\n")
           print("## What a green run does not prove\n")
-          print("`./do check` lints the tree; it compiles nothing. A bump whose "
+          print("`just check` lints the tree; it compiles nothing. A bump whose "
                 "upstream renamed a meson option, dropped a configure flag or "
-                "moved a header passes every gate above and fails in `./do build` "
+                "moved a header passes every gate above and fails in `just build` "
                 "-- nothing in this repository validates a recipe's `-D` options "
                 "against the sources, because that would need the sources. Read "
                 "the release notes for anything crossing a major version.\n")

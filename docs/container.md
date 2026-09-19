@@ -1,7 +1,7 @@
 # The build host, and why it is a file
 
 [`host-requirements.md`](host-requirements.md) lists what a machine must have
-installed before `./do build` can work, and explains why the list cannot be
+installed before `just build` can work, and explains why the list cannot be
 shorter: pm resolves every step's first word on the host and mirrors the host's
 `/usr` into the jail read-only (C1, C3, C7 in
 [`pm-constraints.md`](pm-constraints.md)), so a program a recipe invokes
@@ -15,9 +15,9 @@ it stopped. `Containerfile` is the same list, executable, and it is the same
 image in CI and on a developer's machine.
 
 ```sh
-./do container build      # build the image
-./do container check      # run the gate inside it
-./do container            # a shell in it, with the repository mounted
+just container build      # build the image
+just container check      # run the gate inside it
+just container            # a shell in it, with the repository mounted
 ```
 
 ## What is actually pinned
@@ -96,7 +96,7 @@ the repository are not left owned by root.
 **`TMPDIR` must be on real disk.** Every pm workspace lives under it and a
 large package needs several gigabytes; on a tmpfs the build dies partway
 through with `Disk quota exceeded`, which looks like a bug in the recipe and is
-not (C11). `./do` already redirects it into `out/tmp`, which is bind-mounted,
+not (C11). `just` already redirects it into `out/tmp`, which is bind-mounted,
 so this is only a default for anything that does not.
 
 **The sibling `pm` checkout has to be mounted.** Two gates read pm's *source*

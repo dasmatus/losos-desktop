@@ -68,7 +68,7 @@ jobs:
           # -fsanitize=cfi with a missing ignorelist, and the toolchain report
           # cannot tell whether CFI works.
           sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev python3-yaml
+            clang lld llvm libclang-rt-18-dev just python3-yaml
 
       # pm's jail is a user namespace, and Ubuntu 24.04 ships
       # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
@@ -84,21 +84,21 @@ jobs:
       # The components are not committed, so CI builds them -- and this is the
       # only place `explain-all` runs with the plugins actually loaded. It needs
       # the wasm32 target and pm's encoder, which is why it is not part of
-      # `./do check` (that has to run with no network and no wasm toolchain).
+      # `just check` (that has to run with no network and no wasm toolchain).
       - name: Build the plugin components
         run: |
           rustup target add wasm32-unknown-unknown
-          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm ./do plugins
+          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm just plugins
 
-      - name: ./do check
+      - name: just check
         working-directory: losos-desktop
-        run: PM=$GITHUB_WORKSPACE/pm/target/release/pm ./do check
+        run: PM=$GITHUB_WORKSPACE/pm/target/release/pm just check
 
       # Proves the flag set compiles, links, runs, and that a mistyped indirect
       # call is actually caught -- not that a YAML file says CFI is on.
       - name: Toolchain report
         working-directory: losos-desktop
-        run: python3 tools/gates/toolchain-report.py --verify-cfi
+        run: just toolchain-report --verify-cfi
 
   # The same gate, in the build host this repository describes rather than in
   # whatever the runner image happens to have installed. It is slower -- the
@@ -107,7 +107,7 @@ jobs:
   # wrong, which the job above cannot, because that one installs its own
   # dependencies with apt.
   #
-  # `./do container` passes the seccomp and AppArmor options pm's user
+  # `just container` passes the seccomp and AppArmor options pm's user
   # namespace needs; GitHub's runners allow both.
   container:
     runs-on: ubuntu-24.04
@@ -120,12 +120,17 @@ jobs:
         # nobody else checked.
         with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
+      - name: Install just
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends just
+
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Build the build host
         working-directory: losos-desktop
-        run: ./do container build
+        run: just container build
 
       # Everything from here runs inside the image, including pm and the
       # plugin components: the point of this job is that the binary and the
@@ -134,10 +139,10 @@ jobs:
       - name: Run the gate inside it
         working-directory: losos-desktop
         run: |
-          python3 tools/container run cargo build --release \
+          just container-run cargo build --release \
             --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
-          ./do container plugins
-          ./do container check
+          just container plugins
+          just container check
 
   # Whether the sources are pinned decides whether anything below can run at
   # all. Reported as an output rather than a failure: an unpinned tree is the
@@ -191,7 +196,7 @@ jobs:
           # so it has to be importable by the host's python3. See
           # docs/host-requirements.md.
           sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev python3-yaml python3-jinja2 \
+            clang lld llvm libclang-rt-18-dev just python3-yaml python3-jinja2 \
             ninja-build cmake bison flex bc xz-utils
 
       # losos-security is a cargo build and everything above the toolchain
@@ -217,7 +222,7 @@ jobs:
       # serving over loopback keeps the SHA-256 pins exactly as they are.
       - name: Mirror the pinned sources
         working-directory: losos-desktop
-        run: python3 tools/fetch-sources
+        run: just fetch
 
       # The channel comes from the `channel` job, not from the event read a
       # second time here: a tag builds stable, everything else nightly, and
@@ -250,17 +255,17 @@ jobs:
         env:
           PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
-          python3 tools/configure --arch ${{ matrix.arch }} --channel "$CHANNEL" \
-            --version "$LOSOS_VERSION" --mirror http://127.0.0.1:8730
-          python3 tools/serve-sources --port 8730 &
-          ./do build losos-90-image
+          just configure --arch ${{ matrix.arch }} --channel "$CHANNEL" \
+            --version "$LOSOS_VERSION"
+          just serve &
+          just build losos-90-image
 
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
         run: |
-          python3 tools/stage-release --arch ${{ matrix.arch }} \
+          just stage-release --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" --out release
-          python3 tools/release-manifest --arch ${{ matrix.arch }} \
+          just release-manifest --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" release
 
       # always(): a build that stopped at some package never reached
@@ -297,7 +302,7 @@ jobs:
       - name: Install QEMU and UEFI firmware
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-yaml \
+          sudo apt-get install -y --no-install-recommends just python3-yaml \
             qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
           # GitHub's Linux runners expose /dev/kvm, but the runner user is not
           # in the kvm group by default. Without this the boot still works and
@@ -306,7 +311,7 @@ jobs:
 
       - name: Boot the kernel image
         run: |
-          python3 tools/vm-test boot --arch ${{ matrix.arch }} \
+          just vm-test boot --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --log console.log
 
@@ -317,7 +322,7 @@ jobs:
       # the step above exercises, because it stages its ESP with QEMU.
       - name: Boot the disk image
         run: |
-          python3 tools/vm-test disk --arch ${{ matrix.arch }} \
+          just vm-test disk --arch ${{ matrix.arch }} \
             --disk release/losos-desktop_*_${{ matrix.arch }}.qcow2 \
             --log disk-console.log
 
@@ -353,13 +358,13 @@ jobs:
       - name: Install QEMU and UEFI firmware
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-yaml \
+          sudo apt-get install -y --no-install-recommends just python3-yaml \
             qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
           sudo chmod 666 /dev/kvm || true
 
       - name: Apply an update inside the VM
         run: |
-          python3 tools/vm-test ota --arch ${{ matrix.arch }} \
+          just vm-test ota --arch ${{ matrix.arch }} \
             --uki release/losos-desktop_*_${{ matrix.arch }}.efi \
             --serve release --log ota-console.log
 
