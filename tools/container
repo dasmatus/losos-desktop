@@ -26,6 +26,7 @@ silently downgrade when they cannot find it.
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,35 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 IMAGE = "localhost/losos-build"
+
+# Which base image the Containerfile is built from, per host architecture.
+#
+# Arch upstream is an x86_64-only distribution and publishes no aarch64 image:
+# `archlinux:base` is a manifest list with one entry, linux/amd64. The aarch64
+# leg of the build matrix runs natively on an arm64 runner and routes every
+# layer through this image, so it cannot pull that at all, and the failure --
+#
+#     choosing an image from manifest list docker://archlinux:base: no image
+#     found in image index for architecture arm64, variant "v8", OS linux
+#
+# -- arrives before a single package is installed.
+#
+# ARM is Arch Linux ARM, a separate project with its own build farm, which
+# publishes rootfs tarballs rather than container images. The aarch64 entry is
+# therefore a third-party rebuild of that tree, chosen because it is multi-arch
+# with a live arm64 manifest and is rebuilt daily; the alternatives were
+# x86_64-only despite their names, or last pushed in 2021.
+#
+# The selection is here rather than in the Containerfile on purpose. Doing it
+# there needs the multi-stage `FROM base-${TARGETARCH}` trick, and that relies
+# on the builder pruning the stages it does not reach -- which BuildKit does
+# and buildah does not promise, so on podman it would pull the amd64 base on an
+# arm64 host and fail in exactly the way this exists to avoid. Python already
+# knows the architecture and already assembles the command.
+BASE_IMAGES = {
+    "x86_64": "docker.io/library/archlinux:base",
+    "aarch64": "docker.io/menci/archlinuxarm:base",
+}
 
 
 def runtime():
@@ -82,8 +112,31 @@ def pm_root():
     return Path(os.environ.get("PM_ROOT", REPO.parent / "pm")).resolve()
 
 
+def base_image():
+    """The Containerfile's BASE_IMAGE for the architecture this is running on.
+
+    The architecture that matters is the *host's*, not the one the
+    distribution is being built for: this image is the build host, and the
+    programs in it have to run here. `tools/configure --arch` is the other
+    question and is unrelated.
+    """
+    machine = platform.machine()
+    try:
+        return BASE_IMAGES[machine]
+    except KeyError:
+        sys.exit(
+            f"container: no base image known for {machine!r}.\n"
+            f"  Known: {', '.join(sorted(BASE_IMAGES))}.\n"
+            "  Pass one explicitly with --build-arg BASE_IMAGE=<image>."
+        )
+
+
 def build(engine, args):
     command = [engine, "build", "-t", IMAGE, "-f", str(REPO / "Containerfile")]
+    # An explicit --build-arg wins, so overriding the base stays possible and
+    # this does not quietly pass it twice with the caller's copy losing.
+    if not any(pin.startswith("BASE_IMAGE=") for pin in args.build_arg):
+        command += ["--build-arg", f"BASE_IMAGE={base_image()}"]
     for pin in args.build_arg:
         command += ["--build-arg", pin]
     command.append(str(REPO))
@@ -181,7 +234,7 @@ def main():
         action="append",
         default=[],
         metavar="NAME=VALUE",
-        help="override a pin, e.g. MKOSI_COMMIT=<sha> or RUST_VERSION=1.94.0",
+        help="override a pin, e.g. BASE_IMAGE=<image> or MKOSI_COMMIT=<sha>",
     )
     builder.set_defaults(handler=build)
 

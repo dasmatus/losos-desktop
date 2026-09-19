@@ -42,14 +42,50 @@ just container            # a shell in it, with the repository mounted
 
 ## The base, and what is not pinned
 
-The base is `archlinux:base`. `base` and not `base-devel`, because base-devel
-carries gcc and binutils -- the GNU toolchain
+The base is Arch. `base` and not `base-devel`, because base-devel carries gcc
+and binutils -- the GNU toolchain
 [`host-requirements.md`](host-requirements.md) says is not required here, and
 which a build system left alone with it will autodetect and reach for. Arch
 also ships clang, lld, mold and LLVM as one unversioned set kept in step with
 each other, so the image installs them by the same names
 `manifest/toolchain.yaml` uses and the file needs no version argument and no
 symlink fixups to make `llvm-ar` and friends exist.
+
+**Which Arch depends on the architecture, and that is the one ugly part of
+this.** Arch upstream is an x86_64-only distribution: `archlinux:base` is a
+manifest list with a single `linux/amd64` entry. The `aarch64` leg of the
+build matrix runs natively on an arm64 runner and routes every layer through
+this image, so it cannot pull that base at all --
+
+```
+choosing an image from manifest list docker://archlinux:base: no image found
+in image index for architecture arm64, variant "v8", OS linux
+```
+
+-- which arrives before a single package is installed. ARM is
+[Arch Linux ARM](https://archlinuxarm.org/), a separate project with its own
+build farm, and it publishes rootfs tarballs rather than container images, so
+the aarch64 base is a third-party rebuild of that tree.
+
+`tools/container` picks from `BASE_IMAGES`, keyed on the *host's*
+architecture -- the machine the programs in this image have to run on, which
+is a different question from `tools/configure --arch`. The Containerfile's
+`BASE_IMAGE` default is the x86_64 answer, so a plain
+`docker build -f Containerfile .` still works on a developer's machine, and
+`--build-arg BASE_IMAGE=` overrides either.
+
+The selection lives in Python rather than in the Containerfile because doing
+it there needs the multi-stage `FROM base-${TARGETARCH}` trick, and that rests
+on the builder pruning the stages it does not reach. BuildKit does; buildah
+does not promise to, so under podman on an arm64 host it would pull the amd64
+base and fail in exactly the way the arrangement exists to prevent.
+
+What it costs is worth stating plainly, because nothing checks it: the two
+legs of the matrix are no longer on the same toolchain version, since Arch
+Linux ARM lags Arch, and half the matrix rests on an image maintainer who is
+not Arch. It is the narrower of the two available trades -- the package list
+in the Containerfile is untouched by it, because Arch Linux ARM is Arch's
+package tree rebuilt rather than a distribution with names of its own.
 
 **The distribution's packages are not pinned, and that is a decision rather
 than a gap.** The base used to be `debian:trixie-slim` with a

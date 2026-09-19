@@ -32,7 +32,30 @@
 # is exactly the GNU toolchain docs/host-requirements.md says is not required
 # and which this image has no use for. A compiler nothing invokes is still a
 # compiler a build system can autodetect and reach for.
-FROM archlinux:base
+#
+# It is an argument rather than a literal because **Arch upstream is an
+# x86_64-only distribution and publishes no aarch64 image**. `archlinux:base`
+# carries one manifest, linux/amd64, so the aarch64 leg of the build matrix --
+# which runs natively on an arm64 runner and routes every layer through this
+# image -- cannot pull it at all:
+#
+#     choosing an image from manifest list docker://archlinux:base: no image
+#     found in image index for architecture arm64, variant "v8", OS linux
+#
+# ARM is Arch Linux ARM, a separate project with its own build farm, and it
+# publishes rootfs tarballs rather than images -- so the aarch64 base is a
+# third-party rebuild of that tree. `tools/container` picks which one from the
+# architecture it is running on; the default here is the x86_64 answer, so a
+# plain `docker build -f Containerfile .` on a developer's machine still works.
+#
+# What this costs: the two legs of the matrix are no longer on the same
+# toolchain version, because Arch Linux ARM lags Arch, and half the matrix
+# rests on an image maintainer who is not Arch. Deliberate, and the narrower
+# of the two options -- the package list below is unchanged by it, since Arch
+# Linux ARM is Arch's package tree rebuilt rather than a distribution of its
+# own. `docs/container.md` has the rest.
+ARG BASE_IMAGE=docker.io/library/archlinux:base
+FROM ${BASE_IMAGE}
 
 # Tombstone: this file used to be `FROM debian:trixie-slim` with a
 # `DEBIAN_SNAPSHOT=<timestamp>` argument pointing apt at snapshot.debian.org,
