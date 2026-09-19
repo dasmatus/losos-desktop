@@ -45,7 +45,7 @@ steps:
   name: patch
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/libunwind/patches /build/src/llvm/libunwind
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/patches /build/src/llvm/libunwind
 
 # LIBUNWIND_USE_COMPILER_RT because there is no libgcc in this sysroot and no
 # gcc on the build host, which is the same reason target.rtlib exists.
@@ -92,5 +92,5 @@ steps:
   run:
   - test -f /dest/usr/lib/libunwind.a
   - test -e /dest/usr/lib/libunwind.so
-  - /bin/sh @RECIPE@/files/libunwind/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.a
-  - /bin/sh @RECIPE@/files/libunwind/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.so
+  - /bin/sh @RECIPE@/files/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.a
+  - /bin/sh @RECIPE@/files/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.so

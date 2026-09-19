@@ -123,7 +123,7 @@ Read `docs/limits.md` before trusting anything here. The short version:
 - **The unwinder is built here, and CFI diagnoses rather than traps.** A
   violation names the file, line and callee of the indirect call that failed
   instead of raising SIGILL with nothing attached. That needs an unwinder,
-  which musl has none of, so `00-toolchain` builds LLVM's -- with a patch,
+  which musl has none of, so `00-toolchain` builds LLVM's libunwind with a patch,
   because libunwind configured on its own silently drops its assembly sources
   and produces an archive that cannot unwind. `docs/limits.md` has the
   measurement.
