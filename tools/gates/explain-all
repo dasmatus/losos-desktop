@@ -22,15 +22,34 @@ fi
 export XDG_CONFIG_HOME="$repo/.pm-config"
 
 # The components are compiled, not committed, so a fresh clone has none until
-# `./do plugins` has run. pm then offers no symbols, and the image layer --
-# the only recipe that uses one -- is rejected with an error about
-# `%{losos-mkosi:esp}` that reads as a broken recipe. Say what is actually
-# missing before that happens, because the fix is one command and nothing in
-# pm's output names it.
-if ! compgen -G "$XDG_CONFIG_HOME/pm/plugins/*.wasm" >/dev/null; then
-  echo "explain-all: no plugin components installed; run ./do plugins first" >&2
-  echo "explain-all: without them the image layer's %{losos-mkosi:...} symbols" >&2
-  echo "explain-all: expand to nothing and pm rejects the recipe" >&2
+# `./do plugins` has run, and pm then rejects the image layer -- the only recipe
+# that needs one -- with an error that reads as a broken recipe. Say what is
+# actually missing before that happens, because the fix is one command and
+# nothing in pm's output names it.
+#
+# Two components are required and they fail differently, so both are named:
+# without losos-mkosi the layer's `%{losos-mkosi:esp}` expands to nothing and pm
+# reports that it cannot expand a command; without losos-image the mkosi,
+# xorriso and qemu-img steps match no fingerprint (C2) and pm reports that it
+# cannot derive a sandbox policy. losos-systemd is deliberately not required
+# here: it hooks scan-source only, so its absence costs information about a
+# recipe rather than making one unexplainable, and demanding it would send
+# someone to rebuild a plugin that was never the problem.
+#
+# Checking the two by name rather than globbing for any `*.wasm` is what makes
+# this survive `./do plugins <crate>`, which builds only the crate it is given.
+# One component is enough to satisfy a glob and not enough to explain the image
+# layer, which is precisely the case where the message is worth having.
+missing=()
+for component in losos-image losos-mkosi; do
+  [ -f "$XDG_CONFIG_HOME/pm/plugins/$component.wasm" ] || missing+=("$component")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "explain-all: plugin component(s) missing: ${missing[*]}" >&2
+  echo "explain-all: run ./do plugins ${missing[*]}" >&2
+  echo "explain-all: without them pm cannot explain the image layer, and reports" >&2
+  echo "explain-all: an unexpandable command or an underivable policy rather" >&2
+  echo "explain-all: than a missing plugin" >&2
 fi
 
 failed=0
