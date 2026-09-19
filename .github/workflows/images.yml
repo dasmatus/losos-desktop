@@ -260,41 +260,43 @@ jobs:
         # that was never checked.
         with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          # python3-jinja2: fwupd's meson runs `python3 -c 'import jinja2'`
-          # and errors out without it, and a build step cannot set PYTHONPATH,
-          # so it has to be importable by the host's python3. See
-          # docs/host-requirements.md.
-          sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev python3-yaml python3-jinja2 \
-            ninja-build cmake bison flex bc xz-utils
-
-      # losos-security is a cargo build and everything above the toolchain
-      # layer is musl, so --target needs that target's std installed. Without
-      # it the failure is a rustc error about a missing core, several layers
-      # into a build that has already run for minutes.
-      - name: Add the Rust musl target
-        run: rustup target add ${{ matrix.arch }}-unknown-linux-musl
-
       # pm's jail is a user namespace, and Ubuntu 24.04 ships
       # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
       # uid_map write hakoniwa needs. Without this every pm build fails with
       # "Operation not permitted" from inside the sandbox -- which reads like a
-      # permissions problem with the workspace and is not.
+      # permissions problem with the workspace and is not. It is a host
+      # setting: the container below inherits it and cannot set it itself.
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      - name: Build pm
-        run: cargo build --release --manifest-path pm/Cargo.toml
+      # Everything from here runs inside the build host this repository
+      # describes, rather than against an apt list kept in step with it by
+      # hand. That list is how this job used to get its dependencies, and it
+      # could not have built the image layer: mkosi, xorriso and qemu-img were
+      # never in it, and Ubuntu's mkosi is older than the one the mkosi
+      # configuration is written against either way.
+      - name: Build the build host
+        working-directory: losos-desktop
+        run: ./do container build
+
+      # pm is built with the image's toolchain because it is run with the
+      # image's libraries. The plugin components are not committed, so they
+      # are built here too -- without them pm loads no plugins, and the image
+      # layer's `%{losos-mkosi:esp}` expands to nothing at all, which reads as
+      # a broken recipe rather than as a missing component.
+      - name: Build pm and the plugin components in it
+        working-directory: losos-desktop
+        run: |
+          python3 tools/container run cargo build --release \
+            --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
+          ./do container plugins
 
       # pm's downloader compiles Mozilla's roots in and reads no CA setting, so
       # it cannot fetch through a TLS-terminating proxy. Mirroring first and
       # serving over loopback keeps the SHA-256 pins exactly as they are.
       - name: Mirror the pinned sources
         working-directory: losos-desktop
-        run: python3 tools/fetch-sources
+        run: python3 tools/container run python3 tools/fetch-sources
 
       # The channel comes from the `channel` job, not from the event read a
       # second time here: a tag builds stable, everything else nightly, and
@@ -322,23 +324,25 @@ jobs:
           fi
           echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
 
+      # The mirror is not started here any more. `./do build` starts one
+      # itself on the same port, and it has to be the container's loopback
+      # rather than the runner's: pm fetches from inside the image, where
+      # 127.0.0.1 is not the host's.
       - name: Build the image
         working-directory: losos-desktop
-        env:
-          PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
-          python3 tools/configure --arch ${{ matrix.arch }} --channel "$CHANNEL" \
+          python3 tools/container run python3 tools/configure \
+            --arch ${{ matrix.arch }} --channel "$CHANNEL" \
             --version "$LOSOS_VERSION" --mirror http://127.0.0.1:8730
-          python3 tools/serve-sources --port 8730 &
-          ./do build losos-90-image
+          python3 tools/container run ./do build losos-90-image
 
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
         run: |
-          python3 tools/stage-release --arch ${{ matrix.arch }} \
-            --version "$LOSOS_VERSION" --out release
-          python3 tools/release-manifest --arch ${{ matrix.arch }} \
-            --version "$LOSOS_VERSION" release
+          python3 tools/container run python3 tools/stage-release \
+            --arch ${{ matrix.arch }} --version "$LOSOS_VERSION" --out release
+          python3 tools/container run python3 tools/release-manifest \
+            --arch ${{ matrix.arch }} --version "$LOSOS_VERSION" release
 
       - uses: actions/upload-artifact@v4
         with:

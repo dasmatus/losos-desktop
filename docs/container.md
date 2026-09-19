@@ -14,6 +14,15 @@ whether they had the right versions by running a long build and watching where
 it stopped. `Containerfile` is the same list, executable, and it is the same
 image in CI and on a developer's machine.
 
+In `images.yml` that means the `container` job, which runs the gate inside it,
+and the `build` job, which builds pm, the plugin components and the image
+itself inside it. The `gates` job deliberately stays on an apt list: it is the
+fast one, it runs on every event, and having one job that does not depend on
+the image being buildable is what tells the two failures apart. It is also why
+the `build` job moved: its apt list was kept in step with `Containerfile` by
+hand and had drifted, with no mkosi, xorriso or qemu-img in it at all, so it
+could not have built an image layer even once.
+
 ```sh
 ./do container build      # build the image
 ./do container check      # run the gate inside it

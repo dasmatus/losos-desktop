@@ -172,6 +172,10 @@ cmd_clean() {
 cmd_container() {
   local verb="${1:-}"
   case "$verb" in
+    # `container build` is the image, not `./do build` inside it -- the one
+    # collision in this dispatch, and the one command most worth running
+    # inside. `python3 tools/container run ./do build <layer>` is how to say
+    # the other thing; .github/workflows/images.yml does exactly that.
     build) shift; python3 "$repo/tools/container" build "$@" ;;
     "")    python3 "$repo/tools/container" run ;;
     *)     python3 "$repo/tools/container" run ./do "$@" ;;
