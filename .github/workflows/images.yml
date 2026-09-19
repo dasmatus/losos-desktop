@@ -163,7 +163,19 @@ jobs:
   # `just container` passes the seccomp and AppArmor options pm's user
   # namespace needs; GitHub's runners allow both.
   container:
-    runs-on: ubuntu-24.04
+    # Both architectures, because the image no longer has one base. The
+    # Containerfile takes BASE_IMAGE and `tools/container` fills it from
+    # platform.machine(): Arch's own image on x86_64, Arch Linux ARM on
+    # aarch64, since Arch publishes no arm64 image. Two separate distributions
+    # with separate package sets, so an image proved on one says nothing about
+    # the other -- and the build job below runs on the runner rather than in
+    # this image, so nothing else in the workflow would ever build the arm64
+    # one. See docs/container.md.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }

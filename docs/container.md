@@ -80,12 +80,21 @@ on the builder pruning the stages it does not reach. BuildKit does; buildah
 does not promise to, so under podman on an arm64 host it would pull the amd64
 base and fail in exactly the way the arrangement exists to prevent.
 
-What it costs is worth stating plainly, because nothing checks it: the two
-legs of the matrix are no longer on the same toolchain version, since Arch
-Linux ARM lags Arch, and half the matrix rests on an image maintainer who is
-not Arch. It is the narrower of the two available trades -- the package list
-in the Containerfile is untouched by it, because Arch Linux ARM is Arch's
-package tree rebuilt rather than a distribution with names of its own.
+What it costs is worth stating plainly: the two legs of the matrix are no
+longer on the same toolchain version, since Arch Linux ARM lags Arch, and half
+the matrix rests on an image maintainer who is not Arch. It is the narrower of
+the two available trades -- the package list in the Containerfile is untouched
+by it, because Arch Linux ARM is Arch's package tree rebuilt rather than a
+distribution with names of its own.
+
+The `container` job builds both images for that reason, one runner each. It is
+the only thing in the workflow that builds either: the `build` job runs on the
+runner rather than in this image, so without the second leg the aarch64 base
+would never be pulled in CI at all, and an image maintainer who stopped
+publishing -- or a package that exists under one name on Arch and another on
+the rebuild -- would surface for the first time on somebody's arm64 laptop.
+What the second leg does not do is make the two toolchains match; that is the
+cost above, and it stays.
 
 **The distribution's packages are not pinned, and that is a decision rather
 than a gap.** The base used to be `debian:trixie-slim` with a
