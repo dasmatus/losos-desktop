@@ -97,7 +97,7 @@ def run(engine, args):
         "-e", f"PM={pm_binary}",
     ]
     if not pm_binary.is_relative_to(pm):
-        command += ["-v", f"{pm_binary}:{pm_binary}"]
+        command += ["-v", f"{pm_binary.parent}:{pm_binary.parent}"]
     # The image-build fallback serves mirrored sources on the host loopback, so
     # that path can opt into host networking without changing the default runner.
     if os.environ.get("LOSOS_CONTAINER_HOST_NETWORK") == "1":
