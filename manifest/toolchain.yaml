@@ -279,6 +279,47 @@ exceptions:
       inside the thing being reported on, and a CFI failure on the unwind path
       recurses instead of printing. It is the same argument that keeps musl
       out, one layer up.
+  - package: libqrencode
+    drops: [cfi]
+    why: >
+      A visibility exception, not a CFI one, and the flag comes off with CFI
+      because CFI is the only reason -fvisibility=hidden is on. libqrencode
+      annotates no export anywhere -- the only `visibility` in its tarball is
+      libtool's own autoconf boilerplate in configure and aclocal.m4, not its
+      sources -- and it ships no linker version script. It has relied on
+      default visibility since before the attribute existed.
+
+      Measured on 4.1.1, the pinned release, built both ways: without the flag
+      libqrencode.so defines 75 dynamic functions and exports
+      QRcode_encodeString; with it, zero and none. systemd is the consumer
+      (-Dqrencode=enabled, for the recovery-key QR that systemd-cryptenroll
+      prints), and it would fail to find a single symbol.
+
+      It keeps LTO, hardening and the target flags. This is the same shape as
+      libcap's entry and libfido2's below.
+  - package: libfido2
+    drops: [cfi]
+    why: >
+      The same visibility exception, and worth spelling out separately because
+      libfido2 looks like it should be safe and is not. It *does* ship a linker
+      version script, src/export.gnu, naming 267 symbols -- and a version
+      script cannot re-export a symbol the compiler already marked hidden.
+      -fvisibility=hidden sets STV_HIDDEN in the object; `global:` in the
+      script has nothing left to promote. There are no visibility attributes
+      anywhere in its sources to make up for it: zero, checked against the
+      pinned tarball rather than the header alone.
+
+      Measured on 1.15.0, from bytes whose SHA-256 matches sources.lock,
+      built both ways: 267 dynamic functions defined without the flag,
+      0 with it, and fido_dev_open present in the first and absent in the
+      second. A libfido2.so that exports nothing is the whole feature gone --
+      systemd is built -Dlibfido2=enabled for systemd-cryptenroll and homed,
+      and would link against an empty dynamic table.
+
+      It keeps LTO, hardening and the target flags. Only CFI is lost, on a
+      library that parses CBOR from a USB device; docs/yubikey.md records the
+      trade and why the alternative -- carrying a patch that annotates 267
+      symbols upstream does not annotate -- is worse.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.
