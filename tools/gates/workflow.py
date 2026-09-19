@@ -9,12 +9,18 @@ exist, download-artifact failed, and `publish` -- which needs both -- never ran.
 Nightly was green throughout, so nothing pointed at it until someone tagged a
 release and found the stable path had never worked.
 
-Two properties, both cheap to check and neither visible by reading one job:
+Three properties, all cheap to check and none visible by reading one job:
 
   * every artifact a job downloads is one some job uploads, for EVERY value the
     channel can take;
   * the channel is derived in exactly one place. Two derivations that agree
-    today are two that can disagree after one edit.
+    today are two that can disagree after one edit;
+  * so is the pm commit, in every workflow that checks pm out, for the same
+    reason and one worse consequence. It is what .github/actions/pm keys pm's
+    build cache on, so a copy someone bumps while another stays put is not a
+    disagreement about a version -- it is a cached binary, built from a tree
+    nobody reviewed, handed to every job below without a word. The `master`
+    that this pin replaced is the same failure arriving the slow way.
 
 It also checks that write permission is not granted workflow-wide, and that one
 applies to EVERY workflow here rather than to this one. Both of them check out
@@ -39,6 +45,76 @@ WORKFLOW = WORKFLOWS / "images.yml"
 # out of the shell, because this is the list the check is asserting against.
 CHANNELS = ("nightly", "stable")
 CHANNEL_REF = re.compile(r"\$\{\{\s*needs\.channel\.outputs\.name\s*\}\}")
+
+# The pm pin: the one expression allowed to stand for it, and the shape the
+# value itself has to have. A branch name resolves to whatever it points at
+# today, which is exactly what a cache key must not do.
+PM_REPO = "dichhead/pm"
+PM_ACTION = ".github/actions/pm"
+PM_REF_USE = re.compile(r"\$\{\{\s*env\.PM_REF\s*\}\}")
+COMMIT = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def check_pm_pin(path, doc):
+    """One pm commit per workflow, a commit, and named only as PM_REF."""
+    steps = [
+        (job, step)
+        for job, spec in (doc.get("jobs") or {}).items()
+        for step in (spec or {}).get("steps") or []
+    ]
+    wants_pm = [
+        (job, step)
+        for job, step in steps
+        if PM_REPO in str((step.get("with") or {}).get("repository", ""))
+        or PM_ACTION in str(step.get("uses", ""))
+    ]
+    if not wants_pm:
+        return []
+
+    failures = []
+    pinned = str((doc.get("env") or {}).get("PM_REF") or "").strip()
+    where = path.name
+
+    if not pinned:
+        failures.append(
+            f"{where} checks pm out but declares no env.PM_REF. The commit "
+            "belongs at the top of the workflow,\n    because it is also "
+            "what pm's build cache is keyed on."
+        )
+    elif not COMMIT.match(pinned):
+        failures.append(
+            f"{where} pins pm to {pinned!r}, which is not a 40-character "
+            "commit.\n    A branch makes the cache key a moving target: "
+            "the same key, a different binary."
+        )
+
+    for job, step in wants_pm:
+        ref = str((step.get("with") or {}).get("ref", ""))
+        if not PM_REF_USE.fullmatch(ref.strip()):
+            failures.append(
+                f"{where}: {job} takes pm at ref {ref!r} rather than "
+                "${{ env.PM_REF }}.\n    That is a second copy of the pin."
+            )
+
+    # A job or a step may declare its own `env:`, and one naming PM_REF shadows
+    # the workflow's for everything under it. Every `${{ env.PM_REF }}` above
+    # would still read as one pin while resolving to two, which is the failure
+    # this check exists for wearing the shape that passes it.
+    for job, spec in (doc.get("jobs") or {}).items():
+        if "PM_REF" in ((spec or {}).get("env") or {}):
+            failures.append(
+                f"{where}: {job} declares its own env.PM_REF, which shadows "
+                "the workflow's\n    for every step in it."
+            )
+        for step in (spec or {}).get("steps") or []:
+            if "PM_REF" in (step.get("env") or {}):
+                name = step.get("name") or step.get("uses") or "a step"
+                failures.append(
+                    f"{where}: {job} has a step ({name}) with its own "
+                    "env.PM_REF.\n    It shadows the workflow's."
+                )
+
+    return failures
 
 
 def main():
@@ -95,7 +171,10 @@ def main():
     # next workflow somebody adds, which is the one most likely to get it
     # wrong.
     for path in sorted(WORKFLOWS.glob("*.yml")):
-        top = (yaml.safe_load(path.read_text()) or {}).get("permissions")
+        spec = yaml.safe_load(path.read_text()) or {}
+        failures.extend(check_pm_pin(path, spec))
+
+        top = spec.get("permissions")
         if isinstance(top, dict) and top.get("contents") == "write":
             failures.append(
                 f"{path.relative_to(REPO)} grants permissions.contents: write "
@@ -113,8 +192,8 @@ def main():
 
     print(
         f"workflow: {len(downloads)} artifact download(s) resolve for "
-        f"{len(CHANNELS)} channel(s); least privilege at the top of "
-        f"{len(list(WORKFLOWS.glob('*.yml')))} workflow(s)"
+        f"{len(CHANNELS)} channel(s); one pm pin and least privilege at the "
+        f"top of {len(list(WORKFLOWS.glob('*.yml')))} workflow(s)"
     )
     return 0
 
