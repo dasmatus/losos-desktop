@@ -24,15 +24,26 @@ steps:
 # root, cmake stops before it reads a single option with `The source directory
 # does not appear to contain CMakeLists.txt`.
 #
-# ZSTD_PROGRAMS_LINK_SHARED goes with ZSTD_BUILD_STATIC=OFF and is not optional.
-# ZSTD_BUILD_PROGRAMS defaults ON, and build/cmake/CMakeLists.txt:151 raises
-# SEND_ERROR -- "You need to build static library to build zstd CLI" -- when the
-# CLI is being built and neither a static library nor a shared link is on offer.
-# SEND_ERROR lets configure run to the end and then refuses to generate, so the
-# failure arrives after a screen of successful checks. Linking the CLI against
-# the shared library is what the recipe already asks for; turning the programs
-# off instead would drop /usr/bin/zstd from the image, which is a separate
-# decision and not this one's to make.
+# ZSTD_BUILD_PROGRAMS=OFF because the CLI cannot be built here at all, not as
+# a preference. It defaults ON, and with ZSTD_BUILD_STATIC=OFF
+# build/cmake/CMakeLists.txt:151 raises SEND_ERROR -- "You need to build static
+# library to build zstd CLI" -- unless the programs link shared. But the shared
+# link does not work either: this tree compiles with -fvisibility=hidden, and
+# the CLI reaches for POOL_create, POOL_add, POOL_free and POOL_joinJobs, which
+# lib/common/pool.h declares without ZSTDLIB_API. Hidden symbols never reach
+# libzstd.so's dynamic table, so zstd-frugal fails to link against the very
+# library it was just built beside. The third way out -- build the static
+# library for the CLI to link -- contradicts ZSTD_BUILD_STATIC=OFF and would
+# install a libzstd.a nothing asks for.
+#
+# So the package builds what it is here for. The recipe header says it: this is
+# systemd's journal and coredump compressor, and libzstd is the deliverable.
+# Nothing in the tree invokes a zstd binary. docs/limits.md records the
+# omission.
+#
+# lz4 next door keeps its CLI and needs none of this: its programs use only the
+# LZ4LIB_API entry points, so hidden visibility costs them nothing. Verified by
+# building both with -fvisibility=hidden -- lz4cli links, zstd-frugal does not.
 #
 # CMAKE_CXX_COMPILER_WORKS is what stops cmake compiling a C++ program this
 # build has no use for. project() at build/cmake/CMakeLists.txt:33 names CXX
@@ -60,7 +71,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/zstd/build/cmake -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DZSTD_BUILD_STATIC=OFF -DZSTD_PROGRAMS_LINK_SHARED=ON -DCMAKE_CXX_COMPILER_WORKS=1
+  - cmake -S /build/src/zstd/build/cmake -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_PROGRAMS=OFF -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile
