@@ -162,6 +162,41 @@ covers only the libraries without one and saying so in
 `manifest/toolchain.yaml` instead of claiming the whole set. Nothing here
 picks one.
 
+## Three build tools in the image are the build host's binaries
+
+`losos-15-hosttools` builds gperf, flex and gettext, and
+`manifest/toolchain.yaml` exempts all three from the target flags. That is
+forced: the kernel's build runs `flex`
+(`recipes/10-systemd/linux/build.yaml.in:63`) and systemd's runs `gperf` and
+`msgfmt`, and a musl-dynamic binary cannot run inside pm's jail at all — its
+interpreter is `/lib/ld-musl-<arch>.so.1`, an absolute path, and the jail
+mirrors the **host's** `/lib` read-only (C7). Built for the target, these three
+are three files that exist and cannot execute; the two `test -x` assertions in
+the systemd recipe pass on them, so the failure surfaces halfway through a
+kernel build as `ENOENT` on a path that is plainly there.
+
+The cost is on the other side. A layer's archive is what propagates upward
+(C5), and `recipes/90-image` unpacks the whole closure into the rootfs
+verbatim, so `/usr/bin/flex`, `/usr/bin/gperf` and `/usr/bin/msgfmt` **ship in
+the image linked against the build host's glibc**, where nothing can run them.
+They are dead files in a musl rootfs. Nothing needs them at runtime — they are
+build-time tools and an image has no business containing them — but nothing
+removes them either, because the only way a layer hands its output to the layer
+above is by shipping it.
+
+The fix is not another exemption. It is a way for a layer to contribute to the
+sysroot above it without contributing to the image, which pm does not have and
+this tree has not built. Until then the image carries three binaries that are
+both non-functional and built against the wrong libc, and this paragraph is the
+only place that says so.
+
+gettext brings one more, smaller: configured against glibc it finds `gettext`
+in the C library and builds no `libintl`, where configured against musl it
+would. Nothing in this tree links `-lintl` today, so nothing breaks today. glib
+will, and when it does the answer is a separate musl `libintl` — not the
+removal of this exemption, which would only move the failure back down to the
+kernel build.
+
 ## pm has no package store
 
 Dependencies are carried, not consumed (C5): a dependency's archive is copied

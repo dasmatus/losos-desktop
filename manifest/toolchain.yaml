@@ -231,6 +231,47 @@ exceptions:
       inside the thing being reported on, and a CFI failure on the unwind path
       recurses instead of printing. It is the same argument that keeps musl
       out, one layer up.
+  # losos-15-hosttools, all three of it. These are the one kind of package in
+  # the tree that is not part of the OS being built so much as part of the
+  # machinery building it, and that distinction is the whole exemption.
+  - package: gperf
+    drops: [cfi, lto, target]
+    why: >
+      A build-time program has to run on the build host, and a musl-dynamic
+      binary cannot. Its interpreter is /lib/ld-musl-<arch>.so.1, and pm's jail
+      mirrors the HOST's /lib read-only (C7) -- the sysroot's copy is at
+      /build/sysroot/lib, which is not the absolute path compiled into the
+      binary. So dropping `target` here is not a concession, it is the point:
+      host libc, host sysroot, host resource directory, a binary the jail can
+      execve.
+
+      What makes this worth an exception rather than a shrug is that nothing
+      catches it. recipes/10-systemd/systemd/build.yaml.in:37-38 asserts
+      `test -x /build/sysroot/usr/bin/gperf` and the same for msgfmt, and
+      test -x passes on a binary that cannot run; the kernel's build reaches
+      LEX=/build/sysroot/usr/bin/flex
+      (recipes/10-systemd/linux/build.yaml.in:63) and fails with ENOENT on a
+      file that is plainly there, which reads as "flex was never installed"
+      rather than as "flex is the wrong libc".
+
+      CFI and LTO come off with it. They are a property of the shipped OS, and
+      these three are not shipped code in any sense that matters -- see the
+      note in docs/limits.md for the part of that sentence which is currently
+      a lie.
+  - package: flex
+    drops: [cfi, lto, target]
+    why: >
+      A build-time program: the kernel's kconfig runs it. Same argument as
+      gperf above, in full.
+  - package: gettext
+    drops: [cfi, lto, target]
+    why: >
+      msgfmt, which systemd runs for -Dtranslations=true. Same argument as
+      gperf above, with one consequence the other two do not have: gettext
+      configured against glibc finds gettext in the C library and builds no
+      libintl, where configured against musl it would. Nothing in this tree
+      asks for -lintl yet, so nothing breaks today; glib will, and
+      docs/limits.md says so.
   - package: linux
     drops: [cfi, lto, hardening]
     why: >

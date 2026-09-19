@@ -18,6 +18,11 @@ nothing at all, which is why thirty-six recipes were written without it and
 all thirty-six would have failed in turn, one build at a time, each looking
 like a fresh problem with a different package.
 
+EXEMPT below is the other answer to the same question: a package that is not
+cross-compiled at all, and for which --host would be a false statement rather
+than a missing one. It is a list of names, not a rule, because every entry on
+it had to be argued for.
+
 This is a template gate rather than a generated-file one on purpose: the
 answer has to be in the recipe a human edits.
 """
@@ -41,6 +46,17 @@ EXEMPT = {
     # OpenSSL ships its own Configure/config pair, which take a platform name
     # as a bare argument and reject --host outright.
     "openssl",
+    # losos-15-hosttools. These three are not cross builds at all: they carry a
+    # `drops: [target]` exception (manifest/toolchain.yaml) because the kernel's
+    # build and systemd's RUN them, and a musl-dynamic binary cannot run in
+    # pm's jail. --host here would be a lie told to autoconf -- a native glibc
+    # compile announcing itself as a cross build to musl -- and autoconf acts
+    # on it, disabling the run-time tests whose answers it then has no way to
+    # get right. They are listed by name rather than by layer so that a fourth
+    # host tool has to be argued for.
+    "gperf",
+    "flex",
+    "gettext",
 }
 
 

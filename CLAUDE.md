@@ -154,6 +154,15 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   what to emit and tells configure nothing, which is how thirty-six recipes
   came to be written without it. `tools/gates/cross-configure.py` is what stops
   the thirty-seventh; musl and openssl are exempt there, with reasons.
+- **`losos-15-hosttools` is the inverse, and the two rules must move together.**
+  gperf, flex and gettext are *run* by the layers above — the kernel's build and
+  systemd's — and pm's jail cannot execute a musl-dynamic binary at all. They
+  carry a `drops: [target]` exception in `manifest/toolchain.yaml` and are
+  therefore native glibc builds, so `--host` would be a false claim rather than
+  a missing one and they are exempt in the gate. A recipe only gets its
+  exception by *naming* it: `@CFLAGS_RSP_FLEX@`, not `@CFLAGS_RSP@`. Left
+  spelling the shared one, the manifest entry changes nothing and nothing says
+  so. What this costs the image is in `docs/limits.md`.
 - **A compiled-in absolute path resolves into the host mirror.** pm's run jail
   extracts a package at `/pkg` *and* mirrors the host's `/usr` read-only, so a
   binary that opens `/usr/lib/os-release` gets the build host's file and reports
