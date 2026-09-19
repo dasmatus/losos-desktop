@@ -262,19 +262,21 @@ container-run *args:
 
 container-check *args:
   #!/usr/bin/env bash
-  if [ $# -eq 0 ]; then
-    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" check
-  else
-    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" check -- "$@"
-  fi
+  container_pm="{{pm}}"
+  case "$container_pm" in
+    "{{pm_root}}"/*) ;;
+    *) container_pm='' ;;
+  esac
+  PM_ROOT="{{pm_root}}" python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'if [ -n "${1:-}" ]; then PM="$1"; export PM; fi; shift; if [ $# -eq 0 ]; then exec just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" check; fi; exec just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" check -- "$@"' _ "$container_pm" "$@"
 
 container-plugins *args:
   #!/usr/bin/env bash
-  if [ $# -eq 0 ]; then
-    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins
-  else
-    python3 "{{repo}}/tools/container" run just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins -- "$@"
-  fi
+  container_pm="{{pm}}"
+  case "$container_pm" in
+    "{{pm_root}}"/*) ;;
+    *) container_pm='' ;;
+  esac
+  PM_ROOT="{{pm_root}}" python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'if [ -n "${1:-}" ]; then PM="$1"; export PM; fi; shift; if [ $# -eq 0 ]; then exec just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; exec just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins -- "$@"' _ "$container_pm" "$@"
 
 container *args:
   #!/usr/bin/env bash
