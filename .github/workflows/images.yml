@@ -53,7 +53,13 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, path: pm, ref: master }
+        # Pinned, not `master`. tools/gates/plugins.py compares
+        # plugins/wit/plugin.wit byte for byte against this checkout's copy,
+        # so following pm's tip makes this repository's CI a function of
+        # another repository's HEAD: when pm merged its plugin contract
+        # change, every open pull request here went red on a tree nobody had
+        # touched. This is the commit the vendored contract is a copy of.
+        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
       - name: Install the toolchain the gates need
         run: |
@@ -133,7 +139,10 @@ jobs:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, path: pm, ref: master }
+        # Pinned for the reason given in `gates` above: a build running
+        # against a different pm than the gate approved is verifying a tree
+        # that was never checked.
+        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
       - name: Install build dependencies
         run: |
