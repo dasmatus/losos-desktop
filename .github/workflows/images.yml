@@ -255,7 +255,8 @@ jobs:
         env:
           PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
-          just configure --arch ${{ matrix.arch }} --channel "$CHANNEL" \
+          just configure --mirror http://127.0.0.1:8730 \
+            --arch ${{ matrix.arch }} --channel "$CHANNEL" \
             --version "$LOSOS_VERSION"
           just serve &
           just build losos-90-image
