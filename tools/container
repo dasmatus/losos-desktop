@@ -68,6 +68,7 @@ def build(engine, args):
 
 def run(engine, args):
     pm = pm_root()
+    pm_binary = Path(os.environ.get("PM", pm / "target/release/pm")).resolve()
     if not pm.is_dir():
         sys.exit(
             f"container: no pm checkout at {pm}.\n"
@@ -93,8 +94,14 @@ def run(engine, args):
         "-w", str(REPO),
         # The gates read pm's source from here, and ./do runs the binary.
         "-e", f"PM_ROOT={pm}",
-        "-e", f"PM={pm}/target/release/pm",
+        "-e", f"PM={pm_binary}",
     ]
+    if not pm_binary.is_relative_to(pm):
+        command += ["-v", f"{pm_binary.parent}:{pm_binary.parent}"]
+    # The image-build fallback serves mirrored sources on the host loopback, so
+    # that path can opt into host networking without changing the default runner.
+    if os.environ.get("LOSOS_CONTAINER_HOST_NETWORK") == "1":
+        command += ["--network", "host"]
     if sys.stdin.isatty() and sys.stdout.isatty():
         command.append("-t")
         command.append("-i")

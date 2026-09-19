@@ -157,7 +157,7 @@ in that form, so the string this repo hashes is provably the string pm hashes.
 `pm build` and `pm explain` verify a detached `<FILE>.sig` against
 `$XDG_CONFIG_HOME/pm/trusted/` *before* reading the file, and hold every
 dependency to the same standard all the way down. **Any edit invalidates it,
-including a comment.** `./do check` re-signs the whole generated tree every run
+including a comment.** `just check` re-signs the whole generated tree every run
 for that reason.
 
 ## C11 — Small sharp edges

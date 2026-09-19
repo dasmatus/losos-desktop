@@ -148,11 +148,11 @@ never a path.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-./do plugins                     # all three, into dist/
-./do plugins losos-mkosi         # one
+just plugins                     # all three, into dist/
+just plugins losos-mkosi         # one
 ```
 
-`tools/sign-all` — and therefore `./do check` and `./do build` — installs
+`tools/sign-all` — and therefore `just check` and `just build` — installs
 whatever is in `dist/` into the repo-local trust store and signs it there.
 Without that pm loads no plugins at all, and a recipe calling `mkosi` is
 refused with "no built-in fingerprint matches", which reads as a problem with

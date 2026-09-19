@@ -32,7 +32,7 @@ FROM debian:trixie-slim
 
 # Moving this moves every package version in the image, and nothing else does.
 # To take a newer archive: pick a timestamp from https://snapshot.debian.org/,
-# change it here, rebuild, and run ./do check.
+# change it here, rebuild, and run just check.
 #
 # It has to be at or after the day the base image above was built, which is
 # the one ordering constraint in this file. `debian:trixie-slim` is a tag and
@@ -122,7 +122,9 @@ RUN apt-get update --error-on=any \
       `# cannot tell whether CFI works from a flag that never compiled.` \
       clang lld llvm libclang-rt-${LLVM_VERSION}-dev \
       \
-      `# Named directly by recipes and all in pm's fingerprint table.` \
+      `# The Justfile is the repository entrypoint, and the rest below are` \
+      `# named directly by recipes and all in pm's fingerprint table.` \
+      just \
       make pkgconf tar xz-utils zstd cpio patch \
       \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
@@ -217,7 +219,7 @@ RUN git clone --filter=blob:none --quiet https://github.com/systemd/mkosi /usr/l
 # pm's every workspace lives under TMPDIR and a real build needs several GB of
 # it. The container's /tmp is a tmpfs by default on most runtimes, where a large
 # package dies partway through with "Disk quota exceeded" -- which reads as a
-# bug in the recipe and is not (C11). ./do already redirects TMPDIR into the
+# bug in the recipe and is not (C11). just already redirects TMPDIR into the
 # repository; this is the default for anything that does not.
 ENV TMPDIR=/var/tmp
 
