@@ -136,7 +136,11 @@ RUN apt-get update --error-on=any \
       python3 python3-yaml python3-jinja2 \
       \
       `# Build systems reach for these for themselves during configure.` \
-      bison flex bc gperf gettext \
+      `# rsync is the odd one: no recipe names it, but the kernel's` \
+      `# headers_install copies the sanitised headers with it, so without it` \
+      `# the very first step of the very first layer stops with` \
+      `# "rsync: not found" and an exit 127 that reads as a broken recipe.` \
+      bison flex bc gperf gettext rsync \
       \
       `# The image tooling. Before this image these were the reason the tree` \
       `# carried hand-written ext4, FAT, GPT, ISO and qcow2 writers: not that` \

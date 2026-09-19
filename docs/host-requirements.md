@@ -29,6 +29,7 @@ variable, or an absolute path.
 | **ninja** | Every meson build. | `just check` |
 | **cargo**, plus `rustup target add <arch>-unknown-linux-musl` | `losos-security` is a cargo build and everything above the toolchain layer is musl; without the target's std, `--target` fails. | fails at `losos-05-core` |
 | **pkgconf** or pkg-config, **make**, **tar**, **xz**, **zstd**, **cpio**, **patch** | Named directly by recipes; all are in pm's fingerprint table. | `tools/gates/fingerprint-lint.py` |
+| **rsync** | No recipe names it. The kernel's `headers_install` copies the sanitised headers with it, so the first step of the toolchain layer exits 127 without it. Nothing in `just check` can see this, because the gates never run a build. | fails at `losos-00-toolchain` |
 
 ## Not required
 
