@@ -279,47 +279,104 @@ exceptions:
       inside the thing being reported on, and a CFI failure on the unwind path
       recurses instead of printing. It is the same argument that keeps musl
       out, one layer up.
-  - package: libqrencode
-    drops: [cfi]
+  - package: libcap
+    drops: [visibility]
     why: >
-      A visibility exception, not a CFI one, and the flag comes off with CFI
-      because CFI is the only reason -fvisibility=hidden is on. libqrencode
-      annotates no export anywhere -- the only `visibility` in its tarball is
-      libtool's own autoconf boilerplate in configure and aclocal.m4, not its
-      sources -- and it ships no linker version script. It has relied on
+      libcap annotates no export at all -- the single visibility attribute in
+      its sources marks something *hidden*, in execable.h -- so it relies on
+      default visibility the way it has since before the attribute existed,
+      and it ships no linker version script to make up for it. Compiled with
+      -fvisibility=hidden its .so comes out with an empty dynamic symbol
+      table, and the first thing to link against it is libcap's own getcap:
+      `undefined reference to cap_get_file`, `cap_to_text`, `cap_free`.
+      Measured both ways on 2.73, the release just above the pin: with the
+      flag, zero dynamic symbols defined and progs/ fails to link; without
+      it, 68 exported and the programs link. It is the same shape as zstd's
+      CLI, which docs/limits.md records, except that here the symbols are the
+      whole point of the package rather than an extra.
+
+      `visibility` and not `cfi`, which is what this entry said for one
+      commit. Both get the symbols back, because -fvisibility= is only on the
+      line as CFI's precondition and falls off with it -- but `cfi` also
+      takes the checks away from a library every unit in the system feeds
+      capability text to, and it does not have to. clang 18.1.3 accepts this
+      tree's whole scheme set with -fsanitize-cfi-cross-dso at
+      -fvisibility=default; what it refuses is -fvisibility= missing
+      altogether. So libcap keeps indirect-call checking and loses only the
+      guarantee that nothing interposes its exports at load time, which for a
+      library that has been default-visible since 1999 is the status quo
+      everywhere else rather than a new hole.
+
+      It keeps LTO, hardening and the target flags too.
+
+      Do not reach for the per-scheme spelling gjs uses. Naming every scheme
+      empties `kept` and drops -fvisibility= entirely, which is a third
+      behaviour again, four times as long to write.
+  - package: libxcrypt
+    drops: [cfi, lto]
+    why: >
+      Two failures stacked, and only one of them is loud. The loud one is LTO
+      against symbol versioning: libxcrypt places its versioned aliases with
+      `.symver` directives in inline asm, and ThinLTO does not keep the local
+      definitions those name, so the link dies with `mold: fatal: LLVM gold
+      plugin: <inline asm>: default version symbol crypt_r@@XCRYPT_2.0 must be
+      defined`. The quiet one is the same visibility problem libcap has: a
+      version script cannot export a symbol the compiler already made hidden,
+      so the library links and ships with nothing in its dynamic table.
+
+      Measured as a matrix on 4.4.36, the pinned release, with the layer's
+      other flags: hidden+LTO and default+LTO both die on the .symver; hidden
+      without LTO builds and exports 0 symbols; default without LTO builds and
+      exports 9, `crypt@@XCRYPT_2.0` among them. So both have to go, and CFI
+      goes with LTO because it cannot be had without it.
+
+      The narrow `visibility` drop libcap uses is therefore not available
+      here: it keeps the schemes, and the schemes need the LTO this package
+      cannot have.
+  - package: libqrencode
+    drops: [visibility]
+    why: >
+      libqrencode annotates no export and ships no version script -- the only
+      `visibility` anywhere in its tarball is libtool's own probe in configure
+      and aclocal.m4, which defines nothing for the package. It has relied on
       default visibility since before the attribute existed.
 
-      Measured on 4.1.1, the pinned release, built both ways: without the flag
-      libqrencode.so defines 75 dynamic functions and exports
+      Measured on 4.1.1, the pinned release, built both ways: without hidden
+      visibility libqrencode.so defines 75 dynamic functions and exports
       QRcode_encodeString; with it, zero and none. systemd is the consumer
       (-Dqrencode=enabled, for the recovery-key QR that systemd-cryptenroll
-      prints), and it would fail to find a single symbol.
+      prints) and would find nothing to link against.
 
-      It keeps LTO, hardening and the target flags. This is the same shape as
-      libcap's entry and libfido2's below.
+      The narrow drop rather than `cfi`, so the schemes stay.
   - package: libfido2
-    drops: [cfi]
+    drops: [visibility]
     why: >
-      The same visibility exception, and worth spelling out separately because
-      libfido2 looks like it should be safe and is not. It *does* ship a linker
-      version script, src/export.gnu, naming 267 symbols -- and a version
-      script cannot re-export a symbol the compiler already marked hidden.
-      -fvisibility=hidden sets STV_HIDDEN in the object; `global:` in the
-      script has nothing left to promote. There are no visibility attributes
-      anywhere in its sources to make up for it: zero, checked against the
-      pinned tarball rather than the header alone.
+      The same exemption, and worth its own entry because libfido2 looks like
+      it should not need one. It *does* ship a linker version script,
+      src/export.gnu, naming 267 symbols -- and that is exactly the trap: a
+      version script cannot re-export a symbol the compiler already marked
+      hidden. -fvisibility=hidden writes STV_HIDDEN into the object and
+      `global:` has nothing left to promote. There is not one visibility
+      attribute anywhere in its sources to make up for it, checked against the
+      pinned tarball rather than the public header alone.
 
-      Measured on 1.15.0, from bytes whose SHA-256 matches sources.lock,
-      built both ways: 267 dynamic functions defined without the flag,
-      0 with it, and fido_dev_open present in the first and absent in the
-      second. A libfido2.so that exports nothing is the whole feature gone --
-      systemd is built -Dlibfido2=enabled for systemd-cryptenroll and homed,
-      and would link against an empty dynamic table.
+      Measured on 1.15.0, from bytes whose SHA-256 matches sources.lock:
+      267 dynamic functions defined at default visibility, 0 at hidden, with
+      fido_dev_open present in the first and absent in the second. A
+      libfido2.so that exports nothing is the feature gone -- systemd is built
+      -Dlibfido2=enabled for systemd-cryptenroll and homed.
 
-      It keeps LTO, hardening and the target flags. Only CFI is lost, on a
-      library that parses CBOR from a USB device; docs/yubikey.md records the
-      trade and why the alternative -- carrying a patch that annotates 267
-      symbols upstream does not annotate -- is worse.
+      `visibility` and not `cfi`, deliberately and with feeling: of everything
+      in this tree libfido2 is the last library to unharden, because its input
+      is CBOR arriving from a device the user just plugged in. What is given
+      up here is only the guarantee that no exported symbol is interposed at
+      load time; every scheme still checks. docs/yubikey.md carries the
+      reasoning and the measurement.
+
+      Not measured: this package under CFI and ThinLTO together, which no
+      build has reached yet. Its version script is a linker script rather than
+      libxcrypt's inline-asm .symver directives, so it has no reason to fail
+      the way that one does -- but that is an argument, not a result.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.

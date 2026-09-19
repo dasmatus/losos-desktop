@@ -142,12 +142,12 @@ it.
 into the image; nothing here ships one. A key is configurable from any other
 machine, which is the reason not to.
 
-## libfido2 gives up CFI, and why that is the cheaper side
+## libfido2 exports nothing under hidden visibility
 
-`manifest/toolchain.yaml` carries a `drops: [cfi]` exception for libfido2 and
-for libqrencode. It is really a visibility exception: `-fvisibility=hidden` is
-in the shared flags only because cross-DSO CFI needs it, so taking CFI off is
-how the flag comes off.
+`manifest/toolchain.yaml` carries a `drops: [visibility]` exception for
+libfido2 and for libqrencode. Without it neither library exports a single
+symbol, and this page is undone: systemd is built `-Dlibfido2=enabled`, and it
+would link against an empty dynamic table.
 
 libfido2 looks like it should not need this, which is the interesting part. It
 ships a linker version script, `src/export.gnu`, naming 267 symbols -- exactly
@@ -156,27 +156,32 @@ script cannot re-export a symbol the compiler has already marked hidden:
 `-fvisibility=hidden` writes `STV_HIDDEN` into the object, and `global:` has
 nothing left to promote. libfido2 annotates no export anywhere in its sources
 to make up for it -- zero `visibility` attributes in the pinned tarball, not
-one.
+one. **So "ships a version script" does not clear a package on this axis. Only
+annotations do.**
 
 Measured rather than argued, on bytes whose SHA-256 matches `sources.lock`:
 
 | build | dynamic functions defined | `fido_dev_open` |
 |---|---|---|
-| without `-fvisibility=hidden` | 267 | present |
-| with it | 0 | absent |
+| `-fvisibility=default` | 267 | present |
+| `-fvisibility=hidden` | 0 | absent |
 
-A `libfido2.so` that exports nothing is this whole page undone: systemd is
-built `-Dlibfido2=enabled`, and it would link against an empty dynamic table.
-libqrencode is the same story without the version script -- 75 symbols against
-0 -- and systemd wants it for the recovery-key QR that `systemd-cryptenroll`
+libqrencode is the same story without the version script -- 75 against 0 --
+and systemd wants it for the recovery-key QR that `systemd-cryptenroll`
 prints.
 
-The alternative is carrying a patch that annotates 267 symbols upstream does
-not annotate, and re-deriving it at every version bump. The trade taken here
-is CFI on one library that parses CBOR from a USB device. It keeps LTO, the
-hardening flags and the target flags; only the CFI set goes. libcap has the
-same exception for the same reason, which is what makes this a class rather
-than a special case.
+The exception is the narrow one on purpose. `drops: [cfi]` would also fix the
+symbols, and it is the wrong trade here: of every library in this tree
+libfido2 is the last one to unharden, because its input is CBOR arriving from
+a device the user just plugged in. clang accepts the whole CFI scheme set,
+cross-DSO included, at `-fvisibility=default`; it objects only to the flag
+being absent altogether. So every check stays on. What is given up is the
+narrower guarantee that no exported symbol is interposed at load time.
+
+The alternative -- patching libfido2 to annotate 267 symbols upstream does not
+annotate, and re-deriving that patch at every version bump -- is what this
+avoids. Where upstream has an export macro already, patching it is the better
+answer and the tree does exactly that for zlib.
 
 ## Summary
 
