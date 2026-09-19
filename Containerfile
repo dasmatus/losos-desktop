@@ -12,40 +12,56 @@
 # developer's machine. `docs/container.md` is the reasoning; what follows is
 # only the pins and the reasons a particular package is here.
 #
-# Two inputs decide what lands in the image, and both are pinned:
+# Three inputs decide what lands in the image, and two of them are pinned:
 #
-#   * the base image, by digest, below;
-#   * the Debian archive, by a snapshot.debian.org timestamp, so `apt-get
-#     install` resolves against an archive that cannot move under us. This is
-#     the whole reason the base is Debian: nothing else has a public,
-#     timestamped archive, and without one a Containerfile pins the *names* of
-#     its dependencies and not their contents.
+#   * mkosi, by commit, below -- because its configuration surface is part of
+#     this repository's source;
+#   * the Rust toolchain, by version, because it does not come from the
+#     distribution at all.
 #
-# Everything outside those two is fetched by digest or checksum or is not
-# fetched at all.
+# The third -- the distribution's own packages -- is NOT pinned, and that is a
+# deliberate call rather than an omission. See the tombstone below.
 
-# Debian 13 (trixie). Chosen for snapshot.debian.org, and it carries systemd
-# 257, which is comfortably past the 254 that systemd-repart's offline mode
-# needs -- the mode that lets an image be built without a loop device and
-# therefore inside a user namespace at all.
-FROM debian:trixie-slim
-
-# Moving this moves every package version in the image, and nothing else does.
-# To take a newer archive: pick a timestamp from https://snapshot.debian.org/,
-# change it here, rebuild, and run just check.
+# Arch Linux. Rolling, and current with upstream in a way that matters here:
+# this tree is clang-only by design (no gcc, no binutils, no ld.bfd; see
+# docs/host-requirements.md) and Arch ships clang, lld, mold and LLVM as one
+# unversioned set, kept in step with each other, rather than as a versioned
+# package family a distribution froze at some point in its cycle.
 #
-# It has to be at or after the day the base image above was built, which is
-# the one ordering constraint in this file. `debian:trixie-slim` is a tag and
-# tags move: the one pulled today already carries libc6 and perl-base from a
-# point release later than 2026-09-01, and a package from the snapshot that
-# depends on an exact earlier version of one of them then cannot be installed
-# at all. See `--allow-downgrades` below for what makes that survivable rather
-# than fatal.
-ARG DEBIAN_SNAPSHOT=20260918T000000Z
+# `base` rather than `base-devel`: base-devel pulls in gcc and binutils, which
+# is exactly the GNU toolchain docs/host-requirements.md says is not required
+# and which this image has no use for. A compiler nothing invokes is still a
+# compiler a build system can autodetect and reach for.
+FROM archlinux:base
 
-# The Rust toolchain is pinned separately because it does not come from Debian:
+# Tombstone: this file used to be `FROM debian:trixie-slim` with a
+# `DEBIAN_SNAPSHOT=<timestamp>` argument pointing apt at snapshot.debian.org,
+# and that snapshot was the only reason the base was Debian -- it is the one
+# public, timestamped archive, so `apt-get install` resolved against contents
+# that could not move under us. Arch has no equivalent, and this image is
+# therefore **no longer reproducible across rebuilds**: two builds of this file
+# a week apart install different package versions.
+#
+# That is not an oversight and it is not coming back by accident. It was asked
+# and answered: reproducibility of the build *host* was traded for currency of
+# the toolchain, knowingly. What it costs is bounded by what this image is --
+# see "What it is not" in docs/container.md: nothing from this image ends up in
+# losos.qcow2. The distribution is compiled from `manifest/sources.lock`, which
+# is pinned by SHA-256 and unaffected; what floats is the set of host programs
+# that did the compiling. Anyone re-pinning this should re-pin it on purpose
+# and say so, not restore a snapshot URL because this comment looks like a gap.
+#
+# The one thing that floats and is worth watching: `recipes/00-toolchain/
+# compiler-rt` is version-locked to the host clang by intent, and its pin in
+# manifest/sources.lock does not move when Arch's clang does. That lock was
+# already loose on Debian trixie (clang 19 against compiler-rt 18.1.8); it is
+# now loose by however far Arch has run ahead. A mismatch surfaces at the first
+# CFI link in `losos-00-toolchain`, which is early and loud, rather than
+# silently.
+
+# The Rust toolchain is pinned because it does not come from the distribution:
 # `rustup target add <arch>-unknown-linux-musl` is a host requirement (see
-# docs/host-requirements.md) and Debian's rustc cannot satisfy it.
+# docs/host-requirements.md) and a distribution rustc cannot satisfy it.
 #
 # It also has to be new enough to build pm, which is a constraint from another
 # repository: pm depends on wasmtime for the plugin sandbox, and wasmtime 47
@@ -55,103 +71,75 @@ ARG DEBIAN_SNAPSHOT=20260918T000000Z
 # raises its floor; there is nothing here that can detect it.
 ARG RUST_VERSION=1.94.0
 
-# Which LLVM the toolchain is. Named in two places below -- the compiler runtime
-# package and the unversioned symlinks -- and they have to agree, so it is one
-# argument rather than two literals that can drift apart.
-ARG LLVM_VERSION=19
+# Tombstone: an `LLVM_VERSION` argument used to be here, naming the LLVM the
+# image installs. It existed only because Debian versions its LLVM package
+# names and its install prefix -- `llvm-19-dev`, `/usr/lib/llvm-19/bin` -- and
+# the file had to spell the same number in the package list and again in a loop
+# that made the unversioned `llvm-ar`, `llvm-nm` and friends Debian does not
+# guarantee. Arch installs one LLVM, unversioned, with its tools already on
+# /usr/bin, so both the argument and that loop have nothing left to do.
 
 # No SHELL directive: podman builds OCI images by default and ignores one with
 # a warning, so anything relying on `sh -eux` would be relying on a line that
 # did nothing. Every RUN below chains with `&&` instead, which fails on the
 # first error under any shell.
-ENV DEBIAN_FRONTEND=noninteractive
 
-# Point apt at the snapshot, over HTTP rather than HTTPS, which is not a
-# shortcut: `debian:trixie-slim` ships no ca-certificates, so apt cannot verify
-# a TLS certificate, and ca-certificates itself can only be installed from the
-# archive it cannot reach. Fetching it over HTTPS first is the same problem one
-# step further in.
+# `-Syu` rather than `-S`, and that is not thoroughness. Arch does not support
+# a partial upgrade: installing a package against an index newer than the
+# installed base links it against library versions the base image does not
+# carry, and the failure is a binary dying on a missing `.so` at the moment it
+# is first run -- several layers into a build, wearing the name of whatever
+# recipe reached for it. Upgrading and installing in one transaction is the
+# only supported order.
 #
-# Nothing is lost by it. `Signed-By:` below points apt at the Debian archive
-# keyring the base image does carry, and apt refuses any index whose OpenPGP
-# signature does not verify against it. Authenticity and integrity come from
-# that signature; TLS would only have hidden which files were being fetched.
+# `--needed` so a package the base already carries is left alone rather than
+# reinstalled, and the cache is dropped afterwards because nothing below reads
+# it and it is a third of the image.
 #
-# `Check-Valid-Until: no` is required rather than lax: a snapshot's Release
-# file is stamped at the moment the snapshot was taken, so an archive more than
-# a week old is "expired" by apt's clock and every build of an older snapshot
-# would fail with a date error rather than a missing package.
-RUN printf '%s\n' \
-      'Types: deb' \
-      "URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
-      'Suites: trixie trixie-updates' \
-      'Components: main' \
-      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
-      'Check-Valid-Until: no' \
-      > /etc/apt/sources.list.d/debian.sources \
- && printf '%s\n' \
-      'Types: deb' \
-      "URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
-      'Suites: trixie-security' \
-      'Components: main' \
-      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
-      'Check-Valid-Until: no' \
-      > /etc/apt/sources.list.d/debian-security.sources \
- && rm -f /etc/apt/sources.list
-
-# `--error-on=any` is the difference between one clear line and thirty
-# misleading ones. Plain `apt-get update` exits 0 when an index fails to
-# download -- it only warns -- so the build carried on with an empty package
-# list and failed in `install` with "Unable to locate package" for every
-# package at once, which reads as thirty missing packages rather than as one
-# archive that was never reachable.
-#
-# `--allow-downgrades` is what reconciles the base image with the snapshot. The
-# base is a tag, so its contents float; the snapshot does not. Where they
-# disagree apt is permitted to move a package to the snapshot's version even
-# when that is backwards -- which is the direction this file wants, since the
-# snapshot is the thing that was pinned and the tag is the thing that drifted.
-# Without it the failure is apt's solver printing two conflicting decisions
-# about perl-base, which says nothing about a base image at all.
-RUN apt-get update --error-on=any \
- && apt-get install -y --no-install-recommends --allow-downgrades \
+# The keyring needs no `pacman-key --init` here: the official archlinux image
+# ships one already populated, and every package pacman installs is verified
+# against it. That is where authenticity comes from, the same way the Debian
+# archive keyring provided it before.
+RUN pacman -Syu --noconfirm --needed \
       \
-      `# The toolchain manifest/toolchain.yaml names by unversioned name.` \
-      `# libclang-rt-*-dev is not optional: without it clang errors out on` \
-      `# -fsanitize=cfi with a missing ignorelist, and the toolchain report` \
-      `# cannot tell whether CFI works from a flag that never compiled.` \
-      clang lld llvm libclang-rt-${LLVM_VERSION}-dev \
+      `# The toolchain manifest/toolchain.yaml names by unversioned name --` \
+      `# which is what Arch installs, so nothing here has to be relinked or` \
+      `# renamed afterwards. compiler-rt is not optional: without it clang` \
+      `# errors out on -fsanitize=cfi with a missing ignorelist, and the` \
+      `# toolchain report cannot tell whether CFI works from a flag that` \
+      `# never compiled.` \
+      `#` \
+      `# llvm is here for its cmake package as much as for its tools. Debian` \
+      `# split that into llvm-N-dev; Arch does not split it at all.` \
+      `# compiler-rt's own recipe configures standalone and calls` \
+      `# find_package(LLVM); when that finds nothing it falls back to` \
+      `# CompilerRTMockLLVMCMakeConfig, which includes AddLLVM.cmake from the` \
+      `# LLVM *source* tree and hard-errors that LLVM_CMAKE_DIR does not` \
+      `# exist. Nothing in the gates can see this: they never run a build.` \
+      clang lld llvm compiler-rt \
       \
       `# mold is the linker manifest/toolchain.yaml names; lld is still above` \
       `# it because the kernel takes ld.lld from LLVM=1 and does not support` \
-      `# mold. llvm-*-linker-tools is the one that is easy to lose: it is the` \
-      `# only package carrying LLVMgold.so, llvm-*-dev does not depend on it,` \
-      `# and mold does LTO through that plugin where lld has LTO built in. So` \
-      `# dropping it turns every link in the tree into` \
-      `# "mold: fatal: could not open plugin file", which names clang's` \
-      `# directory and reads as a broken compiler.` \
-      mold llvm-${LLVM_VERSION}-linker-tools \
-      \
-      `# llvm-*-dev is here for its cmake package, not its headers.` \
-      `# compiler-rt configures standalone and calls find_package(LLVM);` \
-      `# when that fails it falls back to CompilerRTMockLLVMCMakeConfig,` \
-      `# which includes AddLLVM.cmake from the LLVM *source* tree and` \
-      `# hard-errors that LLVM_CMAKE_DIR does not exist. Nothing in the` \
-      `# gates can see this: they never run a build.` \
-      llvm-${LLVM_VERSION}-dev \
+      `# mold. mold does LTO through the GNU linker-plugin interface, so it` \
+      `# needs LLVMgold.so, which Debian split into a separate` \
+      `# llvm-N-linker-tools package and Arch ships inside llvm itself. The` \
+      `# assertion below is what proves that rather than assuming it.` \
+      mold \
       \
       `# The Justfile is the repository entrypoint, and the rest below are` \
       `# named directly by recipes and all in pm's fingerprint table.` \
       just \
-      make pkgconf tar xz-utils zstd cpio patch \
+      make pkgconf tar xz zstd cpio patch \
       \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
       `# deliberately absent -- but ninja and cmake are invoked as first words.` \
-      ninja-build cmake \
+      ninja cmake \
       \
-      `# python3-jinja2 cannot be vendored: fwupd's meson runs` \
+      `# python-jinja cannot be vendored: fwupd's meson runs` \
       `# python3 -c 'import jinja2' and a pm step can set no PYTHONPATH.` \
-      python3 python3-yaml python3-jinja2 \
+      `# Arch's python provides /usr/bin/python3, which is the name every` \
+      `# recipe and every meson invocation in this tree uses.` \
+      python python-yaml python-jinja \
       \
       `# Build systems reach for these for themselves during configure.` \
       `# rsync is the odd one: no recipe names it, but the kernel's` \
@@ -165,42 +153,59 @@ RUN apt-get update --error-on=any \
       `# pm refuses them -- the losos-image plugin classifies them -- but that` \
       `# nothing guaranteed they were installed on whatever host ran the build.` \
       `# mkosi is deliberately not in this list; see the pin below.` \
-      systemd systemd-boot-efi systemd-ukify \
+      `#` \
+      `# systemd is in the base already; naming it keeps the requirement` \
+      `# written down rather than inherited. Arch carries systemd-boot's EFI` \
+      `# stubs inside that package rather than splitting them out the way` \
+      `# Debian's systemd-boot-efi did, so there is nothing to add for them;` \
+      `# ukify is its own package here and is named. xorriso comes from` \
+      `# libisoburn and qemu-img is a package of its own rather than part of` \
+      `# a qemu-utils bundle -- both are the same program under a different` \
+      `# package name, which is the only kind of difference in this list.` \
+      systemd systemd-ukify \
       e2fsprogs dosfstools mtools erofs-utils squashfs-tools \
-      xorriso qemu-utils \
-      cryptsetup-bin sbsigntool \
+      libisoburn qemu-img \
+      cryptsetup sbsigntools \
       \
       `# mkosi imports pefile for the code paths that read a UKI back. This` \
       `# build sets Bootable=no and builds its UKIs with files/mkuki.py, so` \
       `# nothing here should reach those paths -- but an ImportError inside a` \
       `# tool that has already started partitioning is a worse way to find out` \
       `# than an extra package.` \
-      python3-pefile \
+      python-pefile \
       \
       `# rustup's installer and tools/fetch-sources both need to fetch, and` \
       `# fetch-sources exists precisely because it can be told about a CA that` \
       `# pm's own downloader cannot.` \
       ca-certificates curl git \
- && rm -rf /var/lib/apt/lists/*
+ && pacman -Scc --noconfirm
 
-# Debian installs the LLVM tools under versioned names and the unversioned
-# symlinks are not guaranteed by the metapackages. manifest/toolchain.yaml names
-# them unversioned (`ar: llvm-ar`), and a missing one surfaces as an LTO link
-# full of undefined symbols rather than as a missing program, so they are made
-# here rather than hoped for.
-RUN for tool in ar nm ranlib strip objcopy objdump readelf; do \
-      [ -e "/usr/bin/llvm-$tool" ] && continue; \
-      ln -s "../lib/llvm-${LLVM_VERSION}/bin/llvm-$tool" "/usr/bin/llvm-$tool"; \
-    done \
- && clang --version && llvm-ar --version >/dev/null && ld.lld --version \
+# What the package list above cannot state, asserted here, because each of
+# these fails late and in someone else's name if it is missing.
+#
+# LLVMgold.so is asked for through the driver rather than spelled as a path.
+# `clang -print-file-name=X` searches the compiler's own library directories
+# and prints X back unchanged when it finds nothing, which is exactly the
+# lookup clang performs when it hands mold `-plugin <path>` -- so this is the
+# real question, not an approximation of it, and it stays right if Arch ever
+# moves the file. Every link in this tree is an LTO link, so a missing plugin
+# turns the first of them into "mold: fatal: could not open plugin file",
+# naming a path inside clang's own directory and reading as a broken compiler.
+RUN clang --version && llvm-ar --version >/dev/null && ld.lld --version \
  && ld.mold --version \
- `# The plugin is a file nothing execs, so nothing above would have missed it.` \
- && test -e "/usr/lib/llvm-${LLVM_VERSION}/lib/LLVMgold.so"
+ && gold="$(clang -print-file-name=LLVMgold.so)" \
+ && test -e "$gold" \
+ `# The cmake package compiler-rt's standalone configure discovers, asked for` \
+ `# the same way: llvm-config reports the directory find_package(LLVM) will` \
+ `# resolve to, so this checks what the recipe actually needs rather than a` \
+ `# path this distribution happens to use today. recipes/00-toolchain/` \
+ `# compiler-rt gives the argument for discovery over literals at length.` \
+ && test -d "$(llvm-config --cmakedir)"
 
-# Rust from rustup rather than Debian, for the musl targets. Both architectures
-# are installed in one image so the same image builds the x86_64 and the aarch64
-# matrix leg; wasm32 is here for plugins/build.sh, which compiles this
-# distribution's pm plugins to components.
+# Rust from rustup rather than the distribution, for the musl targets. Both
+# architectures are installed in one image so the same image builds the x86_64
+# and the aarch64 matrix leg; wasm32 is here for plugins/build.sh, which
+# compiles this distribution's pm plugins to components.
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
     PATH=$PATH:/usr/local/cargo/bin
@@ -271,11 +276,13 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 # where it became "an ESP, and a UKI only if one is asked for". The installer
 # medium wants the second meaning -- it stages a UKI this tree already built --
 # so on an older mkosi the installer step does not fail, it produces a
-# different image. Debian trixie froze before v26.
+# different image.
 #
-# Everything else in this image is pinned by the snapshot, and this is pinned
-# the same way: by content. A tag can be moved; the commit it points at today
-# cannot, so the tag is resolved here and the result asserted.
+# Pinning it by commit rather than by tag is the argument this file makes
+# everywhere else about content over names: a tag can be moved; the commit it
+# points at today cannot, so the tag is resolved here and the result asserted.
+# It matters more now than it did, because it is the only thing in this image
+# still pinned to a version of anything.
 #
 # It lives under /usr because pm mirrors exactly `/bin /etc /lib /lib32 /lib64
 # /sbin /usr` from the host into the build jail read-only (C7). A tool in /opt
@@ -299,9 +306,9 @@ ENV TMPDIR=/var/tmp
 
 # mkosi's sandbox binds /home unconditionally -- `--ro-bind /home /home`, not
 # `--ro-bind-try` -- so an image without that directory cannot run mkosi at all,
-# and the failure is a mount error naming a path nobody asked for. The Debian
-# base has one; this asserts it rather than assuming it, because a future
-# --no-install-recommends or a slimmer base could quietly remove it.
+# and the failure is a mount error naming a path nobody asked for. Arch's
+# filesystem package creates one; this asserts it rather than assuming it,
+# because a future slimmer base could quietly stop doing so.
 RUN test -d /home
 
 WORKDIR /src

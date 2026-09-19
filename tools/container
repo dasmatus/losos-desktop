@@ -181,7 +181,7 @@ def main():
         action="append",
         default=[],
         metavar="NAME=VALUE",
-        help="override a pin, e.g. DEBIAN_SNAPSHOT=20260901T000000Z",
+        help="override a pin, e.g. MKOSI_COMMIT=<sha> or RUST_VERSION=1.94.0",
     )
     builder.set_defaults(handler=build)
 
