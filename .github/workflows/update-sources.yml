@@ -100,7 +100,7 @@ jobs:
           set -- --refresh --json survey.json
           [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
           [ "$INCLUDE_HELD" = true ] && set -- "$@" --include-held
-          just check-latest "$@"
+          just check-latest -- "$@"
           # The matrix is capped. A sweep after a quiet month can turn up
           # thirty outdated sources, and thirty legs each downloading a
           # tarball and running the full gate is a lot of runner time to spend
@@ -201,7 +201,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           KEY: ${{ matrix.key }}
         run: |
-          just check-latest --only "$KEY" --include-held --apply \
+          just check-latest -- --only "$KEY" --include-held --apply \
             --json "$GITHUB_WORKSPACE/moved.json"
 
       # The first real test: the URL upstream advertised has to exist and
@@ -215,7 +215,7 @@ jobs:
         working-directory: losos-desktop
         env:
           KEY: ${{ matrix.key }}
-        run: just fetch --update --only "$KEY"
+        run: just fetch -- --update --only "$KEY"
 
       # The second: the whole tree still configures, signs, proves its
       # download-path digest against pm, and passes every lint.

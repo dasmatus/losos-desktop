@@ -47,7 +47,7 @@ cd ../pm && cargo build --release   # the pm binary this repo drives
 cd ../losos-desktop
 
 just check              # the gate: generate, sign, prove the digest, lint
-just fetch --update     # mirror the upstream sources, pinning any TODO hash
+just fetch -- --update  # mirror the upstream sources, pinning any TODO hash
 just build              # the real build
 ```
 

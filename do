@@ -9,4 +9,27 @@ if ! command -v just >/dev/null 2>&1; then
   exit 1
 fi
 
-exec just --justfile "$repo/Justfile" --working-directory "$repo" "$@"
+if [ $# -eq 0 ]; then
+  exec just --justfile "$repo/Justfile" --working-directory "$repo"
+fi
+
+case "$1" in
+  -*)
+    exec just --justfile "$repo/Justfile" --working-directory "$repo" "$@"
+    ;;
+esac
+
+recipe=$1
+shift
+if [ $# -eq 0 ]; then
+  exec just --justfile "$repo/Justfile" --working-directory "$repo" "$recipe"
+fi
+
+case "$1" in
+  -*)
+    exec just --justfile "$repo/Justfile" --working-directory "$repo" "$recipe" -- "$@"
+    ;;
+  *)
+    exec just --justfile "$repo/Justfile" --working-directory "$repo" "$recipe" "$@"
+    ;;
+esac

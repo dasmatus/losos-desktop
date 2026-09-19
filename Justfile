@@ -213,7 +213,7 @@ build target="":
   if [ "$target" != "$top_target" ] && [ "$have_allow_unresolved" -eq 0 ]; then
     configure_args=(--allow-unresolved "${configure_args[@]}")
   fi
-  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure "${configure_args[@]+"${configure_args[@]}"}"
+  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure -- "${configure_args[@]+"${configure_args[@]}"}"
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
 
   if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
@@ -280,6 +280,12 @@ container *args:
   elif [ "$1" = build ]; then
     shift
     python3 "{{repo}}/tools/container" build "$@"
+  elif [ "$1" = check ]; then
+    shift
+    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" container-check "$@"
+  elif [ "$1" = plugins ]; then
+    shift
+    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" container-plugins "$@"
   else
     python3 "{{repo}}/tools/container" run "$@"
   fi

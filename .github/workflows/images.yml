@@ -98,7 +98,7 @@ jobs:
       # call is actually caught -- not that a YAML file says CFI is on.
       - name: Toolchain report
         working-directory: losos-desktop
-        run: just toolchain-report --verify-cfi
+        run: just toolchain-report -- --verify-cfi
 
   # The same gate, in the build host this repository describes rather than in
   # whatever the runner image happens to have installed. It is slower -- the
@@ -139,7 +139,7 @@ jobs:
       - name: Run the gate inside it
         working-directory: losos-desktop
         run: |
-          just container-run cargo build --release \
+          just container-run -- cargo build --release \
             --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
           just container-plugins
           just container-check
