@@ -102,6 +102,15 @@ class Toolchain:
         zero. No sysroot here has libgcc_s, so the omitted form got
         `ld.lld: error: unable to find library -lgcc_s` out of cmake's own
         compiler test, before libunwind compiled a single file.
+
+        Which makes the `none` branch a restoration rather than an addition,
+        and that is the part worth remembering. Before there was an unwinder
+        to name, `target.unwindlib` was `none` and this method appended it
+        unconditionally, so every link in the tree carried --unwindlib=none
+        and the default was never reached. Changing the key to `libunwind` and
+        making it droppable kept the flag for everything except the one
+        package built before any unwinder exists -- which is the one package
+        that needed it.
         """
         flags = []
         rtlib = self.target.get("rtlib")
