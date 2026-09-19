@@ -116,7 +116,7 @@ build target="":
     exit 1
   fi
 
-  target="${1:-}"
+  target="{{target}}"
   if [ -z "$target" ]; then
     target=$(python3 -c 'import pathlib, yaml; layers = yaml.safe_load(pathlib.Path("'"{{repo}}"'/manifest/layers.yaml").read_text()) or []; print(layers[-1]["name"] if layers else "")')
   fi
@@ -163,7 +163,7 @@ build target="":
     python3 "{{repo}}/tools/container" build
     # configure rewrites sources to 127.0.0.1:$LOSOS_MIRROR_PORT when the local
     # mirror exists, so the fallback container needs the host network to reach it.
-    PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; PM="$2"; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$3"' _ "{{mirror_port}}" "{{pm}}" "$1"
+    PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; PM="$2"; PM_ROOT="$3"; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$4"' _ "{{mirror_port}}" "{{pm}}" "{{pm_root}}" "$1"
   }
 
   start_mirror || echo "just: no local source mirror; pm will fetch upstream" >&2
@@ -219,6 +219,7 @@ container-run *args:
 
 container *args:
   #!/usr/bin/env bash
+  set -- {{args}}
   if [ $# -eq 0 ]; then
     python3 "{{repo}}/tools/container" run
   elif [ "$1" = build ]; then
