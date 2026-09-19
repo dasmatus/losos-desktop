@@ -46,7 +46,14 @@ ARG DEBIAN_SNAPSHOT=20260918T000000Z
 # The Rust toolchain is pinned separately because it does not come from Debian:
 # `rustup target add <arch>-unknown-linux-musl` is a host requirement (see
 # docs/host-requirements.md) and Debian's rustc cannot satisfy it.
-ARG RUST_VERSION=1.90.0
+#
+# It also has to be new enough to build pm, which is a constraint from another
+# repository: pm depends on wasmtime for the plugin sandbox, and wasmtime 47
+# requires 1.94.0. Too old and the failure is forty lines of
+# "wasmtime-internal-<thing> requires rustc 1.94.0", which names the crate
+# that noticed rather than the pin that is wrong. Raise this when pm's tree
+# raises its floor; there is nothing here that can detect it.
+ARG RUST_VERSION=1.94.1
 
 # Which LLVM the toolchain is. Named in two places below -- the compiler runtime
 # package and the unversioned symlinks -- and they have to agree, so it is one
