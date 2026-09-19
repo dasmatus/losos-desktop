@@ -1,11 +1,11 @@
-# acl 2.3.2
+# acl 2.4.0
 #
 # POSIX ACLs: systemd -Dacl=enabled, used on journal files and /run/user.
 name: acl
 version:
 - '2'
-- '3'
-- '2'
+- '4'
+- '0'
 dependencies: []
 steps:
 

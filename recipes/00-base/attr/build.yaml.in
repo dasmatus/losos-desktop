@@ -1,11 +1,11 @@
-# attr 2.5.2
+# attr 2.6.0
 #
 # Extended attributes, under acl.
 name: attr
 version:
 - '2'
-- '5'
-- '2'
+- '6'
+- '0'
 dependencies: []
 steps:
 
