@@ -79,8 +79,10 @@ runs:
     # the thing exists, decouples the two.
     #
     # The binary, not target/. pm's target directory is over a gigabyte of
-    # intermediates nothing downstream reads, and this repository's 10 GB of
-    # Actions cache is mostly spoken for by the source mirror.
+    # intermediates nothing downstream reads, and the binary is 36 MB -- which
+    # is what makes this worth having twice over, since the whole repository's
+    # Actions cache budget is 10 GB and the source mirror already takes 475 MB
+    # of it.
     #
     # No `restore-keys`, deliberately. A prefix fallback is right for a mirror
     # whose every file is re-verified against a hash before use; it is wrong
