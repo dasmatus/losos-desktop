@@ -279,6 +279,26 @@ exceptions:
       inside the thing being reported on, and a CFI failure on the unwind path
       recurses instead of printing. It is the same argument that keeps musl
       out, one layer up.
+  - package: libcap
+    drops: [cfi]
+    why: >
+      Not a CFI incompatibility but a visibility one, and the flag comes off
+      with CFI because that is the only reason it is on. libcap annotates no
+      export at all -- the single visibility attribute in its sources marks
+      something *hidden*, in execable.h -- so it relies on default visibility
+      the way it has since before the attribute existed, and it ships no
+      linker version script to make up for it. Compiled with
+      -fvisibility=hidden its .so comes out with an empty dynamic symbol
+      table, and the first thing to link against it is libcap's own getcap:
+      `undefined reference to cap_get_file`, `cap_to_text`, `cap_free`.
+      Measured both ways on 2.73, the release just above the pin: with the
+      flag, zero dynamic symbols defined and progs/ fails to link; without
+      it, the library exports its API and the programs link. It is the same
+      shape as zstd's CLI, which docs/limits.md records, except that here the
+      symbols are the whole point of the package rather than an extra.
+
+      It keeps LTO, hardening and the target flags. Only CFI is lost, on a
+      library whose input is capability text from the system's own units.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.

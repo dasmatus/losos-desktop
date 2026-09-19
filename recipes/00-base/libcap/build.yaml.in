@@ -13,41 +13,72 @@ steps:
   dl_urls:
     @URL_LIBCAP@: '@SHA256_LIBCAP@'
   run:
-  - mkdir -p /build/src/libcap /build/b/libcap
+  # No /build/b/libcap: libcap sets topdir to its own working directory and
+  # has no out-of-tree build, so it builds where it is unpacked.
+  - mkdir -p /build/src/libcap
   # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_LIBCAP@ --no-same-owner -C /build/src/libcap --strip-components=1
 
-# ./configure has no -C and there is no `cd` in a build step (C1), so the one
-# permitted wrapper puts it in the build directory. configure takes VAR=value
-# as positional arguments, which is how the toolchain and the sysroot are
-# reached without `env`.
+# libcap ships no configure script -- it never has -- and this recipe used to
+# run one, which is a failure the gates cannot see because they never run a
+# build. The whole build is Make.Rules plus a Makefile per directory, driven
+# by make variables. Every one below is load-bearing:
 #
-# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
-# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
-# separate arguments and configure would reject the first it did not know.
-# The response file is one word, and clang expands it. Its contents come from
-# manifest/toolchain.yaml -- LTO and CFI included.
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libcap /build/src/libcap/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig
-
+# lib=lib. Unset, Make.Rules derives it by running `ldd /usr/bin/ld` on the
+# build host and taking the first path component of the loader it prints.
+# Measured on an x86_64 build host that answer is `lib64`, and the library
+# would install to /usr/lib64 where nothing in this tree looks; the component
+# tracks the host's own loader path, so it is not even the same answer on
+# both architectures, and on a host with no binutils there is no
+# /usr/bin/ld to ask and it comes out empty. The same trap as libbpf's
+# LIBDIR, reached by a different route.
+#
+# COPTS, not CFLAGS. Make.Rules spells `CFLAGS ?= $(COPTS) $(DEBUG)` and then
+# appends to CFLAGS twice more -- the warning set, and libcap/Makefile's own
+# `-fPIC -D_LIBPSX_PTHREAD_LINKAGE`. A CFLAGS given on the command line wins
+# over every later `+=` in the makefile, so passing it there would silently
+# drop that define. COPTS is the hook that leaves the appends intact.
+#
+# BUILD_CFLAGS empty, and this is the one that would have been hard to find.
+# libcap compiles _makenames with BUILD_CC and *runs it* to generate
+# cap_names.h. BUILD_CFLAGS defaults through BUILD_COPTS to COPTS, so without
+# this the helper is compiled for musl against the target sysroot and the jail
+# cannot execute it at all (C7). Empty leaves BUILD_CPPFLAGS, which is where
+# the include paths live, untouched. BUILD_LDFLAGS needs no such treatment:
+# it is defined in Make.Rules and used nowhere.
+#
+# OBJCOPY. libcap.so is linked from cap_magic.o, which needs loader.txt, which
+# is `objcopy --dump-section .interp` of a throwaway binary. Plain `objcopy`
+# is GNU binutils and is not installed on any host this tree targets.
+#
+# GOLANG=no, PAM_CAP=no and USE_GPERF=no are all defaults that libcap probes
+# for at build time -- `go version`, a test for pam_modules.h, `which gperf`.
+# Each would answer differently on a runner and in the Containerfile, so each
+# is pinned. PAM_CAP could not be yes in any case: linux-pam is built by a
+# later member of this same layer.
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - make -C /build/b/libcap -j @JOBS@
+  - make -C /build/src/libcap -j @JOBS@ prefix=/usr lib=lib CC=@CC@ AR=@AR@ RANLIB=@RANLIB@ OBJCOPY=@OBJCOPY@ COPTS=@CFLAGS_RSP_LIBCAP@ LDFLAGS=@LDFLAGS_RSP_LIBCAP@ BUILD_CFLAGS= GOLANG=no PAM_CAP=no USE_GPERF=no
 
-# DESTDIR as a make argument, not the environment variable: pm already sets
-# DESTDIR=/dest, and the second install has to override it.
+# Every variable is repeated on the install lines, not because make remembers
+# nothing between invocations -- it does not -- but because `lib` in
+# particular is re-derived if it is left out, and the install would then go
+# somewhere else than the build did.
+#
+# The rm is libcap's build system, not a preference: `install` installs the
+# static libraries before the shared ones and offers no way to ask for only
+# the shared. This layer is shared-only everywhere else, and a .a left in the
+# sysroot is something a later link can quietly prefer.
 - stage: Build
   name: install
   dl_urls: null
   run:
-  - make -C /build/b/libcap install DESTDIR=/dest
-  - make -C /build/b/libcap install DESTDIR=/build/sysroot
+  - make -C /build/src/libcap install DESTDIR=/dest prefix=/usr lib=lib CC=@CC@ AR=@AR@ RANLIB=@RANLIB@ OBJCOPY=@OBJCOPY@ COPTS=@CFLAGS_RSP_LIBCAP@ LDFLAGS=@LDFLAGS_RSP_LIBCAP@ BUILD_CFLAGS= GOLANG=no PAM_CAP=no USE_GPERF=no
+  - make -C /build/src/libcap install DESTDIR=/build/sysroot prefix=/usr lib=lib CC=@CC@ AR=@AR@ RANLIB=@RANLIB@ OBJCOPY=@OBJCOPY@ COPTS=@CFLAGS_RSP_LIBCAP@ LDFLAGS=@LDFLAGS_RSP_LIBCAP@ BUILD_CFLAGS= GOLANG=no PAM_CAP=no USE_GPERF=no
+  - rm -f /dest/usr/lib/libcap.a /dest/usr/lib/libpsx.a /build/sysroot/usr/lib/libcap.a /build/sysroot/usr/lib/libpsx.a
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
 - stage: Test
@@ -55,3 +86,6 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcap.so
+  - test -e /dest/usr/include/sys/capability.h
+  - test -e /dest/usr/lib/pkgconfig/libcap.pc
+  - test -e /dest/usr/sbin/setcap
