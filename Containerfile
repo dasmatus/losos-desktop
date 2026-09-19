@@ -107,6 +107,41 @@ ARG RUST_VERSION=1.94.0
 # did nothing. Every RUN below chains with `&&` instead, which fails on the
 # first error under any shell.
 
+# pacman 7 downloads inside a sandbox of its own: it drops to the `alpm` user
+# and confines the download process with a Landlock ruleset. A container build
+# is not allowed to apply one, so the whole transaction dies before a single
+# database is fetched:
+#
+#     error: restricting filesystem access failed because the Landlock ruleset
+#            could not be applied: Operation not permitted
+#     error: switching to sandbox user 'alpm' failed!
+#     error: failed to synchronize all databases (failed to retrieve some files)
+#
+# The official `archlinux` image already ships a pacman.conf with this turned
+# off -- `scripts/make-rootfs.sh` in archlinux/archlinux-docker does it, with
+# the comment "No kernel landlock in containerd" -- which is why the x86_64 leg
+# passed and only the aarch64 one, on a third-party rebuild that does not, hit
+# this. So it is done here rather than assumed of a base image: one code path,
+# and on a base that already did it the edit rewrites the line to itself.
+#
+# The directive was renamed as pacman split the sandbox in two, so which one to
+# write is decided by what the shipped pacman.conf knows about, the same way
+# Arch's own script decides it. Writing the wrong name would be worse than
+# useless: an unrecognised directive is a warning, so it would look applied and
+# fail identically at the next step.
+#
+# The `[options]` block is printed afterwards because this edit is invisible if
+# it silently matches nothing -- the failure then arrives at the step below,
+# wearing the package list rather than naming the config.
+RUN if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then \
+      sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf; \
+    elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then \
+      sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf; \
+    else \
+      sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf; \
+    fi \
+ && grep -E '^Disable' /etc/pacman.conf
+
 # `-Syu` rather than `-S`, and that is not thoroughness. Arch does not support
 # a partial upgrade: installing a package against an index newer than the
 # installed base links it against library versions the base image does not
