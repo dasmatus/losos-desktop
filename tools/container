@@ -95,6 +95,10 @@ def run(engine, args):
         "-e", f"PM_ROOT={pm}",
         "-e", f"PM={pm}/target/release/pm",
     ]
+    # The image-build fallback serves mirrored sources on the host loopback, so
+    # that path can opt into host networking without changing the default runner.
+    if os.environ.get("LOSOS_CONTAINER_HOST_NETWORK") == "1":
+        command += ["--network", "host"]
     if sys.stdin.isatty() and sys.stdout.isatty():
         command.append("-t")
         command.append("-i")
