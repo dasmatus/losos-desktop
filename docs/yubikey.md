@@ -55,14 +55,19 @@ conversation against the same home area.
 
 There is a catch, and it is not about tokens. **This tree ships no PAM
 configuration.** Until it does, `pam_systemd_home` is not in any stack, so the
-enrolment above is a thing the OS can store and nothing yet consumes. gdm used
-to paper over this by accident: its `default-pam-config` option defaults to
-`autodetect`, which is `test -f /etc/arch-release` and four siblings evaluated
-against the *build container* rather than the image. `recipes/30-gnome/gdm`
-now pins it to `none` so the absence is deliberate rather than a property of
-whichever base the `Containerfile` currently uses. Shipping a PAM stack of this
-OS's own is the next piece of work, and it is what turns the paragraph above
-from enrolled into enforced.
+enrolment above is a thing the OS can store and nothing yet consumes.
+
+That absence is also less stable than it looks. gdm's `default-pam-config`
+option defaults to `autodetect`, which is `test -f /etc/arch-release` and four
+siblings evaluated against the *build container* rather than the image: on the
+current base none match and gdm installs no PAM files, but a `Containerfile`
+that changes the base changes whose PAM stack ships, with nothing saying so.
+The recipe therefore spells `-Ddefault-pam-config=none`, so the absence is
+deliberate rather than a property of the container. That pin travels with the
+change that makes it bite, which is whichever one moves the container base.
+
+Shipping a PAM stack of this OS's own is the next piece of work, and it is what
+turns the paragraph above from enrolled into enforced.
 
 ### Unlocking the disk at boot — there is no encrypted disk
 
