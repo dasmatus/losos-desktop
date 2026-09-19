@@ -349,6 +349,11 @@ jobs:
           fi
           echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
 
+      # $GITHUB_WORKSPACE, not $TMPDIR: the Justfile's `export TMPDIR` reaches
+      # its own recipes' children and not this shell, so $TMPDIR here is unset
+      # and would report /tmp -- a filesystem the build writes nothing to. The
+      # scratch the build actually fills is out/tmp, inside the workspace.
+      #
       # docs/limits.md says the intermediates "plausibly run to tens of
       # gigabytes" -- plausibly, because nobody has measured it. Each layer's
       # archive carries the one below it whole (C5, C6), so nine layers
@@ -357,7 +362,7 @@ jobs:
       # not as a full disk, so the budget is printed before the build starts
       # and what was actually written is printed after it, pass or fail.
       - name: Disk before the build
-        run: df -h / "${TMPDIR:-/tmp}"
+        run: df -h / "$GITHUB_WORKSPACE"
 
       - name: Build the image
         working-directory: losos-desktop
@@ -395,7 +400,7 @@ jobs:
       - name: Disk after the build
         if: always()
         run: |
-          df -h / "${TMPDIR:-/tmp}"
+          df -h / "$GITHUB_WORKSPACE"
           du -sh losos-desktop/out/pkgs losos-desktop/out/tmp \
             losos-desktop/out/sources losos-desktop/release \
             pm/target 2>/dev/null || true
