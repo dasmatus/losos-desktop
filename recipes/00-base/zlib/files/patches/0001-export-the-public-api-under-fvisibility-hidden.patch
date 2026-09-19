@@ -1,0 +1,68 @@
+Give the public API default visibility, so -fvisibility=hidden leaves an ABI.
+
+zlib declares its entire public API through two macros that expand to nothing
+on ELF: ZEXTERN is `extern` and ZEXPORT is empty. That is correct only while
+the build has default visibility. This tree compiles everything with
+-fvisibility=hidden, which is CFI's precondition rather than a preference, and
+under it every one of zlib's 88 exported symbols becomes STV_HIDDEN.
+
+The result is not a compile error. It is a 13 KB libz.so that exports nothing
+at all -- `nm --dynamic --defined-only` returns zero lines -- and the first
+thing to notice is whatever links against it next. Here that was zlib's own
+test programs, in the same cmake run:
+
+    ld.lld: error: undefined symbol: gzopen
+    >>> referenced by minigzip.c:551 (/build/src/zlib/test/minigzip.c:551)
+    ld.lld: error: undefined symbol: deflate
+    ld.lld: error: undefined symbol: inflate
+
+Had the recipe not built them, the empty library would have installed cleanly
+and the failure would have surfaced four layers later in systemd.
+
+A version script does not help and is not an alternative: the linker turns a
+hidden symbol into a local one before a version node can claim it, so
+zlib.map's global list and --export-dynamic-symbol both come out empty too.
+Measured, not assumed.
+
+ZEXPORT rather than ZEXTERN because ZEXPORT is the macro that sits between the
+return type and the name in every declaration -- `ZEXTERN int ZEXPORT
+deflate(...)` -- which is exactly where GNU C accepts an attribute, and because
+the header guards it with #ifndef, which is upstream saying it is the intended
+hook. Patched in zconf.h.cmakein rather than zconf.h: the cmake build
+configures that file into the build directory and renames the shipped zconf.h
+out of the way, so a patch to the shipped one would apply cleanly and do
+nothing. It is also the copy that gets installed, so a consumer compiled with
+-fvisibility=hidden declares zlib's functions with default visibility too.
+
+Verified against the tree's exact flag set: the patched library exports the
+same 88 symbols, with the same version nodes, as an unpatched zlib built with
+no hardening at all and the same linker; the test programs link; and both
+example binaries run clean.
+
+Not upstreamable as-is. Upstream supports builds that do not set
+-fvisibility=hidden, and the ELF test here is coarser than zlib's usual
+feature detection.
+
+--- a/zconf.h.cmakein
++++ b/zconf.h.cmakein
+@@ -381,10 +381,18 @@
+ #  define ZEXTERN extern
+ #endif
+ #ifndef ZEXPORT
+-#  define ZEXPORT
++#  if defined(__ELF__) && (defined(__GNUC__) || defined(__clang__))
++#    define ZEXPORT __attribute__((visibility("default")))
++#  else
++#    define ZEXPORT
++#  endif
+ #endif
+ #ifndef ZEXPORTVA
+-#  define ZEXPORTVA
++#  if defined(__ELF__) && (defined(__GNUC__) || defined(__clang__))
++#    define ZEXPORTVA __attribute__((visibility("default")))
++#  else
++#    define ZEXPORTVA
++#  endif
+ #endif
+ 
+ #ifndef FAR

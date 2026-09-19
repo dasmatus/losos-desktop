@@ -114,6 +114,12 @@ Read `docs/limits.md` before trusting anything here. The short version:
   headers, which belong to the compiler rather than to compiler-rt, and those
   are copied out of the container's clang. The pins are one major version
   apart. `docs/limits.md` has the measurement.
+- **Cross-DSO CFI has a hole where a version script is.** The runtime finds a
+  library's `__cfi_check` by name in its dynamic symbol table, and a version
+  script ending in `local: *` -- zlib's, systemd's, glib's -- localises it.
+  Those libraries are inside the scheme as callers and outside it as callees.
+  Open, and a design decision rather than a patch; `docs/limits.md` has the
+  measurement and the three options.
 - **CFI traps rather than diagnoses, for now.** A violation stops the process
   but does not name the call site it happened at, because the diagnosing
   runtime walks the stack and there is no unwinder for the musl target in this

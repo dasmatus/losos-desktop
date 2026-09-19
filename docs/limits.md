@@ -117,6 +117,47 @@ cmake module), a patch to `runtimes/CMakeLists.txt`, or a libunwind build that
 does not go through cmake. That is a pin this tree would carry for years, which
 is why it is a decision written down here rather than one taken in passing.
 
+## Cross-DSO CFI is claimed, and a version script can quietly revoke it
+
+`manifest/toolchain.yaml` sets `cfi.cross_dso: true`, which is what makes an
+indirect call checked across a shared-library boundary rather than only within
+one. The mechanism is that a caller's check falls through to
+`__cfi_slowpath`, the runtime finds which DSO the target address lives in, and
+it calls **that DSO's own `__cfi_check`** -- which it locates by walking the
+library's dynamic symbol table by name.
+
+So `__cfi_check` has to be in `.dynsym`, and in zlib it is not:
+
+```
+$ llvm-nm libz.so.1.3.1 | grep __cfi_check
+000000000000b000 t __cfi_check          # local, not exported
+$ llvm-nm --dynamic libz.so.1.3.1 | grep -i cfi
+                 U __cfi_slowpath       # it calls out, nothing can call in
+```
+
+The cause is zlib's own version script. `zlib.map` ends in `local: *;`, which
+localises every symbol the script does not name, and `__cfi_check` is not a
+symbol upstream knows to name. Measured: adding
+`-Wl,--export-dynamic-symbol=__cfi_check` does not override it, because the
+version script wins.
+
+This is not zlib-specific and it is not fixed by the visibility patch in
+`recipes/00-base/zlib`, which is about zlib's own API. Every library in this
+tree that ships a version script ending in `local: *` has the same hole, and
+that includes libsystemd, glib and mesa. A cross-DSO indirect call into such a
+library reaches a DSO the runtime cannot check; in the trap mode
+`manifest/toolchain.yaml` currently sets, the honest reading is that it stops
+the process rather than silently passing, but that has not been observed here
+because nothing in this tree has run yet.
+
+**This is open and it is a design decision, not a patch.** The options are a
+per-library version-script patch (which does not scale and has to be redone at
+every version bump), dropping version scripts across the tree (which throws
+away symbol versioning, an ABI regression), or accepting that cross-DSO CFI
+covers only the libraries without one and saying so in
+`manifest/toolchain.yaml` instead of claiming the whole set. Nothing here
+picks one.
+
 ## pm has no package store
 
 Dependencies are carried, not consumed (C5): a dependency's archive is copied
