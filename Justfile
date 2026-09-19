@@ -160,14 +160,24 @@ build target="":
   }
 
   build_in_container() {
+    local args_backup status
     echo "just: host lacks the pinned mkosi image-build prerequisites; building $1 in the container host" >&2
     python3 "{{repo}}/tools/container" build
     # configure rewrites sources to 127.0.0.1:$LOSOS_MIRROR_PORT when the local
     # mirror exists, so the fallback container needs the host network to reach it.
     # The recursive `just build` reads out/configure.args back from disk, so keep
-    # the mounted copy in sync with the effective configure arguments here.
+    # the mounted copy in sync with the effective configure arguments here, then
+    # restore the host's remembered configuration once the nested build exits.
+    args_backup="{{repo}}/out/tmp/configure.args.container.$$"
+    cp "{{repo}}/out/configure.args" "$args_backup"
     printf '%s\n' "${configure_args[@]}" > "{{repo}}/out/configure.args"
-    PM="{{pm}}" PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"
+    if PM="{{pm}}" PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"; then
+      status=0
+    else
+      status=$?
+    fi
+    mv "$args_backup" "{{repo}}/out/configure.args"
+    return "$status"
   }
 
   start_mirror || echo "just: no local source mirror; pm will fetch upstream" >&2
