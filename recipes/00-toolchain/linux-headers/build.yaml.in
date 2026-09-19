@@ -32,8 +32,18 @@ steps:
   # ARCH is the kernel's spelling, from manifest/architectures.yaml: the
   # headers differ per architecture and installing x86's on arm64 produces a
   # libc that compiles and makes the wrong syscalls.
-  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ INSTALL_HDR_PATH=/dest/usr headers_install
-  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ INSTALL_HDR_PATH=/build/sysroot/usr headers_install
+  #
+  # HOSTCC is not optional here, even though this step compiles nothing of the
+  # kernel. `headers_install` still runs `scripts_basic`, which builds
+  # `scripts/basic/fixdep` with HOSTCC, and the kernel's default for that is
+  # `gcc`. This distribution's build host has clang, lld and llvm and no other
+  # C compiler -- docs/host-requirements.md names none -- so the default finds
+  # nothing and make stops with `gcc: No such file or directory` while
+  # installing headers, which reads as a problem with the headers and is not.
+  # It is a make variable rather than an exported one because a pm step has no
+  # shell and `env` is banned (C1).
+  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ HOSTCC=clang INSTALL_HDR_PATH=/dest/usr headers_install
+  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ HOSTCC=clang INSTALL_HDR_PATH=/build/sysroot/usr headers_install
 
 - stage: Test
   name: staged
