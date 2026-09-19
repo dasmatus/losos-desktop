@@ -107,7 +107,21 @@ def linker_in_use(tc, notes):
     reported separately rather than folded into it.
     """
     cc = tc.compiler.get("cc", "clang")
-    result = run([cc, *host_flags(tc.ldflags()), "-Wl,--version"])
+    result = run(
+        [
+            cc,
+            *host_flags(tc.ldflags()),
+            "-nostdlib",
+            "-shared",
+            "-x",
+            "c",
+            "-",
+            "-Wl,--version",
+            "-o",
+            "/dev/null",
+        ],
+        input="int x;\n",
+    )
     if result.returncode != 0:
         notes.append(
             "the driver could not start its linker:\n" + result.stderr.strip()
