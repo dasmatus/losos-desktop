@@ -109,6 +109,25 @@ podman needs neither and is preferred when both are installed, because it also
 maps the invoking user into the container, so artifacts the build writes into
 the repository are not left owned by root.
 
+**And `/proc` has to be unmasked, which is a different problem wearing the same
+error.** Creating the namespace is only half of it; pm then mounts a fresh
+procfs inside it, and the kernel refuses that in a non-initial user namespace
+unless the caller can already see a *fully visible* procfs — one with nothing
+mounted over any part of it. Both engines mask `/proc/kcore`, `/proc/keys` and
+half a dozen others with bind mounts and remount `/proc/sys` read-only, which
+is precisely what makes procfs no longer fully visible. The result is
+
+```
+hakoniwa: mount(Some("proc"), "/proc", Some("proc"), ...) => EPERM
+```
+
+and `check-digest` then reports `INCONCLUSIVE` and suggests
+`kernel.apparmor_restrict_unprivileged_userns=0`, which is the right advice on
+a bare host and does nothing here, because the host is not what is refusing.
+`tools/container` passes `unmask=ALL` to podman and `systempaths=unconfined` to
+docker; neither engine accepts the other's spelling, so it is the one option
+there that has to know which is running.
+
 **`TMPDIR` must be on real disk.** Every pm workspace lives under it and a
 large package needs several gigabytes; on a tmpfs the build dies partway
 through with `Disk quota exceeded`, which looks like a bug in the recipe and is

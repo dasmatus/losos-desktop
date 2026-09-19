@@ -89,6 +89,27 @@ def run(engine, args):
         # it per-mount; disabling it wholesale keeps a first run from rewriting
         # every file's label.
         "--security-opt", "label=disable",
+        # And the one that is not about a security profile at all.
+        #
+        # pm's jail mounts a fresh procfs inside the user namespace it creates.
+        # The kernel refuses that in a non-initial user namespace unless the
+        # caller can already see a *fully visible* procfs: one with nothing
+        # mounted over any part of it. Both engines mask `/proc/kcore`,
+        # `/proc/keys` and half a dozen others with bind mounts and remount
+        # `/proc/sys` read-only, which is exactly what makes procfs no longer
+        # fully visible. So the mount returns EPERM, pm reports
+        #
+        #   hakoniwa: mount(Some("proc"), "/proc", ...) => EPERM
+        #
+        # and `check-digest` reports INCONCLUSIVE and suggests a host sysctl --
+        # which is the right advice on a bare host and has no effect here,
+        # because the host is not what is refusing. Unmasking `/proc` inside
+        # this container is what lets pm's sandbox start at all.
+        #
+        # The two engines spell it differently and neither accepts the other's
+        # spelling, so this is the one option that has to know which is running.
+        *(("--security-opt", "unmask=ALL") if engine == "podman"
+          else ("--security-opt", "systempaths=unconfined")),
         "-v", f"{REPO}:{REPO}",
         "-v", f"{pm}:{pm}",
         "-w", str(REPO),
