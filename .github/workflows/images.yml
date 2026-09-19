@@ -396,7 +396,28 @@ jobs:
             sleep 0.3
           done
           python3 tools/serve-sources --port 8730 --check
-          just build losos-90-image
+          # Tee'd, and pm's error block re-printed at the very end when the
+          # build fails. A job log is read from its tail as often as from the
+          # run page -- the API returns the end of it and nothing else -- and
+          # post-job cleanup is several kilobytes of that tail on its own. pm
+          # names the package, the step and the command that failed in one
+          # block, and a build long enough to be worth reading is exactly the
+          # one whose block gets pushed out of reach. Capped, so repeating it
+          # cannot push itself out in turn.
+          set +e
+          just build losos-90-image 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            awk '/^Error:/{found = 1} found' "$GITHUB_WORKSPACE/build.log" > /tmp/why
+            # No block means it died somewhere pm does not report from -- a
+            # killed process, a full disk -- and then the last lines are the
+            # only evidence there is.
+            [ -s /tmp/why ] || tail -n 40 "$GITHUB_WORKSPACE/build.log" > /tmp/why
+            echo "--- what failed, repeated so the log's tail carries it ---"
+            head -c 3000 /tmp/why
+          fi
+          exit "$status"
 
       - name: Name the artifacts and write SHA256SUMS
         working-directory: losos-desktop
