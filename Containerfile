@@ -45,16 +45,30 @@ ARG RUST_VERSION=1.90.0
 # argument rather than two literals that can drift apart.
 ARG LLVM_VERSION=19
 
-SHELL ["/bin/sh", "-eux", "-c"]
+# No SHELL directive: podman builds OCI images by default and ignores one with
+# a warning, so anything relying on `sh -eux` would be relying on a line that
+# did nothing. Every RUN below chains with `&&` instead, which fails on the
+# first error under any shell.
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Point apt at the snapshot. `check-valid-until=no` is required rather than
-# lax: a snapshot's Release file is stamped at the moment it was taken, so an
-# archive more than a week old is "expired" by apt's clock and every build of an
-# old snapshot would fail with a date error rather than a missing package.
+# Point apt at the snapshot, over HTTP rather than HTTPS, which is not a
+# shortcut: `debian:trixie-slim` ships no ca-certificates, so apt cannot verify
+# a TLS certificate, and ca-certificates itself can only be installed from the
+# archive it cannot reach. Fetching it over HTTPS first is the same problem one
+# step further in.
+#
+# Nothing is lost by it. `Signed-By:` below points apt at the Debian archive
+# keyring the base image does carry, and apt refuses any index whose OpenPGP
+# signature does not verify against it. Authenticity and integrity come from
+# that signature; TLS would only have hidden which files were being fetched.
+#
+# `Check-Valid-Until: no` is required rather than lax: a snapshot's Release
+# file is stamped at the moment the snapshot was taken, so an archive more than
+# a week old is "expired" by apt's clock and every build of an older snapshot
+# would fail with a date error rather than a missing package.
 RUN printf '%s\n' \
       'Types: deb' \
-      "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
+      "URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
       'Suites: trixie trixie-updates' \
       'Components: main' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
@@ -62,7 +76,7 @@ RUN printf '%s\n' \
       > /etc/apt/sources.list.d/debian.sources \
  && printf '%s\n' \
       'Types: deb' \
-      "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
+      "URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
       'Suites: trixie-security' \
       'Components: main' \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
@@ -70,7 +84,13 @@ RUN printf '%s\n' \
       > /etc/apt/sources.list.d/debian-security.sources \
  && rm -f /etc/apt/sources.list
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# `--error-on=any` is the difference between one clear line and thirty
+# misleading ones. Plain `apt-get update` exits 0 when an index fails to
+# download -- it only warns -- so the build carried on with an empty package
+# list and failed in `install` with "Unable to locate package" for every
+# package at once, which reads as thirty missing packages rather than as one
+# archive that was never reachable.
+RUN apt-get update --error-on=any && apt-get install -y --no-install-recommends \
       \
       `# The toolchain manifest/toolchain.yaml names by unversioned name.` \
       `# libclang-rt-*-dev is not optional: without it clang errors out on` \
@@ -96,10 +116,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       `# carried hand-written ext4, FAT, GPT, ISO and qcow2 writers: not that` \
       `# pm refuses them -- the losos-image plugin classifies them -- but that` \
       `# nothing guaranteed they were installed on whatever host ran the build.` \
-      systemd systemd-boot-efi systemd-ukify mkosi \
+      `# mkosi is deliberately not in this list; see the pin below.` \
+      systemd systemd-boot-efi systemd-ukify \
       e2fsprogs dosfstools mtools erofs-utils squashfs-tools \
       xorriso qemu-utils \
       cryptsetup-bin sbsigntool \
+      \
+      `# mkosi imports pefile for the code paths that read a UKI back. This` \
+      `# build sets Bootable=no and builds its UKIs with files/mkuki.py, so` \
+      `# nothing here should reach those paths -- but an ImportError inside a` \
+      `# tool that has already started partitioning is a worse way to find out` \
+      `# than an extra package.` \
+      python3-pefile \
       \
       `# rustup's installer and tools/fetch-sources both need to fetch, and` \
       `# fetch-sources exists precisely because it can be told about a CA that` \
@@ -133,6 +161,34 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       aarch64-unknown-linux-musl \
       wasm32-unknown-unknown \
  && chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"
+
+# mkosi, pinned to a commit rather than taken from the archive.
+#
+# This is the one dependency where the version is part of this repository's
+# source. `recipes/90-image/losos-image/files/mkosi/` is written against a
+# specific configuration surface, and mkosi's has moved under exactly the
+# settings used here: `Format=esp` meant "a UKI wrapped in an ESP" until v26,
+# where it became "an ESP, and a UKI only if one is asked for". The installer
+# medium wants the second meaning -- it stages a UKI this tree already built --
+# so on an older mkosi the installer step does not fail, it produces a
+# different image. Debian trixie froze before v26.
+#
+# Everything else in this image is pinned by the snapshot, and this is pinned
+# the same way: by content. A tag can be moved; the commit it points at today
+# cannot, so the tag is resolved here and the result asserted.
+#
+# It lives under /usr because pm mirrors exactly `/bin /etc /lib /lib32 /lib64
+# /sbin /usr` from the host into the build jail read-only (C7). A tool in /opt
+# is a tool a recipe cannot see.
+ARG MKOSI_COMMIT=4736cd836108a97772142c461c49f1ddb4172348
+RUN git clone --filter=blob:none --quiet https://github.com/systemd/mkosi /usr/lib/mkosi \
+ && git -C /usr/lib/mkosi checkout --quiet --detach "$MKOSI_COMMIT" \
+ && test "$(git -C /usr/lib/mkosi rev-parse HEAD)" = "$MKOSI_COMMIT" \
+ && rm -rf /usr/lib/mkosi/.git \
+ && for entry in mkosi mkosi-initrd mkosi-addon mkosi-sandbox; do \
+      ln -s "../lib/mkosi/bin/$entry" "/usr/bin/$entry"; \
+    done \
+ && mkosi --version
 
 # pm's every workspace lives under TMPDIR and a real build needs several GB of
 # it. The container's /tmp is a tmpfs by default on most runtimes, where a large

@@ -22,8 +22,9 @@ image in CI and on a developer's machine.
 
 ## What is actually pinned
 
-Two inputs decide what ends up in the image, and a Containerfile that pinned
-neither would pin the *names* of its dependencies rather than their contents.
+Four inputs decide what ends up in the image, and a Containerfile that pinned
+none of them would pin the *names* of its dependencies rather than their
+contents.
 
 **The base image**, by tag today and by digest as soon as one is recorded.
 
@@ -39,12 +40,35 @@ file is stamped at the moment the snapshot was taken, so anything more than a
 week old is expired by apt's clock, and every build of an older snapshot would
 fail with a date error rather than a missing package.
 
-The Rust toolchain is pinned separately because it does not come from Debian.
+**The Rust toolchain**, separately, because it does not come from Debian.
 `rustup target add <arch>-unknown-linux-musl` is a host requirement and
 Debian's `rustc` cannot satisfy it, so rustup is installed and given a version.
 Both architectures' musl targets are in one image, so the same image builds
 both legs of the matrix, and `wasm32-unknown-unknown` is there for
 `plugins/build.sh`.
+
+**mkosi**, by commit, and this one is not an optimisation — it is the only
+dependency whose version is part of this repository's source.
+`recipes/90-image/losos-image/files/mkosi/` is a configuration written against
+a particular surface, and mkosi's has moved under exactly the settings used
+there. `Format=esp` meant "a UKI wrapped in an ESP" until v26, where it became
+"an ESP, and a UKI only if one is asked for"; the installer medium wants the
+second, because the UKI it stages was built by `files/mkuki.py` with this
+tree's own `.cmdline` and `.osrel` sections. On an older mkosi that step does
+not fail — it produces a different image, which is the worst of the three
+outcomes. Debian trixie froze before v26, so `apt-get install mkosi` is the one
+thing in this file that would have been pinned to a version and still been the
+wrong one.
+
+Pinning it by commit rather than by tag is the same argument as everywhere
+else: a tag is a name, and a name can be moved. The Containerfile resolves the
+commit and asserts what it got.
+
+mkosi is installed under `/usr` for a reason that is easy to get wrong. pm
+mirrors exactly `/bin /etc /lib /lib32 /lib64 /sbin /usr` from the host into
+the build jail, read-only (C7), so a tool in `/opt` or `/usr/local/src` is a
+tool the image layer cannot see — and the failure is `mkosi: not found` from
+inside a jail, which reads as a missing package.
 
 ## What running it has to get right
 
