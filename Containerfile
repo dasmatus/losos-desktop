@@ -122,6 +122,14 @@ RUN apt-get update --error-on=any \
       `# cannot tell whether CFI works from a flag that never compiled.` \
       clang lld llvm libclang-rt-${LLVM_VERSION}-dev \
       \
+      `# llvm-*-dev is here for its cmake package, not its headers.` \
+      `# compiler-rt configures standalone and calls find_package(LLVM);` \
+      `# when that fails it falls back to CompilerRTMockLLVMCMakeConfig,` \
+      `# which includes AddLLVM.cmake from the LLVM *source* tree and` \
+      `# hard-errors that LLVM_CMAKE_DIR does not exist. Nothing in the` \
+      `# gates can see this: they never run a build.` \
+      llvm-${LLVM_VERSION}-dev \
+      \
       `# The Justfile is the repository entrypoint, and the rest below are` \
       `# named directly by recipes and all in pm's fingerprint table.` \
       just \

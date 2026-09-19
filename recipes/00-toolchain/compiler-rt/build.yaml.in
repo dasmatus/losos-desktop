@@ -43,11 +43,37 @@ steps:
 # COMPILER_RT_STANDALONE_BUILD is what lets this be built without the rest of
 # the LLVM tree present -- but "the rest of the tree" does not include the
 # shared cmake modules, which a standalone build still reads and which the
-# compiler-rt tarball does not ship. CMAKE_MODULE_PATH points at the separate
-# cmake-<ver>.src tarball unpacked above. compiler-rt's CMakeLists.txt puts
-# its own cmake/Modules at position 0 of that list with `list(INSERT ...)`
-# rather than overwriting it, so a value given here survives and is searched
-# second: compiler-rt's own modules still win where both define a name.
+# compiler-rt tarball does not ship.
+#
+# LLVM_COMMON_CMAKE_UTILS is the variable that names where they are, and it is
+# the right one rather than CMAKE_MODULE_PATH: compiler-rt's CMakeLists.txt
+# uses it twice, and only one of those two uses is a module lookup that
+# CMAKE_MODULE_PATH could answer. Line 11 includes
+# ${LLVM_COMMON_CMAKE_UTILS}/Modules/CMakePolicy.cmake by full path, before
+# project() has even run; line 22 then splices ${LLVM_COMMON_CMAKE_UTILS} and
+# its Modules/ into CMAKE_MODULE_PATH itself, which is what makes
+# base-config-ix's `include(ExtendPath)` and `include(GetClangResourceDir)`
+# resolve. Setting CMAKE_MODULE_PATH alone fixes the second and leaves the
+# first failing, and since cmake accumulates configure errors rather than
+# stopping at the first, the surviving error names base-config-ix and looks
+# like the whole problem. Measured against the real tarballs: module path
+# alone still dies at CMakeLists.txt:11.
+#
+# Nothing else is needed from LLVM's build files. compiler-rt finds the
+# installed LLVM cmake package by itself -- `find_package(LLVM)` with no hint,
+# which resolves through pm's read-only mirror of the host /usr, the same
+# place @CC@ comes from. LLVM_CMAKE_DIR is deliberately not spelled out here:
+# a literal /usr/lib/llvm-N/lib/cmake/llvm would be this container's layout
+# baked into a recipe, and discovery already adapts. What is needed is that
+# the package be installed at all, which is the Containerfile's job and is
+# recorded in docs/host-requirements.md; without it compiler-rt falls back to
+# CompilerRTMockLLVMCMakeConfig, which wants AddLLVM.cmake from the LLVM
+# *source* tree and hard-errors when it is absent.
+#
+# Tombstone: -DLLVM_CONFIG_PATH= used to be on this line. It is upstream's
+# deprecated spelling of LLVM_CMAKE_DIR, it was empty, and an empty value
+# selects nothing; it is not coming back, because the supported knob is
+# LLVM_CMAKE_DIR and the supported answer here is to let discovery run.
 #
 # CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY is the one that makes this
 # configure at all, and it is a bootstrap problem rather than a preference.
@@ -66,7 +92,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DCMAKE_MODULE_PATH=/build/src/llvm-cmake/Modules -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF -DLLVM_CONFIG_PATH=
+  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DLLVM_COMMON_CMAKE_UTILS=/build/src/llvm-cmake -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
 
 - stage: Build
   name: compile
