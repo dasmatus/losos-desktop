@@ -168,15 +168,22 @@ build target="":
     # The recursive `just build` reads out/configure.args back from disk, so keep
     # the mounted copy in sync with the effective configure arguments here, then
     # restore the host's remembered configuration once the nested build exits.
-    args_backup="{{repo}}/out/tmp/configure.args.container.$$"
-    cp "{{repo}}/out/configure.args" "$args_backup"
+    args_backup=''
+    if [ -f "{{repo}}/out/configure.args" ]; then
+      args_backup="{{repo}}/out/tmp/configure.args.container.$$"
+      cp "{{repo}}/out/configure.args" "$args_backup"
+    fi
     printf '%s\n' "${configure_args[@]}" > "{{repo}}/out/configure.args"
     if PM="{{pm}}" PM_ROOT="{{pm_root}}" LOSOS_CONTAINER_HOST_NETWORK=1 python3 "{{repo}}/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; LOSOS_SKIP_IMAGE_HOST_FALLBACK=1; export LOSOS_MIRROR_PORT LOSOS_SKIP_IMAGE_HOST_FALLBACK PM PM_ROOT; if [ ! -f "{{repo}}/plugins/dist/losos-image.wasm" ] || [ ! -f "{{repo}}/plugins/dist/losos-mkosi.wasm" ]; then just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" plugins; fi; just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" build "$2"' _ "{{mirror_port}}" "$1"; then
       status=0
     else
       status=$?
     fi
-    mv "$args_backup" "{{repo}}/out/configure.args"
+    if [ -n "$args_backup" ]; then
+      mv "$args_backup" "{{repo}}/out/configure.args"
+    else
+      rm -f "{{repo}}/out/configure.args"
+    fi
     return "$status"
   }
 
