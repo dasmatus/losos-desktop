@@ -30,7 +30,7 @@ out="$here/dist"
 pm_root=${PM_ROOT:-$here/../../pm}
 encoder="$pm_root/plugins/target/release/encoder"
 
-crates=${*:-"losos-image losos-systemd"}
+crates=${*:-"losos-image losos-mkosi losos-systemd"}
 
 mkdir -p "$out"
 cargo build --release --target "$target" $(for c in $crates; do echo "-p $c"; done)

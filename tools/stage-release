@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Rename the built artifacts into the names systemd-sysupdate expects.
 
-The image layer produces `losos.efi` and `losos-rootfs.tar.xz`, which say what
-they are. sysupdate needs names that say what *version* they are, because the
-version is parsed out of the filename by the `@v` in a `MatchPattern=` -- there
-is no metadata anywhere else. So the last step before publishing is a rename,
-and getting it wrong produces an update server that serves files no client
-matches, reports "no update available", and looks exactly like being up to date.
+The image layer produces `losos.efi`, `losos-root.raw.xz`, `losos.iso` and
+`losos.qcow2`, which say what they are. sysupdate needs names that say what
+*version* they are, because the version is parsed out of the filename by the
+`@v` in a `MatchPattern=` -- there is no metadata anywhere else. So the last
+step before publishing is a rename, and getting it wrong produces an update
+server that serves files no client matches, reports "no update available", and
+looks exactly like being up to date.
+
+The installation media are renamed here too, for people rather than for
+sysupdate: an ISO called `losos.iso` in a directory of rolling releases says
+nothing about which release it is.
 
 The patterns here and the `MatchPattern=` lines in
 overlay/usr/lib/sysupdate.d/*.conf.in are the same contract written twice, so
@@ -37,9 +42,22 @@ def architecture(name):
 
 
 def expected_names(arch_name, arch, version):
+    """The names systemd-sysupdate has to be able to match.
+
+    Only these two are part of the naming contract checked below, because only
+    these two are transfers. The installation media are published beside them
+    and are named for people rather than for a MatchPattern.
+    """
     return {
         "uki": f"losos-desktop_{version}_{arch_name}.efi",
         "root": f"losos-desktop_{version}_{arch['sysupdate_root']}.raw.xz",
+    }
+
+
+def media_names(arch_name, version):
+    return {
+        "iso": f"losos-desktop_{version}_{arch_name}.iso",
+        "qcow2": f"losos-desktop_{version}_{arch_name}.qcow2",
     }
 
 
@@ -113,9 +131,17 @@ def main():
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 
+    # losos-root.raw.xz, not losos-rootfs.tar.xz. The transfer this feeds is
+    # `Type=partition`: sysupdate decompresses the file and writes it into the
+    # inactive root partition as blocks. A tarball published under this name
+    # would be downloaded, verified, written into the partition, and produce a
+    # system that does not boot -- with every step reporting success.
+    media = media_names(args.arch, args.version)
     moves = [
         (artifacts / "losos.efi", out / names["uki"]),
-        (artifacts / "losos-rootfs.tar.xz", out / names["root"]),
+        (artifacts / "losos-root.raw.xz", out / names["root"]),
+        (artifacts / "losos.iso", out / media["iso"]),
+        (artifacts / "losos.qcow2", out / media["qcow2"]),
     ]
     missing = [str(src) for src, _ in moves if not src.exists()]
     if missing:

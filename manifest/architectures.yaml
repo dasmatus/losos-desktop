@@ -36,6 +36,14 @@ x86_64:
   # drops to an emergency shell that this OS does not have.
   gpt_root: root-x86-64
   gpt_root_verity: root-x86-64-verity
+  # mkosi spells architectures its own way again -- neither the kernel's nor
+  # EFI's. It validates the value against its own enum and exits before
+  # building if it does not recognise it.
+  mkosi_arch: x86-64
+  # The same partition type as a raw UUID. xorriso's -append_partition takes
+  # a GUID and knows none of systemd's names, so the one value is spelled
+  # twice; the pair is checked by tools/gates/test-image.py.
+  gpt_root_uuid: 4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709
   # The suffix systemd-sysupdate's MatchPattern uses for a root partition
   # image, which must agree with gpt_root above.
   sysupdate_root: root-x86-64
@@ -53,4 +61,6 @@ aarch64:
   efi_default: BOOTAA64.EFI
   gpt_root: root-arm64
   gpt_root_verity: root-arm64-verity
+  mkosi_arch: arm64
+  gpt_root_uuid: B921B045-1DF0-41C3-AF44-4C6F280D3FAE
   sysupdate_root: root-arm64

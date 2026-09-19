@@ -1,12 +1,12 @@
 # This distribution's pm plugins
 
-Two WebAssembly components, built against pm's `wit/plugin.wit`
+Three WebAssembly components, built against pm's `wit/plugin.wit`
 ([pm#4](https://github.com/dichhead/pm/pull/4)). pm loads every `*.wasm` in
 `$XDG_CONFIG_HOME/pm/plugins/` and asks it two questions its built-in tables
 cannot always answer.
 
 Read pm's `plugins/README.md` for the sandbox and the trust model. What follows
-is why *these two* exist.
+is why *these three* exist.
 
 ## `losos-image` — classify-command
 
@@ -50,6 +50,54 @@ build step, so nothing expands it, which is exactly what patchelf wants.
 Filesystem builders are named individually (`mkfs.ext4`, not `mkfs*`) so a typo
 is an unrecognised command, which pm reports, rather than a wildcard quietly
 matching something else.
+
+## `losos-mkosi` — classify-command, and symbols
+
+`mkosi` is not in pm's fingerprint table either — `docs/pm-constraints.md`
+lists it by name among the things an OS build reaches for reflexively and pm
+refuses (C2). This names it, so the image layer can call it:
+
+```
+$ pm explain build.yaml
+grants:     Toolchain, Coreutils, Archive
+plugins:    losos-image 0.1.0, losos-mkosi 0.1.0, losos-systemd 0.1.0
+
+COMMAND                                              FINGERPRINT
+mkosi --directory … --output-dir /build/media build  losos-mkosi:mkosi
+```
+
+Again no `Network`, and the ceiling says so. mkosi normally installs a
+distribution's packages, which is a network build; this one does not, because
+the image layer hands it a tree pm has already built (`BaseTrees=`,
+`Distribution=custom`) and there is nothing left to download. That distinction
+matters more here than elsewhere: network in a pm build file is per *file*, not
+per step (C8), so one careless grant would put the whole image layer's jail on
+the host network.
+
+It is also the one plugin here that publishes **symbols** — the handful of
+paths mkosi and the Boot Loader Specification fix, which a build file would
+otherwise spell out:
+
+```
+$ pm plugins
+losos-mkosi 0.1.0 (signed)
+symbols:    5
+  %{losos-mkosi:config} = mkosi.conf
+  %{losos-mkosi:esp} = /efi
+  %{losos-mkosi:loader-dir} = /efi/EFI/systemd
+  %{losos-mkosi:uki-dir} = /efi/EFI/Linux
+  %{losos-mkosi:xbootldr} = /boot
+```
+
+The test for whether something belongs in that list is whether the ecosystem
+fixed it or this distribution chose it. `/efi/EFI/Linux` is where a UKI goes,
+by specification, on every machine; where *this* build writes its output is a
+decision the build file is free to make, so it stays in the build file.
+
+`mkosi-sandbox` is deliberately not classified. mkosi execs it for itself from
+inside a build, where pm's first-word resolution is never consulted, and naming
+it here would suggest a recipe could call it directly — which would mean
+building an image outside mkosi's own bookkeeping.
 
 ## `losos-systemd` — scan-source
 
@@ -100,13 +148,17 @@ never a path.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-./build.sh                       # both, into dist/
-./build.sh losos-image           # one
-
-pm sign "$XDG_CONFIG_HOME/pm/plugins/losos-image.wasm"
-pm plugins                       # confirm both loaded and signed
+./do plugins                     # all three, into dist/
+./do plugins losos-mkosi         # one
 ```
 
-`tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's
-and that no component is older than its source. Neither is something pm can
-catch: from pm's side, a stale plugin is simply a plugin.
+`tools/sign-all` — and therefore `./do check` and `./do build` — installs
+whatever is in `dist/` into the repo-local trust store and signs it there.
+Without that pm loads no plugins at all, and a recipe calling `mkosi` is
+refused with "no built-in fingerprint matches", which reads as a problem with
+the recipe rather than with a component that was never installed.
+
+`tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's.
+That is not something pm can catch: from pm's side a plugin built against an
+older contract is simply a plugin, right up to the point where a record gains
+a field and every component stops loading.
