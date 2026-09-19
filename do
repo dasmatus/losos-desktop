@@ -44,6 +44,27 @@ start_mirror() {
   return 1
 }
 
+recipe_needs_image_host() {
+  local recipe="$repo/out/recipes/$1/build.yaml"
+  [ -f "$recipe" ] || return 1
+  grep -Eq '(%\{losos-mkosi:|(^|[[:space:]])mkosi([[:space:]]|$)|(^|[[:space:]])qemu-img([[:space:]]|$)|(^|[[:space:]])xorriso([[:space:]]|$))' "$recipe"
+}
+
+image_build_prereqs_ready() {
+  command -v mkosi >/dev/null 2>&1 || return 1
+  command -v qemu-img >/dev/null 2>&1 || return 1
+  command -v xorriso >/dev/null 2>&1 || return 1
+  [ -f "$repo/plugins/dist/losos-image.wasm" ] || return 1
+  [ -f "$repo/plugins/dist/losos-mkosi.wasm" ] || return 1
+}
+
+build_in_container() {
+  local target="$1"
+  echo "do: host lacks the pinned mkosi image-build prerequisites; building $target in the container host" >&2
+  python3 "$repo/tools/container" build
+  python3 "$repo/tools/container" run /bin/sh -eu -c './do plugins && ./do build "$1"' _ "$target"
+}
+
 cmd_configure() {
   # Generate against the local mirror when one is available. pm's downloader
   # trusts only the Mozilla roots compiled into it and reads no CA setting, so
@@ -148,6 +169,10 @@ print(layers[-1]['name'] if layers else '')
   # and a partial tree is the normal state while a distribution is being
   # brought up.
   cmd_configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
+  if recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
+    build_in_container "$target"
+    return
+  fi
   python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
   "$repo/tools/sign-all" >/dev/null
   echo "== building $target"

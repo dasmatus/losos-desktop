@@ -46,7 +46,7 @@ ARG DEBIAN_SNAPSHOT=20260918T000000Z
 # The Rust toolchain is pinned separately because it does not come from Debian:
 # `rustup target add <arch>-unknown-linux-musl` is a host requirement (see
 # docs/host-requirements.md) and Debian's rustc cannot satisfy it.
-ARG RUST_VERSION=1.90.0
+ARG RUST_VERSION=1.94.0
 
 # Which LLVM the toolchain is. Named in two places below -- the compiler runtime
 # package and the unversioned symlinks -- and they have to agree, so it is one
