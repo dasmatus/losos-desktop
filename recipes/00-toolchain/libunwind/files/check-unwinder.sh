@@ -55,9 +55,13 @@ esac
 
 for symbol in $symbols; do
   if ! "$NM" $nm_flags "$LIB" | grep -q "[ 	]$symbol\$"; then
-    echo "check-unwinder: $LIB does not define $symbol"
-    echo "check-unwinder: if it is __unw_getcontext, cmake dropped the"
-    echo "check-unwinder: assembly sources -- see files/patches."
+    # stderr, not stdout. pm reports a failed step's stderr and discards its
+    # stdout, so these three lines on stdout reached nobody: the CI summary
+    # for this exact failure read `stderr: <no output>` and named only the
+    # command. A diagnosis nobody reads is not a diagnosis.
+    echo "check-unwinder: $LIB does not define $symbol" >&2
+    echo "check-unwinder: if it is __unw_getcontext, cmake dropped the" >&2
+    echo "check-unwinder: assembly sources -- see files/patches." >&2
     exit 1
   fi
 done
