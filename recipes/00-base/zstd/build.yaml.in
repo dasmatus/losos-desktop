@@ -33,11 +33,21 @@ steps:
 # the shared library is what the recipe already asks for; turning the programs
 # off instead would drop /usr/bin/zstd from the image, which is a separate
 # decision and not this one's to make.
+#
+# The flags are the per-package response files, not the layer's shared ones,
+# and the spelling is the whole mechanism: an exception in
+# manifest/toolchain.yaml applies only to a recipe that names it, so
+# @CFLAGS_RSP@ here would leave the entry inert with nothing to say so. zstd's
+# drops `stdlibxx`, which puts -nostdlib++ on the link. project() at
+# build/cmake/CMakeLists.txt:33 names CXX for contrib code this recipe does not
+# build, cmake tests every language project() names, and clang++ links libstdc++
+# by default -- which no musl sysroot here has. Without it the step dies at
+# `mold: fatal: library not found: stdc++` before zstd compiles anything.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/zstd/build/cmake -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DZSTD_BUILD_STATIC=OFF -DZSTD_PROGRAMS_LINK_SHARED=ON
+  - cmake -S /build/src/zstd/build/cmake -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_ZSTD@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP_ZSTD@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_ZSTD@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_ZSTD@ -DZSTD_BUILD_STATIC=OFF -DZSTD_PROGRAMS_LINK_SHARED=ON
 
 - stage: Build
   name: compile
