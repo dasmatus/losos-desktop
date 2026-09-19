@@ -396,27 +396,13 @@ jobs:
             sleep 0.3
           done
           python3 tools/serve-sources --port 8730 --check
-          # Tee'd, and pm's error block re-printed at the very end when the
-          # build fails. A job log is read from its tail as often as from the
-          # run page -- the API returns the end of it and nothing else -- and
-          # post-job cleanup is several kilobytes of that tail on its own. pm
-          # names the package, the step and the command that failed in one
-          # block, and a build long enough to be worth reading is exactly the
-          # one whose block gets pushed out of reach. Capped, so repeating it
-          # cannot push itself out in turn.
+          # Tee'd so the last step of this job can say what failed without
+          # anyone scrolling: see `Say what failed` below for why that step
+          # exists and why it is last.
           set +e
           just build losos-90-image 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
           status=${PIPESTATUS[0]}
           set -e
-          if [ "$status" -ne 0 ]; then
-            awk '/^Error:/{found = 1} found' "$GITHUB_WORKSPACE/build.log" > /tmp/why
-            # No block means it died somewhere pm does not report from -- a
-            # killed process, a full disk -- and then the last lines are the
-            # only evidence there is.
-            [ -s /tmp/why ] || tail -n 40 "$GITHUB_WORKSPACE/build.log" > /tmp/why
-            echo "--- what failed, repeated so the log's tail carries it ---"
-            head -c 3000 /tmp/why
-          fi
           exit "$status"
 
       - name: Name the artifacts and write SHA256SUMS
@@ -456,6 +442,30 @@ jobs:
           name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
           path: losos-desktop/release/
           if-no-files-found: warn
+
+      # The last step in the job, and last for a reason rather than by
+      # accident. A job log is read from its tail as often as from the run
+      # page -- the API hands back the end of it and nothing else -- and
+      # everything after the build writes several kilobytes of that tail on
+      # its own: the disk report, the artifact upload, then post-job cleanup.
+      # A build long enough to be worth reading is exactly the one whose
+      # error has already been pushed out of reach by the time anyone looks.
+      #
+      # So pm's block is repeated here, stripped of the frame it is drawn in
+      # and capped: what a reader needs is the package, the step and the
+      # command, and a repeat large enough to push itself out would be no
+      # better than the original.
+      - name: Say what failed
+        if: failure()
+        run: |
+          log="$GITHUB_WORKSPACE/build.log"
+          [ -f "$log" ] || { echo "the build step wrote no log"; exit 0; }
+          awk '/^Error:/{found = 1} found' "$log" | sed -e 's/^ *│ *//' -e '/^$/d' > /tmp/why
+          # No block means it died somewhere pm does not report from -- a
+          # killed process, a full disk -- and then the last lines are the
+          # only evidence there is.
+          [ -s /tmp/why ] || tail -c 900 "$log" > /tmp/why
+          head -c 1400 /tmp/why
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
