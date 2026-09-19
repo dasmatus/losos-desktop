@@ -290,10 +290,16 @@ jobs:
             --version "$version" release
           echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
 
+      # always(): a build that stopped at some package never reached
+      # stage-release, but whatever the layers below it produced is still the
+      # only output this tree has ever made. if-no-files-found: warn keeps that
+      # from failing a job that already said what went wrong.
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
           path: losos-desktop/release/
+          if-no-files-found: warn
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
@@ -389,9 +395,15 @@ jobs:
     # to pass. An automated channel that published unbootable images would make
     # the nightly tag meaningless, and `losos-desktop_<v>` is a URL some
     # machine's sysupdate is pointed at.
+    #
+    # `build` is a matrix, so its result is 'success' only when EVERY
+    # architecture succeeded -- one arch failing would otherwise throw away a
+    # good image from the other. What matters is whether anything was
+    # uploaded, so this asks only that the job ran; download-artifact fails
+    # loudly on its own if nothing did.
     if: >-
       always() && github.event_name != 'pull_request' &&
-      needs.build.result == 'success' &&
+      needs.build.result != 'skipped' && needs.build.result != 'cancelled' &&
       (github.event_name == 'workflow_dispatch' ||
        (needs.verify.result == 'success' && needs.ota.result == 'success'))
     runs-on: ubuntu-24.04
