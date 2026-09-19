@@ -112,6 +112,19 @@ steps:
 # selects nothing; it is not coming back, because the supported knob is
 # LLVM_CMAKE_DIR and the supported answer here is to let discovery run.
 #
+# CMAKE_INSTALL_PREFIX is not /usr, and that is the whole of what makes these
+# runtimes reachable. clang resolves a sanitizer runtime, its own crt objects
+# and the CFI ignorelist out of its RESOURCE DIRECTORY, and consults neither
+# --sysroot nor -L nor -B on the way; manifest/toolchain.yaml therefore points
+# -resource-dir at this prefix inside the sysroot, and this is the recipe that
+# has to fill it. Under /usr the files landed where nothing looked, and every
+# CFI-built package in the tree linked the build host's glibc copy instead.
+#
+# COMPILER_RT_BUILD_CRT is on for the same reason and not for its own: with
+# --rtlib=compiler-rt clang wants clang_rt.crtbegin/crtend out of the resource
+# directory, and falls back to gcc's crtbeginS.o when they are absent -- which
+# on a host with no gcc at all is a bare filename lld cannot open.
+#
 # CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY is the one that makes this
 # configure at all, and it is a bootstrap problem rather than a preference.
 # cmake's first act on `project(... LANGUAGES C)` is to compile and LINK a
@@ -129,7 +142,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DLLVM_COMMON_CMAKE_UTILS=/build/src/llvm-cmake -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_SANITIZERS_TO_BUILD=cfi -DCOMPILER_RT_HAS_VERSION_SCRIPT=OFF -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
+  - cmake -S /build/src/compiler-rt -B /build/b/compiler-rt -DCMAKE_INSTALL_PREFIX=@RESOURCE_DIR_PREFIX@ -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_CXX_COMPILER_TARGET=@ARCH_TRIPLE@ -DCMAKE_SYSROOT=/build/sysroot -DLLVM_COMMON_CMAKE_UTILS=/build/src/llvm-cmake -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY -DCOMPILER_RT_STANDALONE_BUILD=ON -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON -DCOMPILER_RT_BUILD_SANITIZERS=ON -DCOMPILER_RT_SANITIZERS_TO_BUILD=cfi -DCOMPILER_RT_HAS_VERSION_SCRIPT=OFF -DCOMPILER_RT_BUILD_BUILTINS=ON -DCOMPILER_RT_BUILD_CRT=ON -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF -DCOMPILER_RT_USE_LIBCXX=OFF -DCOMPILER_RT_CAN_EXECUTE_TESTS=OFF
 
 - stage: Build
   name: compile
@@ -150,14 +163,41 @@ steps:
   - cmake --install /build/b/compiler-rt
   - make -C /build/b/compiler-rt install DESTDIR=/build/sysroot
 
+# The fourth thing a resource directory has to carry, and the one compiler-rt
+# does not build: clang's builtin headers. stddef.h, stdarg.h, limits.h and the
+# per-architecture intrinsics belong to the compiler, not to its runtime
+# library, so -resource-dir moves them along with everything else and a
+# directory without them fails at the first #include <stddef.h>.
+#
+# The source is asked for rather than spelled -- tools/configure runs
+# `clang -print-resource-dir` and substitutes the answer -- because a literal
+# /usr/lib/llvm-N/lib/clang/N would be this container's layout baked into a
+# recipe, which the discovery argument on the configure step above rejects for
+# the cmake package too.
+#
+# `cp -R` rather than `cp -a`: -a preserves ownership, and pm's jail is a user
+# namespace mapping only uid 0, so copying a file recorded under any other uid
+# fails the same way a tarball without --no-same-owner does. Mode and
+# timestamps are not load-bearing for a header.
+- stage: Build
+  name: stage-clang-headers
+  dl_urls: null
+  run:
+  - mkdir -p /dest@RESOURCE_DIR_PREFIX@/include /build/sysroot@RESOURCE_DIR_PREFIX@/include
+  - cp -R @CLANG_RESOURCE_DIR@/include/. /dest@RESOURCE_DIR_PREFIX@/include/
+  - cp -R @CLANG_RESOURCE_DIR@/include/. /build/sysroot@RESOURCE_DIR_PREFIX@/include/
+
 # The three archives the rest of the tree is built on, named rather than
 # counted: an empty directory would satisfy a `test -d` and leave the CFI flags
 # in every later layer a lie that only shows up at the first link.
 #
-# cfi_diag is the one that is load-bearing rather than illustrative. With the
-# manifest's flag set -- cross-DSO, -fno-sanitize-trap=cfi, -fsanitize-recover
-# -- cfi_diag is the single runtime clang names on the link line; measured by
-# asking the driver for its commands and reading back what it asked for.
+# cfi is the one that is load-bearing rather than illustrative: with the
+# manifest's flag set -- cross-DSO, trapping -- it is the single runtime clang
+# names on the link line, measured by asking the driver for its commands and
+# reading back what it asked for. cfi_diag is checked beside it because it is
+# what `cfi.trap: false` would name instead, and the manifest says that flip is
+# temporary; a build that produced only one of the pair would pass this step
+# today and fail at the first link on the day the flip is reversed.
 #
 # lib/linux with an -@ARCH@ suffix is compiler-rt's own default layout, not a
 # choice made here: without LLVM_ENABLE_PER_TARGET_RUNTIME_DIR the install path
@@ -169,15 +209,20 @@ steps:
 # and a standalone build does not -- so the option would buy a different wrong
 # path rather than the one the check named.
 #
-# What this does not prove, and cannot: that a later layer will link against
-# THESE archives. clang resolves a sanitizer runtime out of its own resource
-# directory and never looks in --sysroot, so the copy that matters at link time
-# is the host's glibc-built one in pm's read-only /usr mirror. See
-# docs/limits.md; it is a gap in the flag set, not in this recipe.
+# The last four lines are the resource directory's other contents, and they are
+# checked here because each one fails somewhere else entirely when it is
+# missing: no crtbegin and clang silently reaches for gcc's, no ignorelist and
+# -fsanitize=cfi refuses to run at all, no stddef.h and every package in every
+# later layer fails at its first include. This step is the only place that can
+# see all four at once.
 - stage: Test
   name: staged
   dl_urls: null
   run:
-  - test -f /dest/usr/lib/linux/libclang_rt.cfi-@ARCH@.a
-  - test -f /dest/usr/lib/linux/libclang_rt.cfi_diag-@ARCH@.a
-  - test -f /dest/usr/lib/linux/libclang_rt.builtins-@ARCH@.a
+  - test -f /dest@RESOURCE_DIR_PREFIX@/lib/linux/libclang_rt.cfi-@ARCH@.a
+  - test -f /dest@RESOURCE_DIR_PREFIX@/lib/linux/libclang_rt.cfi_diag-@ARCH@.a
+  - test -f /dest@RESOURCE_DIR_PREFIX@/lib/linux/libclang_rt.builtins-@ARCH@.a
+  - test -f /dest@RESOURCE_DIR_PREFIX@/lib/linux/clang_rt.crtbegin-@ARCH@.o
+  - test -f /dest@RESOURCE_DIR_PREFIX@/lib/linux/clang_rt.crtend-@ARCH@.o
+  - test -f /dest@RESOURCE_DIR_PREFIX@/share/cfi_ignorelist.txt
+  - test -f /dest@RESOURCE_DIR_PREFIX@/include/stddef.h

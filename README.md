@@ -106,11 +106,14 @@ Read `docs/limits.md` before trusting anything here. The short version:
   `/lib`, `/usr` and friends read-only into the build jail, and it has no
   package store, so a compiled artifact is coherent only on a host whose glibc
   matches. This is the ceiling of the current design, not an oversight.
-- **The CFI runtime is the sharp edge of that.** `00-toolchain` builds the CFI
-  runtimes against musl, but clang resolves a sanitizer runtime out of its own
-  resource directory and never looks in `--sysroot`, so the copy that reaches
-  the link line is the host's glibc-built one. Nothing fails; the wrong library
-  is simply linked. `docs/limits.md` has the measurement and the way out.
+- **Clang's builtin headers still come from the build host.** `00-toolchain`
+  builds the CFI runtimes against musl and the tree points `-resource-dir` at
+  them, so the runtime that reaches the link line is the one this repo built --
+  that used to be the sharp edge here and it is closed. What a resource
+  directory also has to carry is `stddef.h` and the rest of clang's builtin
+  headers, which belong to the compiler rather than to compiler-rt, and those
+  are copied out of the container's clang. The pins are one major version
+  apart. `docs/limits.md` has the measurement.
 - **CFI traps rather than diagnoses, for now.** A violation stops the process
   but does not name the call site it happened at, because the diagnosing
   runtime walks the stack and there is no unwinder for the musl target in this

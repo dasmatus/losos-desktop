@@ -62,6 +62,40 @@ target:
   # See cfi.trap below; the two move together.
   rtlib: compiler-rt
   unwindlib: none
+  # Where clang looks for its own runtimes, its builtin headers and the CFI
+  # ignorelist. Repointed at the sysroot, which is the only way the runtimes
+  # this tree builds are the ones that get linked.
+  #
+  # clang resolves a sanitizer runtime out of its resource directory and
+  # consults neither --sysroot nor -L nor -B on the way, so until this existed
+  # every CFI-built package linked the BUILD HOST's copy -- compiled against
+  # glibc -- into a musl binary. That is not a theoretical mismatch. It is what
+  # the first such link actually did:
+  #
+  #     ld.lld: error: undefined symbol: dlvsym
+  #     >>> referenced by interception_linux.cpp.o in archive
+  #         /usr/lib/llvm-19/lib/clang/19/lib/linux/libclang_rt.cfi-aarch64.a
+  #     >>> defined in: /build/sysroot/usr/lib/libc.so
+  #     ld.lld: error: undefined symbol: __confstr_chk
+  #     ld.lld: error: undefined symbol: __vsyslog_chk
+  #
+  # dlvsym is a GNU extension musl does not have, and __confstr_chk and
+  # __vsyslog_chk are glibc's _FORTIFY_SOURCE symbols. Loud here; the worry
+  # docs/limits.md recorded was that a link which happened to resolve would be
+  # silently wrong instead.
+  #
+  # The directory is the compiler-rt recipe's install prefix inside the
+  # sysroot, and it has to carry four things for clang, all of which that
+  # recipe now puts there: lib/linux for the runtimes, lib/linux for
+  # clang_rt.crtbegin/crtend (COMPILER_RT_BUILD_CRT), share/cfi_ignorelist.txt
+  # which -fsanitize=cfi refuses to run without, and include/ for stddef.h and
+  # the rest of clang's builtin headers, which are copied from the host clang
+  # because they belong to the compiler rather than to compiler-rt.
+  #
+  # Kept out of /build/sysroot/usr directly, deliberately: clang's limits.h is
+  # an #include_next wrapper around the libc's, and putting both in one
+  # directory breaks that.
+  resource_dir: /build/sysroot/usr/lib/losos-clang
 
 lto:
   # ThinLTO, not full LTO. Full LTO on a package the size of mesa or gtk4 needs

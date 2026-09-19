@@ -20,40 +20,52 @@ host (C3). The new toolchain would be reachable only through native-file
 injection, per build system, for every package. That is a change to pm, not to
 this tree, and it is the honest ceiling of the current design.
 
-## The CFI runtime we build is not the one that gets linked
+## The resource directory is ours; the headers in it are the build host's
 
-`recipes/00-toolchain/compiler-rt` builds `libclang_rt.cfi_diag` and its
-supports against the musl sysroot, and installs them into
-`/build/sysroot/usr/lib/linux`. Nothing links them.
+This entry used to read "the CFI runtime we build is not the one that gets
+linked", and it was the largest honest limit in this file. It is closed, and
+the tombstone is worth more than the removal: clang resolves a sanitizer
+runtime out of its own **resource directory** — `clang -print-resource-dir`,
+then `lib/linux/libclang_rt.<component>-<arch>.a` — and consults neither
+`--sysroot` nor `-L` nor `-B` on the way. So every CFI-built package linked the
+build host's glibc-compiled copy into a musl binary, and this file predicted
+the failure would be silent.
 
-clang resolves a sanitizer runtime out of its own **resource directory** —
-`clang -print-resource-dir`, then `lib/linux/libclang_rt.<component>-<arch>.a`
-— and it consults neither `--sysroot` nor `-L` nor `-B` on the way. Measured by
-asking the driver to print its commands with the manifest's exact flag set: the
-one path it names is
-`/usr/lib/llvm-18/lib/clang/18/lib/linux/libclang_rt.cfi-x86_64.a` — `cfi_diag`
-in place of `cfi` while `cfi.trap` is `false`, which is the only thing the mode
-changes here. That file is on the build host, inside pm's read-only `/usr`
-mirror (C7), and it was compiled against glibc.
+It was not. The first link the tree ever asked for against the musl sysroot
+said so outright:
 
-The same is true of `libclang_rt.builtins` and of compiler-rt's
-`clang_rt.crtbegin`/`crtend`, which `target.rtlib` now puts on every link line.
-Those two are less exposed than a sanitizer runtime — builtins are compiler
-intrinsics and the crt objects are a handful of symbols, neither of which
-reaches into libc internals — but they come from the same place and are subject
-to the same argument.
+```
+ld.lld: error: undefined symbol: dlvsym
+>>> referenced by interception_linux.cpp.o in archive
+    /usr/lib/llvm-19/lib/clang/19/lib/linux/libclang_rt.cfi-aarch64.a
+>>> defined in: /build/sysroot/usr/lib/libc.so
+ld.lld: error: undefined symbol: __confstr_chk
+ld.lld: error: undefined symbol: __vsyslog_chk
+```
 
-So the failure mode is not a missing file, which would be loud. It is a silent
-substitution: every CFI-built package links the host's glibc runtime into a
-musl binary, and `sanitizer_common` is exactly the kind of code that reaches
-into libc internals and does not survive the swap. The build stays green and
-the result is wrong, which is the worst of the two shapes.
+`dlvsym` is a GNU extension musl does not have; `__confstr_chk` and
+`__vsyslog_chk` are glibc's `_FORTIFY_SOURCE` symbols. The fix is the one this
+entry named as the supported way out: `manifest/toolchain.yaml` sets
+`target.resource_dir` to `/build/sysroot/usr/lib/losos-clang`, which is
+`recipes/00-toolchain/compiler-rt`'s install prefix, and every compile and link
+line now carries `-resource-dir=` pointing at it. `libclang_rt.cfi`,
+`libclang_rt.builtins` and `clang_rt.crtbegin`/`crtend` are all resolved out of
+that directory, as is `share/cfi_ignorelist.txt`, which `-fsanitize=cfi`
+refuses to run without.
 
-The supported way out is `-resource-dir` pointing at a tree the toolchain layer
-stages — which also has to carry clang's builtin headers, because the same
-directory is where `stddef.h` and `immintrin.h` come from. That is a change to
-`manifest/toolchain.yaml` affecting every package's flags, so it is written
-down here rather than guessed at.
+**What remains is narrower, and it is a version question rather than a libc
+one.** A resource directory has to carry clang's builtin headers — `stddef.h`,
+`stdarg.h`, `limits.h`, the per-architecture intrinsics — and those belong to
+the compiler rather than to compiler-rt, so nothing in this tree builds them.
+The compiler-rt recipe copies them out of the build host's clang, asked for
+with `clang -print-resource-dir` rather than spelled. That makes the directory
+half ours and half the container's, and it is only coherent while the two
+agree: `sources.lock` pins compiler-rt at 18.1.8 and the `Containerfile`
+installs clang 19. Headers and runtimes one major version apart is a
+combination LLVM supports in practice and does not promise, and closing it
+means pinning compiler-rt to the container's clang or the other way round.
+That choice is open with Matus, along with the same question on the LLVM pin
+itself.
 
 ## CFI traps instead of diagnosing, because there is no unwinder
 

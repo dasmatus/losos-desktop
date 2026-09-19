@@ -79,6 +79,25 @@ def host_tool(*names):
     return ""
 
 
+def clang_resource_dir():
+    """Where the host clang keeps its builtin headers.
+
+    Asked for rather than composed: the answer is a versioned path under
+    /usr/lib/llvm-N, and a recipe that spelled one would be this container's
+    layout baked into the tree. The only user is the step that copies those
+    headers into the sysroot's resource directory, because `-resource-dir`
+    moves stddef.h and friends along with the runtimes (see
+    manifest/toolchain.yaml).
+    """
+    cc = tool_path("clang", "cc")
+    if not cc:
+        return ""
+    result = subprocess.run(
+        [cc, "-print-resource-dir"], capture_output=True, text=True, check=False
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def load_sources(path, mirror=None):
     """Read sources.lock into the placeholder tokens it contributes.
 
@@ -306,6 +325,7 @@ def main():
     subs["@SRCDIR@"] = str(REPO)
     subs["@OUT@"] = str(out)
     subs["@PKGS@"] = str(out / "pkgs")
+    subs["@CLANG_RESOURCE_DIR@"] = clang_resource_dir()
     subs["@PKGCONFIG@"] = tool_path("pkgconf", "pkg-config")
     subs["@PYTHON@"] = tool_path("python3")
     subs["@JOBS@"] = str(max(1, (__import__("os").cpu_count() or 2)))
