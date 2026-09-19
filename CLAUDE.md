@@ -165,6 +165,13 @@ to `TODO`, and the `version:` list of the recipe that downloads it (which
 the sources whose newest release is not this tree's to take, with the reason --
 `COMPILER_RT` is version-locked to the host clang.
 
+Where one recipe downloads several sources, they are one upstream release
+split across tarballs, and `tools/gates/versions.py` reads the version they
+agree on as the recipe's. `enforce_lockstep` refuses an `--apply` that would
+move some of a group and not the rest, because the result is not a tree the
+gate rejects -- it is one the gate passes over, which is worse. `--only` is
+repeatable so a group can be named in one run.
+
 `.github/workflows/update-sources.yml` runs that weekly and tests **each
 candidate alone** in its own matrix leg -- fetch the new bytes, hash them, run
 `./do check` -- before collecting the survivors into one pull request. A leg

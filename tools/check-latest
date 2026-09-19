@@ -102,7 +102,8 @@ HOLD = {
         "held for the same reason: the two are one release split across two "
         "tarballs and compiler-rt configures against these modules, so a bump "
         "that moved one alone would pair 18.1.8 sources with another release's "
-        "module set. Bump it with COMPILER_RT or not at all."
+        "module set. Bump it with COMPILER_RT or not at all -- which is not a "
+        "request: enforce_lockstep below refuses the apply that tries."
     ),
 }
 
@@ -379,6 +380,62 @@ def _versions_gate():
     return module
 
 
+def lockstep_groups(repo, gate=None):
+    """Sets of sources.lock keys that one recipe downloads together.
+
+    Derived from the recipes rather than listed beside HOLD, because a second
+    list is a second thing to forget: adding a source to a recipe's dl_urls is
+    what makes it part of a group, and nothing else should have to say so.
+
+    Membership matters because tools/gates/versions.py reads a recipe whose
+    sources all carry one version as a recipe AT that version -- two tarballs
+    cut from one upstream release, which is compiler-rt and its LLVM cmake
+    modules. Move one and the pair no longer names a release; the gate then
+    passes over the recipe rather than failing it, which is silence in the one
+    place this tree cannot afford it.
+    """
+    gate = gate or _versions_gate()
+    found = []
+    for template in sorted((repo / "recipes").glob("*/*/build.yaml.in")):
+        keys = set(gate.URL_TOKEN.findall(template.read_text()))
+        if len(keys) > 1:
+            found.append(keys)
+    return found
+
+
+def enforce_lockstep(repo, lock, outdated, gate=None):
+    """Return a message naming any group this apply would half-move, or None.
+
+    `outdated` is what --apply is about to write. A group is satisfied when
+    every member ends up at the same version, which includes the ordinary case
+    of a member that is already there and so is not in `outdated` at all.
+    """
+    moving = {key: latest for key, _pinned, latest, _old, _new in outdated}
+    if not moving:
+        return None
+
+    for group in lockstep_groups(repo, gate=gate):
+        if not (group & set(moving)):
+            continue
+        after = {
+            member: moving.get(member, str((lock.get(member) or {}).get("version", "")))
+            for member in sorted(group)
+        }
+        if len(set(after.values())) == 1:
+            continue
+        named = ", ".join(f"{member} -> {version}" for member, version in after.items())
+        return (
+            "check-latest: refusing to move half of a lockstep group.\n"
+            f"  {', '.join(sorted(group))} are downloaded by one recipe, so they are\n"
+            "  one upstream release and the gate reads them as one version. This\n"
+            f"  apply would leave them at: {named}.\n"
+            "  Move them together -- "
+            + " ".join(f"--only {member}" for member in sorted(group))
+            + " -- or neither."
+        )
+    return None
+
+
 def bump_recipes(repo, key, version, gate=None):
     """Rewrite the `version:` list of every recipe that downloads `key`.
 
@@ -473,7 +530,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true",
                         help="rewrite sources.lock and the recipes that read it")
-    parser.add_argument("--only", help="check a single sources.lock key")
+    # Repeatable, because a recipe's sources are not always independent: the
+    # two halves of one upstream release have to move in one run or not at
+    # all, and `enforce_lockstep` below refuses the run that tries otherwise.
+    parser.add_argument("--only", action="append", metavar="KEY",
+                        help="check a single sources.lock key; repeatable")
     parser.add_argument("--refresh", action="store_true",
                         help="ignore the listing cache and re-fetch")
     parser.add_argument("--json", metavar="PATH",
@@ -487,7 +548,7 @@ def main():
 
     outdated, current, unknown, held = [], [], [], []
     for key, entry in doc.items():
-        if args.only and key != args.only:
+        if args.only and key not in args.only:
             continue
         pinned = str(entry.get("version", ""))
         answer = probe(key, entry, refresh=args.refresh)
@@ -549,6 +610,11 @@ def main():
         }, indent=2) + "\n")
 
     if args.apply and outdated:
+        complaint = enforce_lockstep(REPO, doc, outdated)
+        if complaint:
+            print(complaint, file=sys.stderr)
+            return 1
+
         text = lock.read_text()
         for key, _pinned, latest, old_url, new_url in outdated:
             text = apply_to_lock(text, key, old_url, new_url, latest)
@@ -788,6 +854,50 @@ def self_test():
         check("and the recipe still says what both sources last agreed on",
               gate.recipe_version((pair / "build.yaml.in").read_text()),
               ["19", "1", "7"])
+
+    # -- lockstep ----------------------------------------------------------
+    #
+    # The rule that keeps a two-tarball release from becoming two releases.
+    # Both directions are pinned: a half-move is refused, and a whole move is
+    # not, because a guard that refuses everything is a guard someone deletes.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "manifest").mkdir(parents=True)
+        pair = root / "recipes" / "00-toolchain" / "compiler-rt"
+        pair.mkdir(parents=True)
+        (pair / "build.yaml.in").write_text(
+            "name: compiler-rt\nversion:\n- '18'\ndependencies: []\nsteps:\n"
+            "- stage: Prepare\n  name: fetch\n  dl_urls:\n"
+            "    @URL_CRT@: '@SHA256_CRT@'\n"
+            "    @URL_CRT_CMAKE@: '@SHA256_CRT_CMAKE@'\n  run:\n  - true\n")
+        solo = root / "recipes" / "00-base" / "zlib"
+        solo.mkdir(parents=True)
+        (solo / "build.yaml.in").write_text(
+            "name: zlib\nversion:\n- '1'\ndependencies: []\nsteps:\n"
+            "- stage: Prepare\n  name: fetch\n  dl_urls:\n"
+            "    @URL_ZLIB@: '@SHA256_ZLIB@'\n  run:\n  - true\n")
+        doc = {"CRT": {"version": "18.1.8"}, "CRT_CMAKE": {"version": "18.1.8"},
+               "ZLIB": {"version": "1.3.1"}}
+
+        check("the pair is one group, derived from the recipe",
+              lockstep_groups(root, gate=gate), [{"CRT", "CRT_CMAKE"}])
+        check("half a pair is refused",
+              enforce_lockstep(root, doc,
+                               [("CRT", "18.1.8", "19.1.7", "u", "u")]) is None,
+              False)
+        check("both halves together are allowed",
+              enforce_lockstep(root, doc, [("CRT", "18.1.8", "19.1.7", "u", "u"),
+                                           ("CRT_CMAKE", "18.1.8", "19.1.7", "u", "u")]),
+              None)
+        check("a member already at the target counts as moved",
+              enforce_lockstep(root, {"CRT": {"version": "18.1.8"},
+                                      "CRT_CMAKE": {"version": "19.1.7"}},
+                               [("CRT", "18.1.8", "19.1.7", "u", "u")]),
+              None)
+        check("a single-source recipe is not a group and is never held back",
+              enforce_lockstep(root, doc,
+                               [("ZLIB", "1.3.1", "1.3.2", "u", "u")]),
+              None)
 
     print("check-latest --self-test: " + ("all cases behave" if ok else "FAILED"))
     return 0 if ok else 1
