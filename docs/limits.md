@@ -20,6 +20,33 @@ host (C3). The new toolchain would be reachable only through native-file
 injection, per build system, for every package. That is a change to pm, not to
 this tree, and it is the honest ceiling of the current design.
 
+## The CFI runtime we build is not the one that gets linked
+
+`recipes/00-toolchain/compiler-rt` builds `libclang_rt.cfi_diag` and its
+supports against the musl sysroot, and installs them into
+`/build/sysroot/usr/lib/linux`. Nothing links them.
+
+clang resolves a sanitizer runtime out of its own **resource directory** —
+`clang -print-resource-dir`, then `lib/linux/libclang_rt.<component>-<arch>.a`
+— and it consults neither `--sysroot` nor `-L` nor `-B` on the way. Measured by
+asking the driver to print its commands with the manifest's exact flag set: the
+one path it names is
+`/usr/lib/llvm-18/lib/clang/18/lib/linux/libclang_rt.cfi_diag-x86_64.a`. That
+file is on the build host, inside pm's read-only `/usr` mirror (C7), and it was
+compiled against glibc.
+
+So the failure mode is not a missing file, which would be loud. It is a silent
+substitution: every CFI-built package links the host's glibc runtime into a
+musl binary, and `sanitizer_common` is exactly the kind of code that reaches
+into libc internals and does not survive the swap. The build stays green and
+the result is wrong, which is the worst of the two shapes.
+
+The supported way out is `-resource-dir` pointing at a tree the toolchain layer
+stages — which also has to carry clang's builtin headers, because the same
+directory is where `stddef.h` and `immintrin.h` come from. That is a change to
+`manifest/toolchain.yaml` affecting every package's flags, so it is written
+down here rather than guessed at.
+
 ## pm has no package store
 
 Dependencies are carried, not consumed (C5): a dependency's archive is copied

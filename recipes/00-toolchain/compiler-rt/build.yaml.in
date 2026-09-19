@@ -150,10 +150,34 @@ steps:
   - cmake --install /build/b/compiler-rt
   - make -C /build/b/compiler-rt install DESTDIR=/build/sysroot
 
+# The three archives the rest of the tree is built on, named rather than
+# counted: an empty directory would satisfy a `test -d` and leave the CFI flags
+# in every later layer a lie that only shows up at the first link.
+#
+# cfi_diag is the one that is load-bearing rather than illustrative. With the
+# manifest's flag set -- cross-DSO, -fno-sanitize-trap=cfi, -fsanitize-recover
+# -- cfi_diag is the single runtime clang names on the link line; measured by
+# asking the driver for its commands and reading back what it asked for.
+#
+# lib/linux with an -@ARCH@ suffix is compiler-rt's own default layout, not a
+# choice made here: without LLVM_ENABLE_PER_TARGET_RUNTIME_DIR the install path
+# is lib/${COMPILER_RT_OS_DIR} and every archive carries the target arch in its
+# name. Tombstone: this step used to be `test -d /dest/usr/lib/@ARCH_TRIPLE@`,
+# which is the per-target layout. That layout is not coming back by switching
+# the option on: standalone, per-target installs flat into lib/ -- the triple
+# component comes from COMPILER_RT_INSTALL_PATH, which a runtimes build sets
+# and a standalone build does not -- so the option would buy a different wrong
+# path rather than the one the check named.
+#
+# What this does not prove, and cannot: that a later layer will link against
+# THESE archives. clang resolves a sanitizer runtime out of its own resource
+# directory and never looks in --sysroot, so the copy that matters at link time
+# is the host's glibc-built one in pm's read-only /usr mirror. See
+# docs/limits.md; it is a gap in the flag set, not in this recipe.
 - stage: Test
   name: staged
   dl_urls: null
   run:
-  # If this directory is empty the CFI flags in every later layer are a lie
-  # that only shows up as an undefined symbol at the first link.
-  - test -d /dest/usr/lib/@ARCH_TRIPLE@
+  - test -f /dest/usr/lib/linux/libclang_rt.cfi-@ARCH@.a
+  - test -f /dest/usr/lib/linux/libclang_rt.cfi_diag-@ARCH@.a
+  - test -f /dest/usr/lib/linux/libclang_rt.builtins-@ARCH@.a
