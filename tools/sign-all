@@ -32,6 +32,28 @@ if [ ! -f "$XDG_CONFIG_HOME/pm/signing.key" ]; then
   echo "sign-all: generated a repository-local signing key"
 fi
 
+# Install the plugin components into the same store, and sign them there.
+#
+# pm loads plugins from $XDG_CONFIG_HOME/pm/plugins/ and holds them to the same
+# trust store as a build file, because a plugin is code that runs inside pm and
+# helps decide what a jail allows. Nothing else copies them in, so without this
+# the store keeps whatever was installed by hand the first time: `./do check`
+# then validates the tree against a STALE plugin, and CI -- where .pm-config
+# does not exist at all, being gitignored -- validates it against no plugin.
+# Both were true until this loop existed, and the first symptom was pm
+# rejecting every recipe with "expected record of 7 fields, found 6" after the
+# contract gained a field.
+plugins=0
+if [ -d "$repo/plugins/dist" ]; then
+  mkdir -p "$XDG_CONFIG_HOME/pm/plugins"
+  for component in "$repo"/plugins/dist/*.wasm; do
+    [ -e "$component" ] || continue
+    install -m 0644 "$component" "$XDG_CONFIG_HOME/pm/plugins/"
+    ( cd "$repo/out/pkgs" && "$pm" sign "$XDG_CONFIG_HOME/pm/plugins/$(basename "$component")" ) >/dev/null
+    plugins=$((plugins + 1))
+  done
+fi
+
 count=0
 for recipe in "$repo"/out/recipes/*/build.yaml; do
   [ -e "$recipe" ] || continue
@@ -39,4 +61,4 @@ for recipe in "$repo"/out/recipes/*/build.yaml; do
   count=$((count + 1))
 done
 
-echo "sign-all: signed $count build file(s)"
+echo "sign-all: signed $count build file(s) and $plugins plugin component(s)"

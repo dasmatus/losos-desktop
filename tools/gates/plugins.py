@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 """Check the plugins against the contract they were compiled with.
 
-Two failure modes, both silent:
+**Contract drift** is the failure this exists for. `plugins/wit/plugin.wit` is a
+copy of pm's. If pm's changes and this one does not, a component still builds
+and still loads, and then answers with a record the host reads differently --
+or, once a field is added, stops loading at all with "expected record of 7
+fields, found 6" and takes every recipe in the tree down with it. Comparing the
+bytes is cheap and turns that into one line. It is not something pm can catch:
+from pm's side a plugin built against an older contract is simply a plugin.
 
-  * **Contract drift.** `plugins/wit/plugin.wit` is a copy of pm's. If pm's
-    changes and this one does not, the plugins still build and still load, and
-    then answer with a layout the host reads differently. Comparing the bytes
-    is cheap and turns that into one line.
-  * **A stale component.** `dist/*.wasm` is a build artifact of `plugins/`. If
-    the source moved on and nobody re-ran build.sh, pm loads yesterday's
-    behaviour while the source says otherwise.
-
-Neither is something pm can catch: from pm's side a stale plugin is simply a
-plugin.
-
-Staleness is decided by a CONTENT HASH, not by mtimes. This gate compared
-`src/lib.rs`'s mtime against the component's until CI went red on a tree nobody
-had touched: git does not record mtimes, so every file in a fresh clone is
-stamped at checkout time and the comparison decides by whatever order the
-checkout happened to write them in. It was also blind to every source file but
-`lib.rs`. `plugins/build.sh` now writes `dist/<crate>.srchash` alongside the
-component, using the same function below -- called through `--write-hashes`, so
-there is one implementation rather than two that can disagree.
+There is deliberately **no staleness check**, because there is nothing to go
+stale. `plugins/dist/` is build output and is not tracked: `./do plugins`
+produces it from the sources beside it, and `tools/sign-all` installs whatever
+is there into pm's trust store. An earlier version of this file compared the
+component's mtime against `src/lib.rs`'s, which was wrong twice over -- git
+does not record mtimes, so in a fresh clone the comparison decided by whichever
+order the checkout wrote the two files in, and it only ever looked at
+`lib.rs`. Both bugs existed only because a compiled artifact was committed.
 """
 
-import argparse
 import hashlib
 import sys
 from pathlib import Path
@@ -38,59 +32,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-# What a crate's hash covers: its sources, its manifest, and the contract it is
-# compiled against. target/ is excluded because it is the build output, and
-# dist/ because that is what the hash is being compared to.
-def source_digest(crate):
-    """A hash of everything that decides what `crate`'s component contains."""
-    files = sorted(
-        path
-        for path in (PLUGINS / crate).rglob("*")
-        if path.is_file() and "target" not in path.relative_to(PLUGINS).parts
-    )
-    # Plus the shared inputs: one crate's component changes when the workspace
-    # lock or the contract changes, even though nothing under its own directory
-    # did.
-    for shared in ("Cargo.lock", "wit/plugin.wit"):
-        path = PLUGINS / shared
-        if path.exists():
-            files.append(path)
-
-    # The path goes into the hash as well as the bytes, so moving a file is a
-    # change. Relative to plugins/, so the hash does not depend on where the
-    # repository is checked out.
-    running = hashlib.sha256()
-    for path in files:
-        running.update(str(path.relative_to(PLUGINS)).encode())
-        running.update(b"\0")
-        running.update(digest(path).encode())
-        running.update(b"\n")
-    return running.hexdigest()
-
-
-def crate_names():
-    return sorted(p.parent.parent.name for p in PLUGINS.glob("*/src/lib.rs"))
-
-
-def write_hashes():
-    """Record each built component's source hash. Called by plugins/build.sh."""
-    for crate in crate_names():
-        (PLUGINS / "dist" / f"{crate}.srchash").write_text(source_digest(crate) + "\n")
-        print(f"  {crate:15} source hash recorded")
-    return 0
-
-
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--write-hashes",
-        action="store_true",
-        help="record each component's source hash (plugins/build.sh does this)",
-    )
-    args = parser.parse_args()
-    if args.write_hashes:
-        return write_hashes()
-
     failures = []
 
     vendored = PLUGINS / "wit" / "plugin.wit"
@@ -102,7 +44,7 @@ def main():
         if digest(vendored) != digest(upstream):
             failures.append(
                 f"contract drift: {vendored.relative_to(REPO)} differs from "
-                f"{upstream}\n    re-copy it and rebuild the plugins"
+                f"{upstream}\n    re-copy it and run ./do plugins"
             )
         else:
             print(f"  contract    matches {upstream}")
@@ -110,29 +52,17 @@ def main():
         # Not a failure: the sibling checkout is a convention, not a guarantee.
         print(f"  contract    {upstream} absent; drift not checked")
 
-    crates = crate_names()
+    crates = sorted(p.parent.parent.name for p in PLUGINS.glob("*/src/lib.rs"))
     for crate in crates:
         component = PLUGINS / "dist" / f"{crate}.wasm"
-        if not component.exists():
-            failures.append(f"{crate}: not built -- run plugins/build.sh")
-            continue
-
-        recorded = PLUGINS / "dist" / f"{crate}.srchash"
-        if not recorded.exists():
-            failures.append(
-                f"{crate}: {component.relative_to(REPO)} has no recorded source "
-                f"hash -- run plugins/build.sh"
-            )
-            continue
-
-        if recorded.read_text().strip() != source_digest(crate):
-            failures.append(
-                f"{crate}: sources have changed since the component was built "
-                f"-- run plugins/build.sh"
-            )
-            continue
-
-        print(f"  {crate:15} {component.stat().st_size:>7} bytes, current")
+        if component.exists():
+            print(f"  {crate:15} {component.stat().st_size:>7} bytes, built")
+        else:
+            # Informational, not a failure. `./do check` is meant to run on a
+            # machine with no wasm toolchain and no network; requiring a built
+            # component here would take that away for no gain, since pm simply
+            # runs without a plugin it does not have.
+            print(f"  {crate:15} not built (./do plugins)")
 
     if failures:
         print("plugins: FAILED", file=sys.stderr)
@@ -140,7 +70,7 @@ def main():
             print(f"  {failure}", file=sys.stderr)
         return 1
 
-    print(f"plugins: {len(crates)} plugin(s) built against the current contract")
+    print(f"plugins: {len(crates)} plugin(s) against the current contract")
     return 0
 
 
