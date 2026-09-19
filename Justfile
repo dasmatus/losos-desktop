@@ -174,7 +174,7 @@ build target="":
     done < "{{repo}}/out/configure.args"
   fi
 
-  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure "${remembered[@]+"${remembered[@]}"}"
+  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure --allow-unresolved "${remembered[@]+"${remembered[@]}"}"
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
 
   if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
