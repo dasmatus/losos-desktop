@@ -129,10 +129,14 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   so `cargo build --release` arrives in the jail as `rustup`, invoked as
   `rustup`, and dies with `error: unexpected argument '--release' found` and a
   `Usage: rustup[EXE] <+toolchain>` that names a program the recipe never
-  mentioned. The `Containerfile` points the `cargo` shim at the real binary for
-  exactly this reason; `docs/host-requirements.md` says the same for a native
-  build. Anything else multi-call — busybox, a `*-config` symlink farm — has the
-  same problem, and it only ever shows up in a real build.
+  mentioned. The `Containerfile` puts links to the real `cargo`, `rustc` and
+  `rustdoc` ahead of rustup's own bin for exactly this reason, and `rustc` is
+  there because dropping the `cargo` shim drops the toolchain setup it did for
+  its children: the real cargo looks `rustc` up on `PATH`, lands back on a shim
+  once per crate, and rustup then tries to install a component into a finished
+  image. `docs/host-requirements.md` says the same for a native build. Anything
+  else multi-call — busybox, a `*-config` symlink farm — has the same problem,
+  and it only ever shows up in a real build.
 - **A compiled-in absolute path resolves into the host mirror.** pm's run jail
   extracts a package at `/pkg` *and* mirrors the host's `/usr` read-only, so a
   binary that opens `/usr/lib/os-release` gets the build host's file and reports

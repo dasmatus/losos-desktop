@@ -190,7 +190,7 @@ RUN for tool in ar nm ranlib strip objcopy objdump readelf; do \
 # distribution's pm plugins to components.
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
+    PATH=/usr/local/rust-bin:/usr/local/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --no-modify-path --profile minimal \
           --default-toolchain "$RUST_VERSION" \
@@ -198,23 +198,42 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       x86_64-unknown-linux-musl \
       aarch64-unknown-linux-musl \
       wasm32-unknown-unknown \
- `# The one line here that is not installation. rustup ships cargo as a` \
- `# SYMLINK to rustup itself, and the binary decides which tool it is from` \
- `# the name it was invoked under. pm canonicalises a step first word on` \
- `# the host (C3), and that resolves the symlink -- so a recipe asking for` \
- `# cargo build --release reaches the jail as rustup, invoked as rustup,` \
- `# and rustup own argument parser rejects it:` \
+ `# Everything from here to chmod is one fix, and it needs both halves.` \
+ `#` \
+ `# rustup ships cargo, rustc and rustdoc as SYMLINKS to rustup, and the` \
+ `# binary works out which tool it is from the name it was invoked under.` \
+ `# pm canonicalises a step first word on the host (C3), and canonicalising` \
+ `# resolves the symlink, so a recipe asking for cargo reaches the jail as` \
+ `# rustup holding cargo arguments:` \
  `#` \
  `#     error: unexpected argument --release found` \
  `#     Usage: rustup[EXE] <+toolchain>` \
  `#` \
- `# Pointing the shim straight at the real cargo makes the canonical path` \
- `# a cargo again. What is given up is rustup toolchain switching for that` \
- `# one name -- +toolchain, rust-toolchain.toml -- which this image has no` \
- `# use for: it pins RUST_VERSION and installs exactly that toolchain and` \
- `# no other. rustc keeps its shim, because nothing canonicalises it --` \
- `# cargo looks rustc up for itself and gets the name right.` \
- && ln -sf "$(rustup which cargo)" "$CARGO_HOME/bin/cargo" \
+ `# A directory of links to the real binaries, ahead of rustup own bin on` \
+ `# PATH, gives the canonical path a cargo again.` \
+ `#` \
+ `# rustc has to come along, and that is the half that is easy to miss. The` \
+ `# rustup cargo shim sets the toolchain up for its child processes; the` \
+ `# real cargo does not, so it looks rustc up on PATH and lands back on the` \
+ `# shim once per crate. rustup then decides the toolchain wants syncing` \
+ `# and tries to install a component into an image that is finished:` \
+ `#` \
+ `#     error: component download failed for rust-src: could not rename` \
+ `#     downloaded file ... No such file or directory` \
+ `#` \
+ `# which surfaces as a cargo build failing to compile a build script of` \
+ `# a dependency, naming neither rustup nor this file. Linking rustc too` \
+ `# keeps the whole build inside the toolchain and out of rustup.` \
+ `#` \
+ `# rustup itself stays on PATH and keeps its own name, which is what` \
+ `# rustup target add above and anyone updating this image needs. What is` \
+ `# given up is toolchain switching through these three names -- no` \
+ `# +toolchain, no rust-toolchain.toml -- which an image that pins` \
+ `# RUST_VERSION and installs exactly that toolchain has no use for.` \
+ && mkdir -p /usr/local/rust-bin \
+ && for tool in cargo rustc rustdoc; do \
+      ln -sf "$(rustup which "$tool")" "/usr/local/rust-bin/$tool"; \
+    done \
  && chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"
 
 # mkosi, pinned to a commit rather than taken from the archive.
