@@ -122,6 +122,16 @@ RUN apt-get update --error-on=any \
       `# cannot tell whether CFI works from a flag that never compiled.` \
       clang lld llvm libclang-rt-${LLVM_VERSION}-dev \
       \
+      `# mold is the linker manifest/toolchain.yaml names; lld is still above` \
+      `# it because the kernel takes ld.lld from LLVM=1 and does not support` \
+      `# mold. llvm-*-linker-tools is the one that is easy to lose: it is the` \
+      `# only package carrying LLVMgold.so, llvm-*-dev does not depend on it,` \
+      `# and mold does LTO through that plugin where lld has LTO built in. So` \
+      `# dropping it turns every link in the tree into` \
+      `# "mold: fatal: could not open plugin file", which names clang's` \
+      `# directory and reads as a broken compiler.` \
+      mold llvm-${LLVM_VERSION}-linker-tools \
+      \
       `# llvm-*-dev is here for its cmake package, not its headers.` \
       `# compiler-rt configures standalone and calls find_package(LLVM);` \
       `# when that fails it falls back to CompilerRTMockLLVMCMakeConfig,` \
@@ -182,7 +192,10 @@ RUN for tool in ar nm ranlib strip objcopy objdump readelf; do \
       [ -e "/usr/bin/llvm-$tool" ] && continue; \
       ln -s "../lib/llvm-${LLVM_VERSION}/bin/llvm-$tool" "/usr/bin/llvm-$tool"; \
     done \
- && clang --version && llvm-ar --version >/dev/null && ld.lld --version
+ && clang --version && llvm-ar --version >/dev/null && ld.lld --version \
+ && ld.mold --version \
+ `# The plugin is a file nothing execs, so nothing above would have missed it.` \
+ && test -e "/usr/lib/llvm-${LLVM_VERSION}/lib/LLVMgold.so"
 
 # Rust from rustup rather than Debian, for the musl targets. Both architectures
 # are installed in one image so the same image builds the x86_64 and the aarch64
