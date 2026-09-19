@@ -273,9 +273,12 @@ jobs:
       # copied from pin-sources.yml, whose comment calls the mirror "several
       # gigabytes". It is not, by an order of magnitude, and the step cost 27
       # seconds a leg to reclaim space nothing needed. The image build after it
-      # may well want that room -- docs/limits.md puts the layer archives at
-      # tens of gigabytes -- but that is a claim about a build that has never
-      # completed, and it does not belong to a caching change.
+      # may well want that room -- docs/limits.md reasons from C5/C6 that the
+      # intermediates "plausibly run to tens of gigabytes", and the hedge is
+      # the honest part: nothing has measured them, because no image build has
+      # ever completed. #50 prints the free space before the build and `du`s
+      # out/pkgs afterwards, so that number will exist. Reclaiming space for a
+      # figure nobody has yet is not a caching change's to do.
       #
       # Keyed on the lock, because the lock is exactly what decides the
       # mirror's contents. `restore-keys` takes the previous mirror when the
