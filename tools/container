@@ -14,9 +14,10 @@ confusing failure if it does not:
     from inside pm's sandbox, which reads as a problem with the workspace.
   * **pm resolves a step's first word on the host** (C3), and here the host is
     the container. That is the whole reason this exists.
-  * **TMPDIR must be on real disk** (C11). `./do` already redirects it into
-    `out/tmp`, which is bind-mounted, so a build's several GB land on the
-    repository's filesystem and not in the container's RAM.
+  * **TMPDIR must be on real disk** (C11). The Justfile already redirects it
+    into `out/tmp`, which is bind-mounted, so a build's several GB land on the
+    repository's filesystem and not in the container's RAM -- and the engine
+    itself reads that same TMPDIR, which is why `ensure_tmpdir` below exists.
 
 The sibling `pm` checkout is mounted too, at the same relative position it has
 outside, because two gates resolve pm's *source* independently of `$PM` and
@@ -51,6 +52,29 @@ def runtime():
         "  The Containerfile is the build host; without a runtime you are back\n"
         "  to installing docs/host-requirements.md by hand."
     )
+
+
+def ensure_tmpdir():
+    """Make TMPDIR exist before the container engine is handed it.
+
+    The Justfile exports `TMPDIR=<repo>/out/tmp` for every recipe, because pm's
+    workspaces have to land on real disk rather than in a tmpfs (C11). Only the
+    recipes that go on to run pm create the directory, though, and the container
+    recipes do not -- so on a fresh checkout, where `out/` does not exist at all,
+    podman inherits a TMPDIR that is not there and dies before it has read a line
+    of the Containerfile:
+
+      Error: creating build container: ... creating a temporary directory:
+      stat .../out/tmp: no such file or directory
+
+    which reads as a broken Containerfile, or as a missing image, and is neither.
+    It belongs here rather than in each of the four container recipes because
+    this program is also run directly, and because the engine's need for a usable
+    TMPDIR is this program's business and not the Justfile's.
+    """
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        Path(tmpdir).mkdir(parents=True, exist_ok=True)
 
 
 def pm_root():
@@ -150,6 +174,7 @@ def main():
     runner.set_defaults(handler=run)
 
     args = parser.parse_args()
+    ensure_tmpdir()
     return args.handler(runtime(), args)
 
 
