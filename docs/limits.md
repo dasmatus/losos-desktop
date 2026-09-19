@@ -31,9 +31,17 @@ clang resolves a sanitizer runtime out of its own **resource directory** —
 — and it consults neither `--sysroot` nor `-L` nor `-B` on the way. Measured by
 asking the driver to print its commands with the manifest's exact flag set: the
 one path it names is
-`/usr/lib/llvm-18/lib/clang/18/lib/linux/libclang_rt.cfi_diag-x86_64.a`. That
-file is on the build host, inside pm's read-only `/usr` mirror (C7), and it was
-compiled against glibc.
+`/usr/lib/llvm-18/lib/clang/18/lib/linux/libclang_rt.cfi-x86_64.a` — `cfi_diag`
+in place of `cfi` while `cfi.trap` is `false`, which is the only thing the mode
+changes here. That file is on the build host, inside pm's read-only `/usr`
+mirror (C7), and it was compiled against glibc.
+
+The same is true of `libclang_rt.builtins` and of compiler-rt's
+`clang_rt.crtbegin`/`crtend`, which `target.rtlib` now puts on every link line.
+Those two are less exposed than a sanitizer runtime — builtins are compiler
+intrinsics and the crt objects are a handful of symbols, neither of which
+reaches into libc internals — but they come from the same place and are subject
+to the same argument.
 
 So the failure mode is not a missing file, which would be loud. It is a silent
 substitution: every CFI-built package links the host's glibc runtime into a
@@ -46,6 +54,56 @@ stages — which also has to carry clang's builtin headers, because the same
 directory is where `stddef.h` and `immintrin.h` come from. That is a change to
 `manifest/toolchain.yaml` affecting every package's flags, so it is written
 down here rather than guessed at.
+
+## CFI traps instead of diagnosing, because there is no unwinder
+
+`manifest/toolchain.yaml` sets `cfi.trap: true`, and it is marked temporary
+there. The distribution wants the other mode: `-fno-sanitize-trap=cfi` makes a
+violation print the call site it happened at, which systemd-coredump can then
+record, instead of raising SIGILL with nothing attached.
+
+That mode is unavailable, not unchosen. `-fno-sanitize-trap` puts
+`libclang_rt.cfi_diag` on the link line; cfi_diag walks the stack to find the
+call site; the walk calls `_Unwind_Backtrace` and `_Unwind_GetIP`:
+
+```
+ld.lld: error: undefined symbol: _Unwind_Backtrace
+>>> referenced by sanitizer_unwind_linux_libcdep.cpp.o
+    in archive .../libclang_rt.cfi_diag-x86_64.a
+```
+
+musl has no unwinder, `libgcc_s` is not in this sysroot, and LLVM's libunwind
+is not built here. `libclang_rt.cfi`, which trap mode links instead, carries no
+`_Unwind` reference at all.
+
+**What is lost is the call site, and nothing else.** CFI is still enforced —
+every scheme, cross-DSO included — and a violation still stops the process. It
+stops with SIGILL, so the report says that a program died rather than which
+indirect call was wrong.
+
+The way back is an unwinder for the musl target in the sysroot, and then
+`target.unwindlib: libunwind`. `-lunwind` is an ordinary library name and
+resolves through `--sysroot`, so unlike the resource-directory problem above it
+needs no change to how clang is pointed at anything. It is not one recipe,
+though, and the reason is worth writing down because the first attempt looks
+like it worked:
+
+- `libunwind/CMakeLists.txt` in 18.1.8 has no `project()` and no
+  `enable_language(ASM)` of its own — it is meant to be added as a
+  subdirectory, not configured. Configured directly it configures, builds and
+  installs without a warning, **silently dropping** `UnwindRegistersSave.S` and
+  `UnwindRegistersRestore.S`. The `libunwind.a` that comes out has no
+  `__unw_getcontext` in it, and the only symptom is the next link.
+- The supported entry point is `runtimes/` with
+  `-DLLVM_ENABLE_RUNTIMES=libunwind`. That needs `GetHostTriple.cmake`, which
+  ships in neither `llvm-N-dev` nor `cmake-N.src.tar.xz` — only in the full
+  LLVM source tree. `AddLLVM.cmake` and `HandleLLVMOptions.cmake` do come from
+  `llvm-N-dev`, so it is that one module that would force the pin.
+
+So restoring diagnose mode costs a new pinned source (the LLVM tarball, for one
+cmake module), a patch to `runtimes/CMakeLists.txt`, or a libunwind build that
+does not go through cmake. That is a pin this tree would carry for years, which
+is why it is a decision written down here rather than one taken in passing.
 
 ## pm has no package store
 

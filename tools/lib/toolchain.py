@@ -70,6 +70,22 @@ class Toolchain:
             flags.append(f"--sysroot={sysroot}")
         return flags
 
+    def runtime_flags(self):
+        """Which runtime library and unwinder clang links against.
+
+        Link-time only, deliberately. They are accepted on a compile line and
+        do nothing there, and clang then warns about an unused argument for
+        every translation unit in the distribution.
+        """
+        flags = []
+        rtlib = self.target.get("rtlib")
+        if rtlib:
+            flags.append(f"--rtlib={rtlib}")
+        unwindlib = self.target.get("unwindlib")
+        if unwindlib:
+            flags.append(f"--unwindlib={unwindlib}")
+        return flags
+
     def cflags(self, package=None):
         """The compile flags, minus whatever `package` is exempt from."""
         drops = self._drops(package)
@@ -111,7 +127,12 @@ class Toolchain:
     def ldflags(self, package=None):
         drops = self._drops(package)
         linker = self.compiler.get("linker")
-        flags = [] if "target" in drops else list(self.target_flags())
+        # The runtime flags ride with `target` rather than with `hardening`:
+        # they name what the target's libc is built alongside, and the two
+        # packages that drop `target` -- musl and the kernel -- are exactly the
+        # two that must not be handed compiler-rt. musl is building the sysroot
+        # these would resolve out of, and the kernel supplies its own.
+        flags = [] if "target" in drops else self.target_flags() + self.runtime_flags()
         if linker:
             # CFI needs a linker that understands the bitcode it is merging.
             flags.append(f"-fuse-ld={linker}")
