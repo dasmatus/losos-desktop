@@ -34,20 +34,33 @@ steps:
 # off instead would drop /usr/bin/zstd from the image, which is a separate
 # decision and not this one's to make.
 #
-# The flags are the per-package response files, not the layer's shared ones,
-# and the spelling is the whole mechanism: an exception in
-# manifest/toolchain.yaml applies only to a recipe that names it, so
-# @CFLAGS_RSP@ here would leave the entry inert with nothing to say so. zstd's
-# drops `stdlibxx`, which puts -nostdlib++ on the link. project() at
-# build/cmake/CMakeLists.txt:33 names CXX for contrib code this recipe does not
-# build, cmake tests every language project() names, and clang++ links libstdc++
-# by default -- which no musl sysroot here has. Without it the step dies at
-# `mold: fatal: library not found: stdc++` before zstd compiles anything.
+# CMAKE_CXX_COMPILER_WORKS is what stops cmake compiling a C++ program this
+# build has no use for. project() at build/cmake/CMakeLists.txt:33 names CXX
+# alongside C and ASM, for the contributed code under contrib/ and the tests --
+# ZSTD_BUILD_CONTRIB and ZSTD_BUILD_TESTS are both off here, so not one C++
+# translation unit is compiled. cmake tests every language project() names
+# anyway, before reading a line of the project, and that test is a C++ link
+# against a musl sysroot with no C++ runtime in it at all. Measured rather than
+# assumed: with this set, zstd builds libzstd_shared and every CLI target to
+# completion with CMAKE_CXX_COMPILER pointed at a program that exits 1 on every
+# invocation.
+#
+# Tombstone: a `drops: [stdlibxx]` exception in manifest/toolchain.yaml was
+# tried here first, by analogy with libunwind, and is not coming back. It fixed
+# the wrong failure. -nostdlib++ does clear `mold: fatal: library not found:
+# stdc++`, and the next error is underneath it: the layer keeps CFI, so clang
+# puts libclang_rt.ubsan_standalone_cxx on a C++ link, and that archive needs
+# the C++ ABI -- `undefined symbol: typeinfo for std::type_info`,
+# `__dynamic_cast`. Having told the link to bring no C++ runtime, there was
+# nothing left to satisfy it. Dropping CFI as well would have configured, at
+# the price of unhardening a decompressor that parses untrusted input, in order
+# to support compiling no C++. libunwind's exception stays right for libunwind,
+# which really is C++ and really does link it.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/zstd/build/cmake -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_ZSTD@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP_ZSTD@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_ZSTD@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_ZSTD@ -DZSTD_BUILD_STATIC=OFF -DZSTD_PROGRAMS_LINK_SHARED=ON
+  - cmake -S /build/src/zstd/build/cmake -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DZSTD_BUILD_STATIC=OFF -DZSTD_PROGRAMS_LINK_SHARED=ON -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile
