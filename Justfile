@@ -165,6 +165,9 @@ build target="":
     # mirror exists, so the fallback container needs the host network to reach it.
     # Only forward a PM override when it lives under the mounted PM_ROOT; an
     # arbitrary host path would point outside the container's filesystem.
+    # The recursive `just build` reads out/configure.args back from disk, so keep
+    # the mounted copy in sync with the effective remembered arguments here.
+    printf '%s\n' "${remembered[@]}" > "{{repo}}/out/configure.args"
     container_pm="{{pm}}"
     case "$container_pm" in
       "{{pm_root}}"/*) ;;
