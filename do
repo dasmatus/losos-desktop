@@ -51,9 +51,16 @@ recipe_needs_image_host() {
 }
 
 image_build_prereqs_ready() {
-  command -v mkosi >/dev/null 2>&1 || return 1
-  command -v qemu-img >/dev/null 2>&1 || return 1
-  command -v xorriso >/dev/null 2>&1 || return 1
+  local mkosi_path mkosi_resolved qemu_path xorriso_path
+  mkosi_path=$(command -v mkosi 2>/dev/null) || return 1
+  qemu_path=$(command -v qemu-img 2>/dev/null) || return 1
+  xorriso_path=$(command -v xorriso 2>/dev/null) || return 1
+  case "$qemu_path" in /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) ;; *) return 1 ;; esac
+  case "$xorriso_path" in /bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) ;; *) return 1 ;; esac
+  [ "$mkosi_path" = "/usr/bin/mkosi" ] || return 1
+  [ -L "$mkosi_path" ] || return 1
+  mkosi_resolved=$(readlink -f "$mkosi_path") || return 1
+  [ "$mkosi_resolved" = "/usr/lib/mkosi/bin/mkosi" ] || return 1
   [ -f "$repo/plugins/dist/losos-image.wasm" ] || return 1
   [ -f "$repo/plugins/dist/losos-mkosi.wasm" ] || return 1
 }
@@ -62,7 +69,7 @@ build_in_container() {
   local target="$1"
   echo "do: host lacks the pinned mkosi image-build prerequisites; building $target in the container host" >&2
   python3 "$repo/tools/container" build
-  python3 "$repo/tools/container" run /bin/sh -eu -c './do plugins && ./do build "$1"' _ "$target"
+  python3 "$repo/tools/container" run /bin/sh -eu -c 'LOSOS_MIRROR_PORT="$1"; export LOSOS_MIRROR_PORT; ./do plugins && ./do build "$2"' _ "$mirror_port" "$target"
 }
 
 cmd_configure() {
