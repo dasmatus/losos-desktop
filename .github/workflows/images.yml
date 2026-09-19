@@ -298,7 +298,7 @@ jobs:
       # both fetch the whole mirror before either save lands. That is real and
       # it is left alone: `cache/save` reserves the key before it uploads, so
       # the loser warns and stays green rather than uploading a second copy,
-      # the two fetches are concurrent so the run is no longer for it, and the
+      # the two fetches run concurrently so the run takes no longer, and the
       # cost is one extra 475 MB of upstream traffic on a cold cache. After a
       # lock bump `restore-keys` gives both legs the previous mirror and each
       # tops up only the source that moved, which is a few megabytes twice.
