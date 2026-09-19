@@ -12,7 +12,7 @@ failure -- it is a version nobody can confirm from here, which is worth saying
 out loud.
 
     tools/check-latest                 # report
-    tools/check-latest --apply         # rewrite manifest/sources.lock
+    tools/check-latest --apply         # rewrite manifest/sources.lock + recipes
     tools/check-latest --only LINUX
     tools/check-latest --refresh       # ignore the cache
 
@@ -25,10 +25,18 @@ invocation, as fast as the link allows, is impolite by construction -- and
 Version comparison is by release tuple, not by string: '1.2.10' is newer than
 '1.2.9', and a plain sort says otherwise. Anything that does not parse as a
 release tuple is skipped rather than compared wrongly.
+
+`--apply` moves three things together, because moving fewer is how a tree
+starts lying about what it contains: the lock's url and version, the lock's
+sha256 back to the TODO sentinel (a hash cannot survive a version bump, and
+tools/fetch-sources is the only thing that may write a new one), and the
+`version:` list of the recipe that downloads it, which tools/gates/versions.py
+checks against the lock.
 """
 
 import argparse
 import hashlib
+import importlib.util
 import re
 import subprocess
 import sys
@@ -112,13 +120,17 @@ def from_listing(url, pattern, refresh=False):
 
 
 def probe(key, entry):
-    """Return the newest version upstream offers, or None if unknowable here.
+    """Return (newest version, its url), or None if unknowable here.
 
     Each branch reads the listing that actually contains the releases, which is
-    usually the parent of the tarball's own URL.
+    usually the parent of the tarball's own URL. The URL comes back with the
+    version because the two are not independent: how a version is spelled into
+    a URL differs per upstream, and the branch that read the listing is the one
+    that knows.
     """
     url = entry["url"]
     name = url.rsplit("/", 1)[-1]
+    pinned = str(entry.get("version", ""))
 
     # GNOME: sources/<pkg>/<major.minor>/<pkg>-<version>.tar.xz. The series
     # directory has to be resolved first, because the newest tarball lives in
@@ -129,10 +141,18 @@ def probe(key, entry):
         series = from_listing(base, r'href="(\d+(?:\.\d+)?)/"')
         if series is None:
             return None
-        return from_listing(
+        latest = from_listing(
             f"{base}{series}/",
             rf'{re.escape(package)}-(\d[\d.]*)\.tar\.xz'
         )
+        if latest is None:
+            return None
+        # Built from the series the listing actually named, not by substituting
+        # into the old URL: the series is its own path segment, so 47.2 -> 48.0
+        # by string replacement leaves the URL pointing into .../47/ for a
+        # tarball that only exists under .../48/.
+        head, _, tail = name.rpartition(pinned)
+        return latest, f"{base}{series}/{head}{latest}{tail}"
 
     # kernel.org, and everything else that is a plain indexed directory.
     parent = url.rsplit("/", 1)[0] + "/"
@@ -142,15 +162,109 @@ def probe(key, entry):
         suffix = r"\.tar\.(?:xz|gz|bz2)"
         found = from_listing(parent, rf'{prefix}-(\d[\d.]*?){suffix}')
         if found:
-            return found
+            # Substituted across the whole URL rather than only the basename:
+            # several of these embed the version in a path segment as well as
+            # in the filename, and rebuilding from `parent` would carry the old
+            # segment forward.
+            return found, url.replace(pinned, found)
 
     return None
+
+
+def _versions_gate():
+    """The version gate, imported rather than reimplemented.
+
+    tools/gates/versions.py owns what a recipe's `version:` list must look like
+    and which recipes the rule applies to. Copying its two regexes here would
+    make this tool right until the day one of them changed, and the symptom
+    would be a bump that writes a recipe the gate then rejects.
+    """
+    path = REPO / "tools" / "gates" / "versions.py"
+    spec = importlib.util.spec_from_file_location("versions_gate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def bump_recipes(repo, key, version, gate=None):
+    """Rewrite the `version:` list of every recipe that downloads `key`.
+
+    A bump that moved sources.lock alone builds the new tarball under the old
+    name, everywhere: in the archive name, in `pm explain`, and in every
+    dependent's carried copy. tools/gates/versions.py fails that tree, so
+    without this every candidate bump would be rejected by `./do check` before
+    anything got the chance to test the bump itself.
+
+    A recipe that downloads more than one source is skipped, exactly as the
+    gate skips it: there is no single upstream version for it to agree with.
+    """
+    gate = gate or _versions_gate()
+    touched = []
+    items = "\n".join(f"- '{part}'" for part in version.split("."))
+
+    for template in sorted((repo / "recipes").glob("*/*/build.yaml.in")):
+        text = template.read_text()
+        keys = set(gate.URL_TOKEN.findall(text))
+        if keys != {key}:
+            continue
+        if not gate.VERSION_BLOCK.search(text):
+            continue
+        old = gate.recipe_version(text)
+        text = gate.VERSION_BLOCK.sub(f"version:\n{items}\n", text, count=1)
+
+        # The header comment states the version too -- "# zlib 1.3.1" -- and a
+        # header left behind is a recipe that reads as the old version to every
+        # human who opens it. Rewritten only when it is exactly the old version
+        # at the end of the first line, so a header that says something else
+        # is never mangled.
+        if old:
+            lines = text.splitlines()
+            stale = ".".join(old)
+            if lines and lines[0].startswith("# ") and lines[0].endswith(f" {stale}"):
+                lines[0] = lines[0][: -len(stale)] + version
+                text = "\n".join(lines) + "\n"
+
+        template.write_text(text)
+        touched.append(str(template.relative_to(repo)))
+
+    return touched
+
+
+def apply_to_lock(text, key, old_url, new_url, version):
+    """Move one entry in sources.lock to `version` at `new_url`.
+
+    The entry is found by scanning to the next top-level key rather than by a
+    fixed window of lines. A fixed window silently skips the fields of any
+    entry that grew a comment -- ZLIB carries three lines of one -- and the
+    field it skips is `sha256:`, which would leave the lock pinning new bytes
+    to the old hash. pm verifies that digest before it parses anything, so the
+    failure presents as a compromised mirror.
+    """
+    text = text.replace(old_url, new_url)
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith(f"{key}:"):
+            continue
+        for offset in range(index + 1, len(lines)):
+            stripped = lines[offset].strip()
+            if lines[offset] and not lines[offset][0].isspace() and stripped:
+                break
+            indent = lines[offset][: len(lines[offset]) - len(lines[offset].lstrip())]
+            if stripped.startswith("version:"):
+                lines[offset] = f"{indent}version: '{version}'"
+            elif stripped.startswith("sha256:"):
+                # A hash cannot survive a version bump, and nothing in this
+                # tree may compose one: TODO is the sentinel that sends the
+                # entry back through tools/fetch-sources --update.
+                lines[offset] = f"{indent}sha256: TODO"
+        break
+    return "\n".join(lines) + "\n"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true",
-                        help="rewrite sources.lock with the newest versions")
+                        help="rewrite sources.lock and the recipes that read it")
     parser.add_argument("--only", help="check a single sources.lock key")
     parser.add_argument("--refresh", action="store_true",
                         help="ignore the listing cache and re-fetch")
@@ -164,17 +278,19 @@ def main():
         if args.only and key != args.only:
             continue
         pinned = str(entry.get("version", ""))
-        latest = probe(key, entry)
-        if latest is None:
+        answer = probe(key, entry)
+        if answer is None:
             unknown.append((key, pinned, entry["url"]))
-        elif latest != pinned and version_key(latest) > version_key(pinned):
-            outdated.append((key, pinned, latest, entry["url"]))
+            continue
+        latest, url = answer
+        if latest != pinned and version_key(latest) > version_key(pinned):
+            outdated.append((key, pinned, latest, entry["url"], url))
         else:
             current.append((key, pinned))
 
     for key, pinned in sorted(current):
         print(f"  current   {key:26} {pinned}")
-    for key, pinned, latest, _ in sorted(outdated):
+    for key, pinned, latest, _old, _new in sorted(outdated):
         print(f"  OUTDATED  {key:26} {pinned} -> {latest}")
     for key, pinned, url in sorted(unknown):
         host = url.split("://")[1].split("/")[0]
@@ -194,31 +310,135 @@ def main():
 
     if args.apply and outdated:
         text = lock.read_text()
-        for key, pinned, latest, url in outdated:
-            # Rewrite the URL and the version together: every one of these URLs
-            # embeds the version, often more than once, so bumping the version
-            # field alone would leave the tree downloading the old tarball and
-            # calling it the new one.
-            text = text.replace(url, url.replace(pinned, latest))
-            lines = text.splitlines()
-            for index, line in enumerate(lines):
-                if line.startswith(f"{key}:"):
-                    for offset in range(index + 1, min(index + 6, len(lines))):
-                        if lines[offset].strip().startswith("version:"):
-                            indent = " " * (len(lines[offset]) - len(lines[offset].lstrip()))
-                            lines[offset] = f"{indent}version: {latest}"
-                        # The hash cannot survive a version bump.
-                        if lines[offset].strip().startswith("sha256:"):
-                            indent = " " * (len(lines[offset]) - len(lines[offset].lstrip()))
-                            lines[offset] = f"{indent}sha256: TODO"
-                    break
-            text = "\n".join(lines) + "\n"
+        for key, _pinned, latest, old_url, new_url in outdated:
+            text = apply_to_lock(text, key, old_url, new_url, latest)
         lock.write_text(text)
-        print(f"\ncheck-latest: bumped {len(outdated)} source(s); every hash it "
-              "touched is back to TODO.\n  Run tools/fetch-sources --update.")
+
+        gate = _versions_gate()
+        recipes = []
+        for key, _pinned, latest, _old, _new in outdated:
+            recipes += bump_recipes(REPO, key, latest, gate=gate)
+
+        print(f"\ncheck-latest: bumped {len(outdated)} source(s) and "
+              f"{len(recipes)} recipe(s); every hash it touched is back to "
+              "TODO.\n  Run tools/fetch-sources --update.")
+        for path in recipes:
+            print(f"    {path}")
 
     return 0
 
 
+# --- self-test ------------------------------------------------------------
+#
+# A bump is three edits that have to agree, across two files, and the way it
+# goes wrong is silently: an edit that lands nowhere leaves the tree looking
+# bumped and pinned to the version it was on. Each case below builds a
+# throwaway tree, runs the real thing over it, and asserts the verdict -- with
+# no network involved.
+
+def self_test():
+    import tempfile
+
+    ok = True
+
+    def check(name, got, want):
+        nonlocal ok
+        if got != want:
+            ok = False
+            print(f"  MISSED  {name}", file=sys.stderr)
+            print(f"          expected {want!r}, got {got!r}", file=sys.stderr)
+        else:
+            print(f"  ok      {name}")
+
+    # -- apply_to_lock -----------------------------------------------------
+    #
+    # Shaped like the real ZLIB entry, comment and all: the comment is what
+    # pushed `sha256:` out of the fixed six-line window this used to scan, so
+    # the bump landed with the old hash still in place.
+    entry = (
+        "ZLIB:\n"
+        "  # zlib.net serves only the current release and 1.3.1 has rolled\n"
+        "  # off it (404). This is the same tarball from the author's own\n"
+        "  # GitHub release, so the bytes are unchanged by the move.\n"
+        "  url: https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz\n"
+        "  version: '1.3.1'\n"
+        "  sha256: 38ef96b8dfe510d42707d9c781877914792541133e1870841463bfa73f883e32\n"
+        "\n"
+        "XZ:\n"
+        "  url: https://example.invalid/xz-5.6.3.tar.xz\n"
+        "  version: '5.6.3'\n"
+        "  sha256: cafe\n"
+    )
+    moved = apply_to_lock(
+        entry, "ZLIB",
+        "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz",
+        "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.xz",
+        "1.3.2")
+    parsed = yaml.safe_load(moved)
+    check("the url moves", parsed["ZLIB"]["url"].endswith("v1.3.2/zlib-1.3.2.tar.xz"), True)
+    check("the version moves, quoted", parsed["ZLIB"]["version"], "1.3.2")
+    check("the hash goes back to TODO past a three-line comment",
+          parsed["ZLIB"]["sha256"], "TODO")
+    check("the next entry is untouched", parsed["XZ"]["sha256"], "cafe")
+
+    # A trailing zero must survive the round trip: unquoted, YAML reads 2.70 as
+    # the float 2.7, which is how @VERSION_LIBCAP@ once rendered a directory
+    # name that did not exist.
+    trailing = apply_to_lock(
+        "LIBCAP:\n  url: https://example.invalid/libcap-2.69.tar.xz\n"
+        "  version: '2.69'\n  sha256: cafe\n",
+        "LIBCAP", "https://example.invalid/libcap-2.69.tar.xz",
+        "https://example.invalid/libcap-2.70.tar.xz", "2.70")
+    check("a trailing zero stays a string",
+          yaml.safe_load(trailing)["LIBCAP"]["version"], "2.70")
+
+    # -- bump_recipes ------------------------------------------------------
+    gate = _versions_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "manifest").mkdir(parents=True)
+        (root / "manifest" / "sources.lock").write_text(
+            "ZLIB:\n  url: https://example.invalid/zlib-1.3.2.tar.xz\n"
+            "  version: '1.3.2'\n  sha256: TODO\n"
+            "LINUX:\n  url: https://example.invalid/linux-7.2.6.tar.xz\n"
+            "  version: '7.2.6'\n  sha256: TODO\n")
+        one = root / "recipes" / "00-base" / "zlib"
+        one.mkdir(parents=True)
+        (one / "build.yaml.in").write_text(
+            "# zlib 1.3.1\n#\n# Compression.\nname: zlib\nversion:\n- '1'\n- '3'\n"
+            "- '1'\ndependencies: []\nsteps:\n- stage: Prepare\n  name: fetch\n"
+            "  dl_urls:\n    @URL_ZLIB@: '@SHA256_ZLIB@'\n  run:\n  - true\n")
+        two = root / "recipes" / "00-base" / "kernel"
+        two.mkdir(parents=True)
+        (two / "build.yaml.in").write_text(
+            "# kernel\nname: kernel\nversion:\n- '7'\n- '2'\n- '6'\n"
+            "dependencies: []\nsteps:\n- stage: Prepare\n  name: fetch\n"
+            "  dl_urls:\n    @URL_LINUX@: '@SHA256_LINUX@'\n"
+            "    @URL_ZLIB@: '@SHA256_ZLIB@'\n  run:\n  - true\n")
+
+        touched = bump_recipes(root, "ZLIB", "1.3.2", gate=gate)
+        check("only the recipe that downloads it is touched",
+              touched, ["recipes/00-base/zlib/build.yaml.in"])
+        bumped = (one / "build.yaml.in").read_text()
+        check("the version list follows the source",
+              gate.recipe_version(bumped), ["1", "3", "2"])
+        check("the header comment follows too",
+              bumped.splitlines()[0], "# zlib 1.3.2")
+        check("a two-source recipe is skipped, as the gate skips it",
+              gate.recipe_version((two / "build.yaml.in").read_text()),
+              ["7", "2", "6"])
+        # The gate over the tree `--apply` would leave behind: the lock above
+        # already carries 1.3.2, so a recipe this wrote and a recipe the gate
+        # accepts have to be the same recipe.
+        failures, _ = gate.check(root)
+        check("and nothing the gate would reject was written",
+              [f for f in failures if "zlib" in f], [])
+
+    print("check-latest --self-test: " + ("all cases behave" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(self_test())
     sys.exit(main())
