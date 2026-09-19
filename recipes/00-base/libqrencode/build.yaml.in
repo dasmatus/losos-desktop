@@ -1,6 +1,14 @@
 # libqrencode 4.1.1
 #
 # systemd-cryptenroll prints recovery keys as QR codes; bsod shows one too.
+#
+# Built with cmake rather than ./configure, which is not a preference. fukuchi.org
+# stopped serving the autotools dist tarball and the GitHub release carries no
+# asset, so manifest/sources.lock points at the git archive -- and a git archive
+# has configure.ac but no generated `configure`. Running autoreconf is not an
+# option either: it matches no fingerprint in pm's table, so the step would be
+# refused before it ran (C2). The CMakeLists.txt in the same tarball builds the
+# same library, and `cmake` is already a host requirement.
 name: libqrencode
 version:
 - '4'
@@ -19,35 +27,45 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_LIBQRENCODE@ --no-same-owner -C /build/src/libqrencode --strip-components=1
 
-# ./configure has no -C and there is no `cd` in a build step (C1), so the one
-# permitted wrapper puts it in the build directory. configure takes VAR=value
-# as positional arguments, which is how the toolchain and the sysroot are
-# reached without `env`.
+# Three options carry the whole configuration, and each is a default this build
+# cannot take:
 #
-# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
-# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
-# separate arguments and configure would reject the first it did not know.
-# The response file is one word, and clang expands it. Its contents come from
-# manifest/toolchain.yaml -- LTO and CFI included.
+#   * BUILD_SHARED_LIBS defaults to NO here -- unusually -- so without it the
+#     package installs libqrencode.a and nothing links against it.
+#   * WITH_TOOLS defaults to YES and builds the qrencode command, which pulls in
+#     libpng. libpng is not in this layer, so find_package(PNG) would reach past
+#     the sysroot into pm's read-only mirror of the host's /usr and link the
+#     build host's copy. Nothing here needs the command; systemd wants the
+#     library.
+#   * WITH_TESTS stays NO, which also keeps the internal symbols static.
+#
+# CMAKE_C_FLAGS is a clang @response-file, not a flag list: pm splits a command
+# on whitespace, so a multi-word flag string would arrive as separate arguments.
+# No CXX variables, because the project declares LANGUAGES C and cmake warns
+# about manually-specified variables it never used.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libqrencode /build/src/libqrencode/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - cmake -S /build/src/libqrencode -B /build/b/libqrencode -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DBUILD_SHARED_LIBS=ON -DWITH_TOOLS=NO -DWITH_TESTS=NO
 
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - make -C /build/b/libqrencode -j @JOBS@
+  - cmake --build /build/b/libqrencode -j @JOBS@
 
-# DESTDIR as a make argument, not the environment variable: pm already sets
-# DESTDIR=/dest, and the second install has to override it.
+# The sysroot install goes through make rather than `cmake --install --prefix`.
+# DESTDIR=/dest is in the environment of every step, and cmake prepends it to
+# whatever --prefix says: that spelling wrote the whole tree into
+# /dest/build/sysroot/usr and left the sysroot empty, so a sibling in the same
+# bundle linked against nothing. A variable set on make's command line is
+# exported, which is the DESTDIR cmake_install.cmake actually reads.
 - stage: Build
   name: install
   dl_urls: null
   run:
-  - make -C /build/b/libqrencode install DESTDIR=/dest
+  - cmake --install /build/b/libqrencode
   - make -C /build/b/libqrencode install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
