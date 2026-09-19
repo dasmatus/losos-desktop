@@ -31,13 +31,21 @@ import re
 import sys
 from pathlib import Path
 
-import yaml
-
 REPO = Path(__file__).resolve().parent.parent.parent
 
 # A step that runs a source tree's `configure`. The leading slash keeps this
-# off tools/configure, which recipes mention in comments.
+# off tools/configure, which recipes mention in comments; the end-of-line
+# alternative catches a step whose configure takes no arguments at all, which
+# is the one shape a lookahead for whitespace alone would wave through.
 CONFIGURE = re.compile(r"/configure(?=\s|$)")
+
+# Tombstone: this gate was briefly rewritten to yaml.safe_load the template and
+# walk steps[].run instead of scanning lines, which is the tidier shape and
+# cannot work. A build.yaml.in is not YAML -- `@URL_ACL@: '@SHA256_ACL@'` opens
+# with a character YAML reserves, and safe_load raises ScannerError on the
+# first recipe that downloads anything. It is a template, and only
+# tools/configure's substitution makes it parseable. Scanning lines is not a
+# shortcut here; it is the only thing that reads what a human edits.
 
 # Packages whose `configure` is not autoconf's and does not take --host.
 EXEMPT = {
@@ -68,22 +76,19 @@ def main():
 
     for template in sorted((REPO / "recipes").glob("*/*/build.yaml.in")):
         package = template.parent.name
-        doc = yaml.safe_load(template.read_text()) or {}
-        for step in doc.get("steps") or []:
-            for command in step.get("run") or []:
-                if not CONFIGURE.search(command):
-                    continue
-                if package in EXEMPT:
-                    continue
-                checked += 1
-                if "--host=" not in command:
-                    failures.append(
-                        f"{template.relative_to(REPO)}:{step.get('name', '?')}: "
-                        f"configure with no --host.\n    Add "
-                        f"--host=@ARCH_TRIPLE@, or name {package} in EXEMPT here "
-                        f"with the reason."
-                    )
+        for number, line in enumerate(template.read_text().splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#") or not CONFIGURE.search(line):
                 continue
+            if package in EXEMPT:
+                continue
+            checked += 1
+            if "--host=" not in line:
+                failures.append(
+                    f"{template.relative_to(REPO)}:{number}: configure with no "
+                    f"--host.\n    Add --host=@ARCH_TRIPLE@, or name {package} "
+                    f"in EXEMPT here with the reason."
+                )
 
     if failures:
         print("cross-configure: FAILED", file=sys.stderr)

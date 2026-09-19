@@ -41,11 +41,19 @@ steps:
 # UnwindRegistersRestore.S rather than failing on them. See the patch for the
 # measurement. Applied with no fuzz, so a version bump that moves those lines
 # fails here rather than applying somewhere it was not meant to.
+#
+# @RECIPE@/files/libunwind/, not @RECIPE@/files/: a layer is one build file
+# composed from every member (manifest/layers.yaml), so tools/configure copies
+# each member's files/ under its own package name to keep two members from
+# overwriting each other's. The path only looks redundant from inside one
+# recipe. Shortening it to @RECIPE@/files/patches points at a directory that
+# does not exist, and apply-patches.sh says so at build time and nowhere
+# earlier.
 - stage: Build
   name: patch
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/patches /build/src/llvm/libunwind
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/libunwind/patches /build/src/llvm/libunwind
 
 # LIBUNWIND_USE_COMPILER_RT because there is no libgcc in this sysroot and no
 # gcc on the build host, which is the same reason target.rtlib exists.
@@ -92,5 +100,5 @@ steps:
   run:
   - test -f /dest/usr/lib/libunwind.a
   - test -e /dest/usr/lib/libunwind.so
-  - /bin/sh @RECIPE@/files/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.a
-  - /bin/sh @RECIPE@/files/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.so
+  - /bin/sh @RECIPE@/files/libunwind/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.a
+  - /bin/sh @RECIPE@/files/libunwind/check-unwinder.sh @NM@ /dest/usr/lib/libunwind.so
