@@ -92,6 +92,12 @@ cmd_lint() {
   # adds the cases that prove the gate can fail. A gate never shown to
   # fail is a gate nobody should trust.
   python3 "$repo/tools/gates/versions.py" --self-test
+  # tools/check-latest writes sources.lock and recipe versions from what
+  # upstream answers, and the part that can be wrong without saying so is the
+  # matching: a pattern that stops matching reports a source as `current`
+  # forever. Its self-test needs no network, so it runs here rather than only
+  # in the workflow that uses it.
+  python3 "$repo/tools/check-latest" --self-test >/dev/null
   "$repo/tools/gates/explain-all"
 }
 

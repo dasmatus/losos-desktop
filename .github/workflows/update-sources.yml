@@ -1,0 +1,469 @@
+# Propose upstream version bumps, one tested candidate at a time.
+#
+# tools/check-latest asks every upstream what its newest stable release is --
+# including the thirty-two on github.com, which have no browsable directory
+# listing and are asked over the REST API instead. That answer alone is not
+# worth committing: an upstream that renamed its tarball, moved its release
+# assets, or changed how it tags gives an answer this tree cannot build from,
+# and a sweep that wrote all of them at once would turn one bad answer into a
+# lock nobody can bisect.
+#
+# So every candidate is tested ALONE, in its own matrix leg, and only the ones
+# that survive are collected into a proposal. A leg that fails costs nothing
+# and takes nothing down with it -- it is reported in the pull request body as
+# a bump that is not ready, next to the reason.
+#
+# What a leg actually proves, and what it does not. It proves the new URL
+# exists and serves bytes that hash (tools/fetch-sources downloads them and
+# records the digest -- no hash here is ever composed), that the lock and the
+# recipe moved together, and that the whole tree still passes `./do check`:
+# schema, URL form, fingerprints, the download-path digest, `pm explain`. It
+# does NOT compile anything. `./do build` is the full chain from a musl
+# toolchain upward and cannot be run once per candidate, so a bump that
+# configures wrong or drops an option still reaches the proposal -- see
+# docs/pm-constraints.md and the note on meson options in the pull request
+# body. That is why this opens a pull request and never merges one.
+#
+# Deliberately not part of images.yml. That workflow builds and publishes; a
+# source bump has no business sharing its jobs, and this one asks for write
+# permission that images.yml is careful never to hold.
+name: update-sources
+
+on:
+  schedule:
+    # Weekly, off the hour, on a day that is not Monday morning for everyone.
+    - cron: "41 5 * * 2"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "One sources.lock key, instead of everything outdated"
+        type: string
+      limit:
+        description: "Most candidates to test in one run"
+        type: string
+        default: "20"
+      include_held:
+        description: "Include the sources check-latest holds back"
+        type: boolean
+        default: false
+
+# Read-only by default. Only `propose` writes, and it asks for it itself.
+permissions:
+  contents: read
+
+# One run at a time: two overlapping runs would each rewrite the proposal
+# branch from its own survey, and the second would land on top of the first
+# with no relation to it. Queued rather than cancelled -- a run that has
+# already spent twenty legs downloading tarballs should be allowed to finish.
+concurrency:
+  group: update-sources
+  cancel-in-progress: false
+
+env:
+  # The same commit images.yml pins, and for the same reason: two gates that
+  # follow pm's tip are two gates that can disagree with each other and with
+  # whatever this repository's own CI approved.
+  PM_REF: 145bae94bf170a9779029abdb41777ea380dc9f0
+
+jobs:
+  # What upstream says, turned into a matrix. Nothing here writes to the tree.
+  survey:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.ask.outputs.matrix }}
+      any: ${{ steps.ask.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install what check-latest needs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-yaml
+
+      # Every dispatch input reaches this step as an environment variable and
+      # none is spliced into a command line or into Python source: an input is
+      # whatever the person dispatching typed, and `${{ }}` substitution
+      # happens before the shell ever sees the script.
+      - name: Ask every upstream
+        id: ask
+        env:
+          # Unauthenticated, api.github.com allows sixty requests an hour and
+          # this reads one listing per GitHub-hosted source. Without a token
+          # the sweep starts returning 403 partway through and reports the
+          # rest as `unknown`, which reads exactly like upstreams nobody can
+          # parse. The token is read-only; this job holds nothing else.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ONLY: ${{ inputs.only }}
+          LIMIT: ${{ inputs.limit }}
+          INCLUDE_HELD: ${{ inputs.include_held }}
+        run: |
+          set -- --refresh --json survey.json
+          [ -n "$ONLY" ] && set -- "$@" --only "$ONLY"
+          [ "$INCLUDE_HELD" = true ] && set -- "$@" --include-held
+          python3 tools/check-latest "$@"
+          # The matrix is capped. A sweep after a quiet month can turn up
+          # thirty outdated sources, and thirty legs each downloading a
+          # tarball and running the full gate is a lot of runner time to spend
+          # on a proposal nobody asked for yet. The rest come back next week.
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          raw = os.environ.get("LIMIT", "").strip()
+          limit = int(raw) if raw.isdigit() and int(raw) > 0 else 20
+          keys = [e["key"] for e in json.load(open("survey.json"))["outdated"]][:limit]
+          print("matrix=" + json.dumps(keys))
+          print("any=" + ("true" if keys else "false"))
+          PY
+
+      - name: Say what was found
+        run: |
+          {
+            echo '## What upstream says'
+            echo
+            echo '```'
+            python3 - <<'PY'
+          import json
+          doc = json.load(open("survey.json"))
+          for e in doc["outdated"]:
+              print(f'  OUTDATED  {e["key"]:26} {e["from"]} -> {e["to"]}')
+          for e in doc["held"]:
+              print(f'  held      {e["key"]:26} {e["from"]} -> {e["to"]}')
+          print(f'\n{len(doc["current"])} current, {len(doc["outdated"])} outdated, '
+                f'{len(doc["held"])} held, {len(doc["unknown"])} unknowable from here')
+          PY
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with: { name: survey, path: survey.json }
+
+  # pm, built once. Every leg below needs the binary for `./do check`, and a
+  # cargo build per leg would be most of each leg's wall clock -- and would
+  # let twenty legs gate against twenty separately built binaries.
+  toolchain:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { repository: dichhead/pm, ref: "${{ env.PM_REF }}" }
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with: { name: pm-binary, path: target/release/pm }
+
+  # One candidate, alone, all the way through.
+  try:
+    needs: [survey, toolchain]
+    if: needs.survey.outputs.any == 'true'
+    strategy:
+      fail-fast: false
+      # Every leg downloads a source tarball, some of them large, and several
+      # legs commonly share an upstream -- twenty at once is a burst at one
+      # host for no gain, since nothing here is waiting on the result.
+      max-parallel: 6
+      matrix:
+        key: ${{ fromJSON(needs.survey.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    steps:
+      # The layout the gates assume: tools/gates/fingerprint-lint.py reads
+      # ../pm/src/policy.rs and tools/gates/plugins.py reads ../pm/wit, and
+      # both DOWNGRADE SILENTLY when pm is not there -- the run still prints
+      # "check: green" having checked less than it says.
+      - uses: actions/checkout@v4
+        with: { path: losos-desktop }
+      - uses: actions/checkout@v4
+        with: { repository: dichhead/pm, path: pm, ref: "${{ env.PM_REF }}" }
+
+      - name: Install what the gates need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm libclang-rt-18-dev python3-yaml
+
+      # pm's jail is a user namespace, and Ubuntu 24.04 ships
+      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
+      # uid_map write hakoniwa needs. Without this every pm invocation fails
+      # with "Operation not permitted" from inside the sandbox.
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - uses: actions/download-artifact@v4
+        with: { name: pm-binary, path: pm-bin }
+      - run: chmod +x pm-bin/pm
+
+      # Moves the lock's url and version, resets its hash to the TODO
+      # sentinel, and moves the `version:` list of the recipe that downloads
+      # it. All three or none: tools/gates/versions.py rejects a tree where
+      # the recipe and the lock disagree, so a partial bump would fail the
+      # gate below for a reason that has nothing to do with the bump.
+      - name: Bump ${{ matrix.key }}
+        id: bump
+        continue-on-error: true
+        working-directory: losos-desktop
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEY: ${{ matrix.key }}
+        run: |
+          python3 tools/check-latest --only "$KEY" --include-held --apply \
+            --json "$GITHUB_WORKSPACE/moved.json"
+
+      # The first real test: the URL upstream advertised has to exist and
+      # serve bytes. The hash written here is what those bytes hashed to --
+      # nothing in this tree composes one, because pm verifies a dl_urls
+      # digest before it parses the build file and a wrong value is
+      # indistinguishable from a compromised mirror.
+      - name: Fetch it and record what it hashed to
+        id: fetch
+        continue-on-error: true
+        working-directory: losos-desktop
+        env:
+          KEY: ${{ matrix.key }}
+        run: python3 tools/fetch-sources --update --only "$KEY"
+
+      # The second: the whole tree still configures, signs, proves its
+      # download-path digest against pm, and passes every lint.
+      - name: ./do check
+        id: gate
+        continue-on-error: true
+        working-directory: losos-desktop
+        run: PM=$GITHUB_WORKSPACE/pm-bin/pm ./do check
+
+      # Always, pass or fail: a leg that says nothing is a leg `propose`
+      # cannot tell apart from one that never ran.
+      - name: Record the verdict
+        if: always()
+        working-directory: losos-desktop
+        env:
+          KEY: ${{ matrix.key }}
+          BUMP: ${{ steps.bump.outcome }}
+          FETCH: ${{ steps.fetch.outcome }}
+          GATE: ${{ steps.gate.outcome }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bump"
+          status=passed
+          failed_at=""
+          for stage in "bump:$BUMP" "fetch:$FETCH" "gate:$GATE"; do
+            if [ "${stage#*:}" != success ]; then
+              status=failed
+              failed_at="${stage%%:*}"
+              break
+            fi
+          done
+          if [ "$status" = passed ]; then
+            git diff > "$GITHUB_WORKSPACE/bump/$KEY.patch"
+            # A bump that changed nothing is a bump that silently did not
+            # happen, and an empty patch would apply cleanly in `propose` and
+            # propose nothing.
+            if [ ! -s "$GITHUB_WORKSPACE/bump/$KEY.patch" ]; then
+              status=failed
+              failed_at="bump (wrote nothing)"
+              rm -f "$GITHUB_WORKSPACE/bump/$KEY.patch"
+            fi
+          fi
+          STATUS="$status" FAILED_AT="$failed_at" python3 - <<'PY' > "$GITHUB_WORKSPACE/bump/$KEY.json"
+          import json, os, pathlib
+          moved = pathlib.Path(os.environ["GITHUB_WORKSPACE"]) / "moved.json"
+          entry = {}
+          if moved.exists():
+              for candidate in json.loads(moved.read_text())["outdated"]:
+                  if candidate["key"] == os.environ["KEY"]:
+                      entry = candidate
+          print(json.dumps({
+              "key": os.environ["KEY"],
+              # From the leg's own bump, not the survey's: minutes passed
+              # between them and an upstream can cut a release in minutes.
+              "from": entry.get("from", "?"),
+              "to": entry.get("to", "?"),
+              "status": os.environ["STATUS"],
+              "failed_at": os.environ["FAILED_AT"],
+              "run": os.environ["RUN"],
+          }, indent=2))
+          PY
+          cat "$GITHUB_WORKSPACE/bump/$KEY.json"
+          # The leg stays green either way: an upstream that is not ready is a
+          # normal outcome, and a red scheduled run every week teaches everyone
+          # to ignore red runs. It says so where the run page shows it.
+          if [ "$status" = passed ]; then
+            echo "- \`$KEY\` ok" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- \`$KEY\` not ready: failed at \`$failed_at\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bump-${{ matrix.key }}
+          path: bump/
+
+  # Collect what survived, gate the combination, and open the proposal.
+  propose:
+    needs: [survey, try]
+    if: always() && needs.survey.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: losos-desktop, fetch-depth: 0 }
+      - uses: actions/checkout@v4
+        with: { repository: dichhead/pm, path: pm, ref: "${{ env.PM_REF }}" }
+
+      - name: Install what the gates need
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang lld llvm libclang-rt-18-dev python3-yaml
+
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - uses: actions/download-artifact@v4
+        with: { name: pm-binary, path: pm-bin }
+      - run: chmod +x pm-bin/pm
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bump-*
+          merge-multiple: true
+          path: bump
+      - uses: actions/download-artifact@v4
+        with: { name: survey, path: survey }
+
+      # Each bump that applies is committed as it lands, so a bump that does
+      # NOT apply can be cleaned up with a hard reset without taking the ones
+      # already applied with it. `git apply --3way` leaves conflict markers
+      # and a half-staged index behind when it fails, and there is no way to
+      # undo just that much.
+      - name: Apply every bump that passed
+        id: apply
+        working-directory: losos-desktop
+        run: |
+          base=$(git rev-parse HEAD)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          applied=""
+          for verdict in "$GITHUB_WORKSPACE"/bump/*.json; do
+            [ -e "$verdict" ] || continue
+            key=$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(d['key'] if d['status']=='passed' else '')" "$verdict")
+            [ -n "$key" ] || continue
+            # --3way: every bump patches the same sources.lock, and a context
+            # line that a neighbouring bump moved is a conflict worth
+            # reporting rather than a patch worth guessing at.
+            if git apply --3way "$GITHUB_WORKSPACE/bump/$key.patch"; then
+              git add -A && git commit -q -m "bump $key"
+              applied="$applied $key"
+            else
+              echo "::warning::$key passed on its own but does not apply alongside the others"
+              git reset --hard -q
+            fi
+          done
+          # Back to one change against the base, still staged: the commit
+          # below is written from the whole set, not from the order they
+          # happened to apply in.
+          git reset --soft -q "$base"
+          echo "applied=${applied# }" >> "$GITHUB_OUTPUT"
+
+      # A leg only ever saw its own bump. Two sources that each pass alone can
+      # still disagree once both are in the tree, so the combination is gated
+      # as a tree in its own right.
+      - name: ./do check over the combination
+        if: steps.apply.outputs.applied != ''
+        working-directory: losos-desktop
+        run: PM=$GITHUB_WORKSPACE/pm-bin/pm ./do check
+
+      - name: Write the proposal
+        if: steps.apply.outputs.applied != ''
+        env:
+          APPLIED: ${{ steps.apply.outputs.applied }}
+        run: |
+          python3 - <<'PY' > "$GITHUB_WORKSPACE/body.md"
+          import json, os, pathlib
+          workspace = pathlib.Path(os.environ["GITHUB_WORKSPACE"])
+          survey = json.loads((workspace / "survey" / "survey.json").read_text())
+          verdicts = sorted((json.loads(p.read_text()) for p in (workspace / "bump").glob("*.json")),
+                            key=lambda v: v["key"])
+          applied = set(os.environ["APPLIED"].split())
+
+          print("**Before:** the tree is pinned to the versions that were current "
+                "when someone last looked. **After:** it is pinned to the newest "
+                "stable release each of these upstreams offers, with every hash "
+                "re-fetched from the bytes that URL actually serves.\n")
+          print("Opened by `.github/workflows/update-sources.yml`. Each bump below "
+                "was applied on its own, fetched on its own and gated on its own "
+                "before it was collected here; the combination was gated again.\n")
+          print("| source | from | to | |")
+          print("|---|---|---|---|")
+          for v in verdicts:
+              if v["status"] != "passed":
+                  verdict = f'not ready: failed at `{v["failed_at"]}`'
+              elif v["key"] not in applied:
+                  verdict = "passed alone, but does not apply alongside the rest"
+              else:
+                  verdict = "ok"
+              print(f'| `{v["key"]}` | {v["from"]} | {v["to"]} | {verdict} |')
+          for e in survey["held"]:
+              print(f'| `{e["key"]}` | {e["from"]} | {e["to"]} | held: {e["why"]} |')
+          unknown = survey["unknown"]
+          if unknown:
+              print(f'\n{len(unknown)} source(s) could not be checked from the '
+                    "runner at all and are not in the table: "
+                    + ", ".join(f'`{e["key"]}`' for e in unknown) + ".")
+          print("\n## How\n")
+          print("`tools/check-latest` reads each upstream's release index, and "
+                "api.github.com for the thirty-two sources that publish none. For "
+                "each candidate it moves the lock's url and version together, "
+                "resets the hash to the `TODO` sentinel, and moves the `version:` "
+                "list of the recipe that downloads it, which "
+                "`tools/gates/versions.py` checks against the lock. "
+                "`tools/fetch-sources --update` then writes the hash the bytes "
+                "actually produced -- no hash here was composed.\n")
+          print("## What a green run does not prove\n")
+          print("`./do check` lints the tree; it compiles nothing. A bump whose "
+                "upstream renamed a meson option, dropped a configure flag or "
+                "moved a header passes every gate above and fails in `./do build` "
+                "-- nothing in this repository validates a recipe's `-D` options "
+                "against the sources, because that would need the sources. Read "
+                "the release notes for anything crossing a major version.\n")
+          print("The prose comment beside a moved entry in "
+                "`manifest/sources.lock` was written about the version that was "
+                "there before. No machine rewrote it.\n")
+          print("`images.yml` does not run on this pull request: GitHub does not "
+                "fire workflows for a pull request opened with `GITHUB_TOKEN`. "
+                "Push any commit to the branch to get the full build.")
+          PY
+
+      - name: Push the branch and open or refresh the pull request
+        if: steps.apply.outputs.applied != ''
+        working-directory: losos-desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLIED: ${{ steps.apply.outputs.applied }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          branch=automation/source-updates
+          git checkout -q -b "$branch"
+          # Conventional Commits, written from the diff, with no trailer of
+          # any kind -- the same rule a human commit here follows (CLAUDE.md).
+          git commit -q \
+            -m "chore: bump $(echo "$APPLIED" | wc -w) upstream source(s) to latest stable" \
+            -m "$(for key in $APPLIED; do echo "- $key"; done)" \
+            -m "Versions read from each upstream's release index, and from api.github.com for the sources that publish no browsable one. Every hash was written by tools/fetch-sources from the bytes the new URL served; none was composed. Each bump was applied, fetched and gated on its own before being collected here, and the combination was gated again."
+          # Force, because the branch is this workflow's alone: every run
+          # proposes the state of upstream now, rebuilt from the base branch,
+          # rather than last week's proposal with more commits on top.
+          git push --force origin "$branch"
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --base "$BASE" --head "$branch" \
+              --title "chore: bump upstream sources to latest stable" \
+              --body-file "$GITHUB_WORKSPACE/body.md"
+          else
+            gh pr edit "$branch" \
+              --title "chore: bump upstream sources to latest stable" \
+              --body-file "$GITHUB_WORKSPACE/body.md"
+          fi
+
+      - name: Say that nothing is ready
+        if: steps.apply.outputs.applied == ''
+        run: |
+          echo "::notice::no candidate passed; nothing proposed."
+          echo 'No candidate survived its own leg, so nothing was proposed.' \
+            >> "$GITHUB_STEP_SUMMARY"
