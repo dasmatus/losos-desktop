@@ -31,12 +31,18 @@ steps:
   run:
   - cmake --build /build/b/zstd -j @JOBS@
 
+# The sysroot install goes through make rather than `cmake --install --prefix`.
+# DESTDIR=/dest is in the environment of every step, and cmake prepends it to
+# whatever --prefix says: that spelling wrote the whole tree into
+# /dest/build/sysroot/usr and left the sysroot empty, so a sibling in the same
+# bundle linked against nothing. A variable set on make's command line is
+# exported, which is the DESTDIR cmake_install.cmake actually reads.
 - stage: Build
   name: install
   dl_urls: null
   run:
   - cmake --install /build/b/zstd
-  - cmake --install /build/b/zstd --prefix /build/sysroot/usr
+  - make -C /build/b/zstd install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
 - stage: Test
