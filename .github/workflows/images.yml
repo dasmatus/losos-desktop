@@ -24,6 +24,23 @@ on:
 permissions:
   contents: read
 
+env:
+  # The pm commit every job here builds and runs, spelled once, the way
+  # update-sources.yml already spells it.
+  #
+  # Pinned, not `master`. tools/gates/plugins.py compares plugins/wit/plugin.wit
+  # byte for byte against this checkout's copy, so following pm's tip makes this
+  # repository's CI a function of another repository's HEAD: when pm merged its
+  # plugin contract change, every open pull request here went red on a tree
+  # nobody had touched. This is the commit the vendored contract is a copy of.
+  #
+  # It had been written out separately in each of the three jobs that check pm
+  # out, which is one copy per job to keep in step; it is now also what
+  # .github/actions/pm keys pm's build cache on, and a key derived from a
+  # second copy of a constant is a key that lies the first time someone bumps
+  # only one of them.
+  PM_REF: 145bae94bf170a9779029abdb41777ea380dc9f0
+
 jobs:
   # The channel, decided once. It used to be derived independently in `build`
   # (into $GITHUB_ENV) and again in `publish` (in shell), while `verify` and
@@ -52,14 +69,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
-      - uses: actions/checkout@v4
-        # Pinned, not `master`. tools/gates/plugins.py compares
-        # plugins/wit/plugin.wit byte for byte against this checkout's copy,
-        # so following pm's tip makes this repository's CI a function of
-        # another repository's HEAD: when pm merged its plugin contract
-        # change, every open pull request here went red on a tree nobody had
-        # touched. This is the commit the vendored contract is a copy of.
-        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
       - name: Install the toolchain the gates need
         run: |
@@ -78,17 +87,46 @@ jobs:
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      - name: Build pm
-        run: cargo build --release --manifest-path pm/Cargo.toml
+      # Checks out the pinned pm and leaves a release binary at
+      # pm/target/release/pm -- from this run, or from the cache an earlier run
+      # filled, since the pin decides the binary and the pin rarely moves.
+      # `encoder: true` because this is the only job that builds the plugin
+      # components, and pm's encoder is what wraps them.
+      - uses: ./losos-desktop/.github/actions/pm
+        with: { ref: "${{ env.PM_REF }}", encoder: "true" }
 
       # The components are not committed, so CI builds them -- and this is the
       # only place `explain-all` runs with the plugins actually loaded. It needs
       # the wasm32 target and pm's encoder, which is why it is not part of
       # `./do check` (that has to run with no network and no wasm toolchain).
+      #
+      # Cached on everything that decides the two .wasm files: the crates they
+      # are compiled from, the contract they are compiled against, and the pm
+      # commit whose encoder wraps them. Nothing reads plugins/dist out of the
+      # tree -- tools/sign-all installs whatever is there into pm's trust store
+      # -- so a restore is indistinguishable from having just built them.
+      - id: components
+        uses: actions/cache/restore@v4
+        with:
+          path: losos-desktop/plugins/dist
+          key: plugins-${{ runner.os }}-${{ runner.arch }}-${{ env.PM_REF }}-${{ hashFiles('losos-desktop/plugins/**/*.rs', 'losos-desktop/plugins/**/Cargo.toml', 'losos-desktop/plugins/Cargo.lock', 'losos-desktop/plugins/wit/*.wit', 'losos-desktop/plugins/build.sh') }}
+
       - name: Build the plugin components
+        if: steps.components.outputs.cache-hit != 'true'
         run: |
           rustup target add wasm32-unknown-unknown
           cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm ./do plugins
+
+      # Saved here rather than from a post step, for the reason
+      # .github/actions/pm gives at length: `actions/cache` writes its entry
+      # only when the whole job succeeded, and the point of keeping the
+      # components is to make the next attempt after a red gate quick.
+      - name: Keep the plugin components
+        if: steps.components.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: losos-desktop/plugins/dist
+          key: ${{ steps.components.outputs.cache-primary-key }}
 
       - name: ./do check
         working-directory: losos-desktop
@@ -114,11 +152,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
+      # Checked out directly rather than through .github/actions/pm, and
+      # deliberately. That action's whole output is a pm binary built on the
+      # runner; this job exists to build one INSIDE the image, with the image's
+      # toolchain, and a host binary handed to it would make the job prove
+      # nothing. Only the pin is shared.
       - uses: actions/checkout@v4
-        # The same pin as `gates` and `build`, for the same reason: a gate run
-        # against a different pm than the others approved is checking a tree
-        # nobody else checked.
-        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
+        with: { repository: dichhead/pm, path: pm, ref: "${{ env.PM_REF }}" }
 
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
@@ -177,11 +217,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
-      - uses: actions/checkout@v4
-        # Pinned for the reason given in `gates` above: a build running
-        # against a different pm than the gate approved is verifying a tree
-        # that was never checked.
-        with: { repository: dichhead/pm, path: pm, ref: 145bae94bf170a9779029abdb41777ea380dc9f0 }
 
       - name: Install build dependencies
         run: |
@@ -209,8 +244,45 @@ jobs:
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
-      - name: Build pm
-        run: cargo build --release --manifest-path pm/Cargo.toml
+      # The same pm the gate approved, out of the same cache entry: a build
+      # running against a different pm than the gate approved is verifying a
+      # tree that was never checked.
+      - uses: ./losos-desktop/.github/actions/pm
+        with: { ref: "${{ env.PM_REF }}" }
+
+      # The mirror below is several gigabytes, and restoring it from the cache
+      # writes exactly as many as fetching it does. Reclaiming first is cheaper
+      # than discovering two thirds of the way through that the runner's disk
+      # is mostly preinstalled toolchains this build never touches --
+      # .github/workflows/pin-sources.yml has done this since it was written.
+      - name: Make room for the mirror
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      # A hundred-odd pinned tarballs, fetched identically by both
+      # architectures on every run, from two dozen upstreams of which three
+      # have already moved out from under this repository. Keeping them means
+      # an upstream going dark stops being a red build.
+      #
+      # Keyed on the lock, because the lock is exactly what decides the
+      # mirror's contents. `restore-keys` takes the previous mirror when the
+      # lock has been edited, so only the source that actually moved is fetched
+      # again; out/sources is content-addressed (out/sources/<sha256>/<name>),
+      # so a directory left behind by a superseded pin is unreachable rather
+      # than wrong.
+      #
+      # Safe by construction rather than by trust: tools/fetch-sources re-hashes
+      # every file it finds and re-downloads anything that does not match its
+      # pin, so a truncated or tampered cache entry fails here exactly as a bad
+      # upstream would. The bytes are still pinned; only where they came from
+      # has changed.
+      - id: mirror
+        uses: actions/cache/restore@v4
+        with:
+          path: losos-desktop/out/sources
+          key: sources-${{ hashFiles('losos-desktop/manifest/sources.lock') }}
+          restore-keys: sources-
 
       # pm's downloader compiles Mozilla's roots in and reads no CA setting, so
       # it cannot fetch through a TLS-terminating proxy. Mirroring first and
@@ -218,6 +290,23 @@ jobs:
       - name: Mirror the pinned sources
         working-directory: losos-desktop
         run: python3 tools/fetch-sources
+
+      # Saved the moment the mirror is complete and verified, not from a post
+      # step. What follows this line is a multi-hour image build, and
+      # `actions/cache` writes its entry only when the whole job succeeded: a
+      # mirror kept only on a green run is a mirror re-fetched from two dozen
+      # upstreams after every red one.
+      #
+      # `cache-hit` is true only on an exact match, so a run that restored an
+      # older mirror through `restore-keys` and topped it up saves the
+      # topped-up one under the current lock's key. That is the case this
+      # exists for.
+      - name: Keep the source mirror
+        if: steps.mirror.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: losos-desktop/out/sources
+          key: ${{ steps.mirror.outputs.cache-primary-key }}
 
       # The channel comes from the `channel` job, not from the event read a
       # second time here: a tag builds stable, everything else nightly, and

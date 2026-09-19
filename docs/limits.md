@@ -38,6 +38,25 @@ build graph is seven layer bundles and not ninety package nodes — but it still
 means changing one GNOME package rebuilds that entire layer. There is no
 incremental path, and adding one means adding content addressing to pm.
 
+**CI cannot work around this, and does not pretend to.** The workflows cache
+everything that is an *input* to a build — the pm binary, pm's component
+encoder, this repository's plugin components, and the mirror of the
+hundred-odd pinned tarballs — so a run that changes one recipe no longer
+recompiles pm twice and re-downloads several gigabytes from two dozen
+upstreams before it starts. None of that touches the hours. Those are
+`pm build` compiling the layer chain, and it compiles all of it because a
+dependency in pm is a *build file*, loaded and rebuilt: `Graph::visit_dependency`
+rejects a path that is not one. A layer's `.cpkg` from an earlier run is not
+something pm can be handed.
+
+Reusing a built layer would therefore mean one of two things, and both are
+larger than a cache: teaching pm to accept a built archive where a build file
+goes, or generating a stand-in build file per cached layer that unpacks the
+archive into `/dest`. The second stays inside this repository and is the one to
+be careful with — its key has to cover every input to that layer and everything
+below it in the chain, and a key that is subtly wrong ships an image built from
+stale binaries with CI green over it.
+
 ## Archive duplication
 
 Each layer's archive contains the one below it, whole. With seven layers that is

@@ -1,0 +1,125 @@
+# Check out the pinned pm and leave a release binary at pm/target/release/pm.
+#
+# Three jobs in images.yml need one -- `gates`, and `build` once per
+# architecture -- and all three used to spell the same checkout and the same
+# `cargo build --release` for themselves. That is one pm, from one commit,
+# compiled three times on every run of the workflow, before any of the work the
+# workflow exists to do has started.
+#
+# It is a composite action rather than three copies with a cache block bolted
+# onto each because the cache key and the commit it claims to describe have to
+# be one statement. A key that says "pm at <ref>" while the checkout beside it
+# took some other ref is worse than no cache at all: it is a binary nobody
+# built, from a tree nobody reviewed, handed silently to every build below.
+name: Build pm
+description: Check out the pinned pm and build it, reusing an earlier run's binary.
+
+inputs:
+  ref:
+    description: >
+      The pm commit to check out and build. A commit, never a branch: the
+      binary is cached under it, and a branch would key a moving target.
+    required: true
+  encoder:
+    description: >
+      Also build pm's wasm component encoder, which plugins/build.sh needs to
+      wrap this repository's plugin modules into components. Only the gates job
+      builds plugins, so it is off by default and the image builds, which never
+      touch it, do not pay for it.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: dichhead/pm
+        path: pm
+        ref: ${{ inputs.ref }}
+
+    # `ref:` is an expression now where it used to be a literal, and an
+    # expression that evaluates to nothing does not make checkout fail -- it
+    # makes it take the default branch. That is exactly the "this repository's
+    # CI is a function of another repository's HEAD" failure the pin exists to
+    # prevent, arriving with no error to read. Assert what actually landed.
+    #
+    # It is also what makes the cache key honest: the key below is built from
+    # the commit this step has just confirmed is on disk.
+    - id: pin
+      shell: bash
+      run: |
+        have=$(git -C "$GITHUB_WORKSPACE/pm" rev-parse HEAD)
+        if [ "$have" != "${{ inputs.ref }}" ]; then
+          echo "pm is checked out at $have, not the pinned ${{ inputs.ref }}" >&2
+          exit 1
+        fi
+        # The compiler is as much an input to the binary as the source is, and
+        # the runner image's Rust is bumped without anything here changing.
+        # Left out of the key, a toolchain bump is invisible and the cache goes
+        # on serving a binary built by a compiler that is no longer installed.
+        echo "rustc=$(rustc --version | tr ' /()' '----')" >> "$GITHUB_OUTPUT"
+
+    # restore/save rather than plain `actions/cache`, here and at every other
+    # cache in this repository's CI. `actions/cache` writes its entry from a
+    # post step that runs only when the whole job succeeded -- and the job this
+    # runs in goes on to build an operating system for several hours. A pm
+    # binary that is only kept when the image build downstream of it went green
+    # is a pm binary that gets recompiled after every red run, which is exactly
+    # when a fast turnaround matters most. Saving explicitly, immediately after
+    # the thing exists, decouples the two.
+    #
+    # The binary, not target/. pm's target directory is over a gigabyte of
+    # intermediates nothing downstream reads, and this repository's 10 GB of
+    # Actions cache is mostly spoken for by the source mirror.
+    #
+    # No `restore-keys`, deliberately. A prefix fallback is right for a mirror
+    # whose every file is re-verified against a hash before use; it is wrong
+    # for a binary, where the nearest older entry is a different pm and nothing
+    # downstream would notice.
+    - id: binary
+      uses: actions/cache/restore@v4
+      with:
+        path: pm/target/release/pm
+        key: pm-bin-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.rustc }}-${{ inputs.ref }}
+
+    - name: Build pm
+      if: steps.binary.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo build --release --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
+
+    - name: Keep the pm binary
+      if: steps.binary.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: pm/target/release/pm
+        key: ${{ steps.binary.outputs.cache-primary-key }}
+
+    # Tombstone: there was a ~/.cargo/registry cache here too, and it is not
+    # coming back. A cache restores on every run, but the registry is read only
+    # on the rare run where the pin moved and the binary above missed. It spent
+    # a few hundred megabytes of transfer on every job to save a minute on the
+    # one job in fifty that needed it.
+
+    # Keyed separately from the pm binary so the image builds, which pass
+    # `encoder: false`, neither build it nor carry it in their entry. Built
+    # here rather than left to plugins/build.sh, which builds it on demand --
+    # inside the step whose output is itself cached, so a hit on the components
+    # would skip the encoder and a miss would rebuild it every time.
+    - id: encoder
+      if: inputs.encoder == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: pm/plugins/target/release/encoder
+        key: pm-enc-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.rustc }}-${{ inputs.ref }}
+
+    - name: Build pm's component encoder
+      if: inputs.encoder == 'true' && steps.encoder.outputs.cache-hit != 'true'
+      shell: bash
+      run: cargo build --release --manifest-path "$GITHUB_WORKSPACE/pm/plugins/Cargo.toml" -p encoder
+
+    - name: Keep the encoder
+      if: inputs.encoder == 'true' && steps.encoder.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: pm/plugins/target/release/encoder
+        key: ${{ steps.encoder.outputs.cache-primary-key }}
