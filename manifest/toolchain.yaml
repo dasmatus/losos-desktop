@@ -226,6 +226,11 @@ exceptions:
       else in `target` is kept, because unlike musl this does build against a
       sysroot that already holds a libc and compiler-rt's crt objects.
 
+      Dropping it means --unwindlib=none, which is not the same as leaving the
+      flag off: off means clang's build-time default, and the Containerfile's
+      clang defaults to libgcc even under --rtlib=compiler-rt. No sysroot here
+      has libgcc_s. tools/lib/toolchain.py carries the measurement.
+
       CFI and LTO come off for a reason beyond cost. cfi_diag calls into this
       library to report a violation, so instrumenting it puts the reporter
       inside the thing being reported on, and a CFI failure on the unwind path

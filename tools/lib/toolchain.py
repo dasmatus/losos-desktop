@@ -87,14 +87,33 @@ class Toolchain:
         unwinder cannot be handed itself: libunwind's own shared library links
         with --rtlib=compiler-rt like everything else, and a --unwindlib
         naming the library being linked resolves to nothing.
+
+        Dropping it emits `--unwindlib=none`, not nothing. Those are different
+        instructions and the difference is the whole reason this line is
+        written out rather than skipped: omitting the flag does not mean "no
+        unwinder", it means clang's build-time default, and the clang in the
+        Containerfile -- Ubuntu's 18.1.3 (1ubuntu1) -- defaults to libgcc even
+        under --rtlib=compiler-rt. Upstream clang returns UNW_None for
+        compiler-rt on linux-musl, so the reasoning in manifest/toolchain.yaml
+        holds against an unpatched compiler; Ubuntu's patch is what breaks it.
+
+        Measured by asking the driver to print its link command on that exact
+        compiler: with the flag omitted, two "-lgcc_s"; with --unwindlib=none,
+        zero. No sysroot here has libgcc_s, so the omitted form got
+        `ld.lld: error: unable to find library -lgcc_s` out of cmake's own
+        compiler test, before libunwind compiled a single file.
         """
         flags = []
         rtlib = self.target.get("rtlib")
         if rtlib:
             flags.append(f"--rtlib={rtlib}")
         unwindlib = self.target.get("unwindlib")
-        if unwindlib and "unwindlib" not in drops:
-            flags.append(f"--unwindlib={unwindlib}")
+        if unwindlib:
+            flags.append(
+                "--unwindlib=none"
+                if "unwindlib" in drops
+                else f"--unwindlib={unwindlib}"
+            )
         return flags
 
     def cflags(self, package=None):
