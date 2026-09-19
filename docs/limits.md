@@ -162,6 +162,30 @@ covers only the libraries without one and saying so in
 `manifest/toolchain.yaml` instead of claiming the whole set. Nothing here
 picks one.
 
+## The image has libzstd but no zstd command
+
+`/usr/bin/zstd` is not in the image, and neither are `unzstd`, `zstdcat` or
+`zstdmt`. `libzstd.so` is, which is what the OS actually needs: it is systemd's
+journal and coredump compressor, and every user of zstd in this tree is a
+library user.
+
+The CLI is not omitted by preference. zstd's programs call `POOL_create`,
+`POOL_add`, `POOL_free` and `POOL_joinJobs`, which `lib/common/pool.h` declares
+without `ZSTDLIB_API`. This tree compiles everything with `-fvisibility=hidden`,
+so those symbols never reach `libzstd.so`'s dynamic table and `zstd-frugal`
+cannot link against the library built beside it -- `mold: error: undefined
+symbol: POOL_joinJobs`. Upstream's own answer is to link the CLI against the
+static library, which is why `build/cmake/CMakeLists.txt:151` refuses to
+configure a CLI with neither a static library nor a shared link. Building that
+static library is the one way to get the command back, and it contradicts this
+tree's shared-only policy and installs a `libzstd.a` nothing else wants.
+
+Worth an entry rather than a recipe comment because it is visible from a shell
+on the running system rather than only at build time: `zstd` is a command
+people expect a Linux userland to have, and `tar --zstd` will not find one.
+`xz`, `gzip` and `lz4` all ship their commands normally -- lz4's CLI uses only
+its `LZ4LIB_API` entry points, so hidden visibility costs it nothing.
+
 ## Three build tools in the image are the build host's binaries
 
 `losos-15-hosttools` builds gperf, flex and gettext, and

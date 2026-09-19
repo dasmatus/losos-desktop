@@ -19,11 +19,59 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_ZSTD@ --no-same-owner -C /build/src/zstd --strip-components=1
 
+# zstd ships no CMakeLists.txt at the top of its tarball: the whole cmake
+# project lives in build/cmake, and -S has to name it. Pointed at the tarball
+# root, cmake stops before it reads a single option with `The source directory
+# does not appear to contain CMakeLists.txt`.
+#
+# ZSTD_BUILD_PROGRAMS=OFF because the CLI cannot be built here at all, not as
+# a preference. It defaults ON, and with ZSTD_BUILD_STATIC=OFF
+# build/cmake/CMakeLists.txt:151 raises SEND_ERROR -- "You need to build static
+# library to build zstd CLI" -- unless the programs link shared. But the shared
+# link does not work either: this tree compiles with -fvisibility=hidden, and
+# the CLI reaches for POOL_create, POOL_add, POOL_free and POOL_joinJobs, which
+# lib/common/pool.h declares without ZSTDLIB_API. Hidden symbols never reach
+# libzstd.so's dynamic table, so zstd-frugal fails to link against the very
+# library it was just built beside. The third way out -- build the static
+# library for the CLI to link -- contradicts ZSTD_BUILD_STATIC=OFF and would
+# install a libzstd.a nothing asks for.
+#
+# So the package builds what it is here for. The recipe header says it: this is
+# systemd's journal and coredump compressor, and libzstd is the deliverable.
+# Nothing in the tree invokes a zstd binary. docs/limits.md records the
+# omission.
+#
+# lz4 next door keeps its CLI and needs none of this: its programs use only the
+# LZ4LIB_API entry points, so hidden visibility costs them nothing. Verified by
+# building both with -fvisibility=hidden -- lz4cli links, zstd-frugal does not.
+#
+# CMAKE_CXX_COMPILER_WORKS is what stops cmake compiling a C++ program this
+# build has no use for. project() at build/cmake/CMakeLists.txt:33 names CXX
+# alongside C and ASM, for the contributed code under contrib/ and the tests --
+# ZSTD_BUILD_CONTRIB and ZSTD_BUILD_TESTS are both off here, so not one C++
+# translation unit is compiled. cmake tests every language project() names
+# anyway, before reading a line of the project, and that test is a C++ link
+# against a musl sysroot with no C++ runtime in it at all. Measured rather than
+# assumed: with this set, zstd builds libzstd_shared and every CLI target to
+# completion with CMAKE_CXX_COMPILER pointed at a program that exits 1 on every
+# invocation.
+#
+# Tombstone: a `drops: [stdlibxx]` exception in manifest/toolchain.yaml was
+# tried here first, by analogy with libunwind, and is not coming back. It fixed
+# the wrong failure. -nostdlib++ does clear `mold: fatal: library not found:
+# stdc++`, and the next error is underneath it: the layer keeps CFI, so clang
+# puts libclang_rt.ubsan_standalone_cxx on a C++ link, and that archive needs
+# the C++ ABI -- `undefined symbol: typeinfo for std::type_info`,
+# `__dynamic_cast`. Having told the link to bring no C++ runtime, there was
+# nothing left to satisfy it. Dropping CFI as well would have configured, at
+# the price of unhardening a decompressor that parses untrusted input, in order
+# to support compiling no C++. libunwind's exception stays right for libunwind,
+# which really is C++ and really does link it.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/zstd -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DZSTD_BUILD_STATIC=OFF
+  - cmake -S /build/src/zstd/build/cmake -B /build/b/zstd -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DZSTD_BUILD_STATIC=OFF -DZSTD_BUILD_PROGRAMS=OFF -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile
