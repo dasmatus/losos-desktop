@@ -25,8 +25,34 @@ compiler:
   ranlib: llvm-ranlib
   strip: llvm-strip
   objcopy: llvm-objcopy
-  # lld, because CFI needs the linker to understand the bitcode it is merging.
-  linker: lld
+  # mold, for the wall-clock. Every link in this tree is a ThinLTO link, and a
+  # desktop is a lot of them; mold parallelises the parts of a link lld still
+  # does on one thread, and the link is what is left once ThinLTO's codegen has
+  # already been spread across the cores.
+  #
+  # The old reason for naming a linker here has not gone away: CFI needs one
+  # that understands the bitcode it is merging. mold does, but not the way lld
+  # does, and the difference is a host requirement rather than a detail. lld
+  # has LTO built in. mold implements the GNU linker-plugin interface instead,
+  # so clang drives it the way it drives a gold-compatible linker -- asked to
+  # print its link line, the driver adds `-plugin .../LLVMgold.so` and
+  # `-plugin-opt=thinlto` with mold and adds neither with lld. LLVMgold.so is
+  # therefore load-bearing from here on, and Debian ships it in
+  # `llvm-N-linker-tools`, which `llvm-N-dev` does NOT depend on -- the
+  # Containerfile names it for that reason and nothing else. Without it the
+  # first link in the tree stops with
+  #
+  #     mold: fatal: could not open plugin file: .../LLVMgold.so
+  #
+  # which reads as a broken clang installation rather than as a missing
+  # package. Measured both ways on clang 18: ThinLTO links, and a cross-DSO CFI
+  # shared library still comes out with __cfi_check exported.
+  #
+  # This does not reach the kernel, which is built with `LLVM=1` and takes
+  # ld.lld from that -- see recipes/10-systemd/linux. The kernel supports
+  # ld.bfd and ld.lld and not mold, so that is the right answer there and lld
+  # stays a host requirement.
+  linker: mold
 
 target:
   # musl rather than glibc. Smaller, simpler, and -- the reason that matters
@@ -171,6 +197,15 @@ rust:
   # -Zsanitizer needs nightly. On stable these are dropped and the Rust
   # packages are built with LTO alone; tools/gates/toolchain-report.py says so
   # rather than letting it pass unnoticed.
+  #
+  # Note what is NOT here: a linker. `compiler.linker` above reaches a package
+  # through @LDFLAGS@, and a cargo build takes none -- rustc drives the link
+  # itself through `cc` and lets clang pick its own default, which is neither
+  # mold nor lld. That was already true when the default above was lld, so
+  # moving it to mold changes nothing for Rust, and it is written down here
+  # because the two readings of "the tree's linker" differ by exactly this
+  # list. Closing the gap is `-Clink-arg=-fuse-ld=...`, and it wants measuring
+  # against the musl target's self-contained link rather than assuming.
   flags:
     - -Cembed-bitcode=yes
     - -Clto=thin

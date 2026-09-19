@@ -23,7 +23,10 @@ variable, or an absolute path.
 |---|---|---|
 | A kernel with **unprivileged user namespaces** | pm's jail is one. On Ubuntu 24.04 and derivatives `kernel.apparmor_restrict_unprivileged_userns=1` denies the `uid_map` write and nothing builds. | `tools/check-digest` says so by name |
 | **just** | The repository's entrypoint is the Justfile; the legacy wrapper only forwards to it for compatibility. | `just check` |
-| **clang, lld, llvm-ar/nm/objcopy/strip** | The whole tree is compiled with them; `manifest/toolchain.yaml` names the exact binaries. | `tools/gates/toolchain-report.py` |
+| **clang, llvm-ar/nm/objcopy/strip** | The whole tree is compiled with them; `manifest/toolchain.yaml` names the exact binaries. | `tools/gates/toolchain-report.py` |
+| **mold** | The linker `manifest/toolchain.yaml` names, reached as `-fuse-ld=mold`, so clang must find `ld.mold` on the `PATH` pm gives a step. | `tools/gates/toolchain-report.py` links its probe with the real `LDFLAGS` |
+| **lld** | Still required although mold is the default, and not as a fallback: the kernel and its headers are built with `LLVM=1`, which is the kernel's own switch for the whole LLVM toolchain and takes `ld.lld` with it. The kernel supports `ld.bfd` and `ld.lld`, not mold. | fails at `losos-00-toolchain` |
+| **`LLVMgold.so`** (`llvm-N-linker-tools`) | mold does LTO through the GNU linker-plugin interface, so clang hands it `-plugin .../LLVMgold.so`; lld needed none of this because its LTO is built in. A separate package from the `llvm-N-dev` below, which does **not** depend on it, and every link in the tree is an LTO link — so without it the first one stops with `mold: fatal: could not open plugin file`, naming a path inside clang's own directory. | `tools/gates/toolchain-report.py` |
 | **python3** | Every meson invocation is `python3 …/meson.py`, because meson is vendored rather than installed. | `just check` |
 | **python3 `jinja2`** | fwupd's meson runs `python3 -c 'import jinja2'` and errors out without it; systemd generates sources with it too. A step cannot set `PYTHONPATH` — no shell, and `env` is banned — so this one cannot be vendored into the sysroot the way meson is. | fails at fwupd's configure step |
 | **ninja** | Every meson build. | `just check` |
@@ -34,7 +37,9 @@ variable, or an absolute path.
 
 ## Not required
 
-Not meson (vendored by `losos-01-meson`), not gperf, flex, gettext or bpftool
+Not a GNU toolchain of any kind — no gcc, no binutils, no `ld.bfd`; the
+only linkers here are mold and lld. Not meson (vendored by `losos-01-meson`),
+not gperf, flex, gettext or bpftool
 (built by `losos-15-hosttools` and reached through a native file), not nix, not
 KVM, not root, and not network for `just check`.
 
