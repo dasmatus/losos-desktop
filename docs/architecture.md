@@ -134,7 +134,7 @@ which would grant the whole layer network access (C8).
 
 ## The gates
 
-`./do check` runs with no network, no KVM and no nix:
+`just check` runs with no network, no KVM and no nix:
 
 | Gate | What it proves |
 |---|---|
