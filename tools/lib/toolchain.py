@@ -111,6 +111,26 @@ class Toolchain:
         making it droppable kept the flag for everything except the one
         package built before any unwinder exists -- which is the one package
         that needed it.
+
+        `stdlibxx` is the same shape and the same package's problem one
+        language over. Most of libunwind is C++, so cmake links it with
+        clang++, and clang++ links libstdc++ by default -- which no musl
+        sysroot here has, and which the unwinder does not use: upstream's own
+        src/CMakeLists.txt adds -nostdlib++ to its link when the compiler
+        supports it, for exactly this reason. What upstream cannot help with
+        is cmake's `project()` compiler test, which links a C++ binary before
+        any of upstream's CMakeLists has run. Measured: clang++ on a
+        --target=x86_64-linux-musl link puts one "-lstdc++" on the line and
+        -nostdlib++ puts zero; CMAKE_EXE_LINKER_FLAGS does reach that test's
+        link command, proved by breaking it with a bogus flag; and the flag is
+        inert on a C link, no error and no unused-argument warning, so one
+        response file covers both test compilers.
+
+        Tombstone: -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY also gets
+        past it, the way compiler-rt's recipe does, and is not used here. It
+        works by making every try_compile skip linking, which silences this
+        failure and every other link-based feature check in libunwind's
+        configure along with it. Naming the flag says what is actually true.
         """
         flags = []
         rtlib = self.target.get("rtlib")
@@ -123,6 +143,8 @@ class Toolchain:
                 if "unwindlib" in drops
                 else f"--unwindlib={unwindlib}"
             )
+        if "stdlibxx" in drops:
+            flags.append("-nostdlib++")
         return flags
 
     def cflags(self, package=None):
