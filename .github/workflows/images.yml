@@ -285,12 +285,18 @@ jobs:
 
       # always(): the number is worth having most when the build died, since
       # a full disk is one of the things that kills it.
+      # The per-directory lines say what is big; the total says how much the
+      # job used, and only the total survives someone adding a directory and
+      # forgetting this step. release/ is its own entry because stage-release
+      # copies into it (shutil.copy2, tools/stage-release:154) rather than
+      # renaming, so on a successful run the disk holds the image twice.
       - name: Disk after the build
         if: always()
         run: |
           df -h / "${TMPDIR:-/tmp}"
           du -sh losos-desktop/out/pkgs losos-desktop/out/tmp \
-            losos-desktop/out/sources 2>/dev/null || true
+            losos-desktop/out/sources losos-desktop/release 2>/dev/null || true
+          du -sh losos-desktop 2>/dev/null || true
 
       # always(): a build that stopped at some package never reached
       # stage-release, but whatever the layers below it produced is still the
