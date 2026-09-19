@@ -16,9 +16,12 @@ Two properties, both cheap to check and neither visible by reading one job:
   * the channel is derived in exactly one place. Two derivations that agree
     today are two that can disagree after one edit.
 
-It also checks that write permission is not granted workflow-wide, because this
-workflow runs on `pull_request` -- it checks out and executes branch code, and a
-token that can write to the repository has no business in that job.
+It also checks that write permission is not granted workflow-wide, and that one
+applies to EVERY workflow here rather than to this one. Both of them check out
+a ref and execute the tree's own code from it -- images.yml on `pull_request`,
+update-sources.yml on a `workflow_dispatch` against any ref -- and a job running
+tree-supplied code has no business holding a token that can write to the
+repository. The job that genuinely publishes asks for the permission itself.
 """
 
 import re
@@ -28,7 +31,9 @@ from pathlib import Path
 import yaml
 
 REPO = Path(__file__).resolve().parent.parent.parent
-WORKFLOW = REPO / ".github" / "workflows" / "images.yml"
+WORKFLOWS = REPO / ".github" / "workflows"
+# The release workflow, which is the only one with artifacts to agree about.
+WORKFLOW = WORKFLOWS / "images.yml"
 
 # The channel values the workflow can produce. Written here rather than parsed
 # out of the shell, because this is the list the check is asserting against.
@@ -85,13 +90,20 @@ def main():
             + "\n    ".join(derivations)
         )
 
-    top = doc.get("permissions")
-    if isinstance(top, dict) and top.get("contents") == "write":
-        failures.append(
-            "permissions.contents: write is granted workflow-wide, and this "
-            "workflow runs on pull_request.\n    Grant it on the publishing job "
-            "instead."
-        )
+    # Least privilege, across every workflow in the tree rather than this one.
+    # A rule that only ever looked at images.yml would say nothing about the
+    # next workflow somebody adds, which is the one most likely to get it
+    # wrong.
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        top = (yaml.safe_load(path.read_text()) or {}).get("permissions")
+        if isinstance(top, dict) and top.get("contents") == "write":
+            failures.append(
+                f"{path.relative_to(REPO)} grants permissions.contents: write "
+                "workflow-wide.\n    Every job in it then holds a token that can "
+                "write to the repository, including\n    the ones that check out "
+                "a ref and run the tree's own code. Grant it on the\n    job that "
+                "needs it instead."
+            )
 
     if failures:
         print("workflow: FAILED", file=sys.stderr)
@@ -101,7 +113,8 @@ def main():
 
     print(
         f"workflow: {len(downloads)} artifact download(s) resolve for "
-        f"{len(CHANNELS)} channel(s); least privilege at the top"
+        f"{len(CHANNELS)} channel(s); least privilege at the top of "
+        f"{len(list(WORKFLOWS.glob('*.yml')))} workflow(s)"
     )
     return 0
 
