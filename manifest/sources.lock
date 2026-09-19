@@ -22,7 +22,10 @@ MESON:
   sha256: 88afe0c20e52030218924ac37d0c81c59b4b5f3ae3752c8c6d7470c7d365886c
 
 ZLIB:
-  url: https://zlib.net/zlib-1.3.1.tar.xz
+  # zlib.net serves only the current release and 1.3.1 has rolled off it (404).
+  # This is the same tarball from the upstream author's own GitHub release, so
+  # the bytes -- and the hash below -- are unchanged by the move.
+  url: https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz
   version: '1.3.1'
   sha256: TODO
 
@@ -122,7 +125,10 @@ LIBMICROHTTPD:
   sha256: TODO
 
 LIBQRENCODE:
-  url: https://fukuchi.org/works/qrencode/qrencode-4.1.1.tar.gz
+  # fukuchi.org no longer serves this path (404) and the GitHub releases carry
+  # no dist tarball, so this is the git archive. NOTE: it therefore has no
+  # ./configure, which the recipe invokes -- see recipes/00-base/libqrencode.
+  url: https://github.com/fukuchi/libqrencode/archive/refs/tags/v4.1.1.tar.gz
   version: '4.1.1'
   sha256: TODO
 
@@ -397,7 +403,10 @@ GSETTINGS_DESKTOP_SCHEMAS:
   sha256: TODO
 
 POLKIT:
-  url: https://gitlab.freedesktop.org/polkit/polkit/-/archive/125/polkit-125.tar.gz
+  # polkit moved off freedesktop's GitLab to github.com/polkit-org in 2024 and
+  # the old archive path 404s. polkit builds with meson, so a git archive needs
+  # no generated files and is equivalent to the release tarball here.
+  url: https://github.com/polkit-org/polkit/archive/refs/tags/125.tar.gz
   version: '125'
   sha256: TODO
 
