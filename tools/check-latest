@@ -543,6 +543,24 @@ def main():
                         help="propose the sources in HOLD as well")
     args = parser.parse_args()
 
+    # A key named on the command line brings its lockstep siblings with it.
+    # Without this the guard below would make a grouped source unbumpable
+    # through the per-key update matrix, which runs one `--only KEY` leg per
+    # key: the leg would name one half, the other would stay put, and every
+    # leg would be refused. Expanding is not a choice offered with a flag,
+    # because the unexpanded form is exactly the state the guard exists to
+    # reject.
+    if args.only:
+        selected = set(args.only)
+        for group in lockstep_groups(REPO):
+            if group & selected:
+                selected |= group
+        if selected != set(args.only):
+            added = sorted(selected - set(args.only))
+            print(f"check-latest: --only also takes {', '.join(added)}, "
+                  "downloaded by the same recipe")
+        args.only = sorted(selected)
+
     lock = REPO / "manifest" / "sources.lock"
     doc = yaml.safe_load(lock.read_text()) or {}
 
@@ -595,10 +613,17 @@ def main():
         )
 
     if args.json:
+        _groups = lockstep_groups(REPO)
         Path(args.json).parent.mkdir(parents=True, exist_ok=True)
         Path(args.json).write_text(json.dumps({
+            # `group` is every key one leg has to move together, which is
+            # the key itself for all but the LLVM pair. The matrix in
+            # .github/workflows/update-sources.yml reads it to run one leg per
+            # group; without it, two keys of one group would produce two legs
+            # doing identical work and two patches that cannot both apply.
             "outdated": [
-                {"key": k, "from": p, "to": l, "url": new}
+                {"key": k, "from": p, "to": l, "url": new,
+                 "group": sorted(next((g for g in _groups if k in g), {k}))}
                 for k, p, l, _old, new in sorted(outdated)
             ],
             "held": [{"key": k, "from": p, "to": l, "why": w}

@@ -109,7 +109,20 @@ jobs:
           import json, os
           raw = os.environ.get("LIMIT", "").strip()
           limit = int(raw) if raw.isdigit() and int(raw) > 0 else 20
-          keys = [e["key"] for e in json.load(open("survey.json"))["outdated"]][:limit]
+          # One leg per lockstep group, not per key. Two sources one recipe
+          # downloads together are one upstream release, and check-latest
+          # refuses to move half of such a pair -- so a leg per key would run
+          # the same bump twice and produce two patches that cannot both
+          # apply. `group` is the key itself for everything that is not part
+          # of a pair, so this is the identity for almost every source.
+          seen, keys = set(), []
+          for entry in json.load(open("survey.json"))["outdated"]:
+              group = tuple(entry.get("group") or [entry["key"]])
+              if group in seen:
+                  continue
+              seen.add(group)
+              keys.append(entry["key"])
+          keys = keys[:limit]
           print("matrix=" + json.dumps(keys))
           print("any=" + ("true" if keys else "false"))
           PY
