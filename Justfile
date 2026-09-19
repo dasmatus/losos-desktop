@@ -101,7 +101,7 @@ check *args:
     exit 1
   fi
   echo "== configure"
-  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure --allow-unresolved "$@"
+  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure -- --allow-unresolved "$@"
   echo "== sign"
   just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" sign >/dev/null
   echo "== digest agreement with pm"
@@ -212,7 +212,13 @@ build target="":
   if [ "$target" != "$top_target" ] && [ "$have_allow_unresolved" -eq 0 ]; then
     configure_args=(--allow-unresolved "${configure_args[@]}")
   fi
-  just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure "${configure_args[@]+"${configure_args[@]}"}"
+  if [ "${#configure_args[@]}" -eq 0 ]; then
+    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure
+  elif [[ "${configure_args[0]}" = -* ]]; then
+    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure -- "${configure_args[@]}"
+  else
+    just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure "${configure_args[@]}"
+  fi
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
 
   if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then

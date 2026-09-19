@@ -255,8 +255,7 @@ jobs:
         env:
           PM: ${{ github.workspace }}/pm/target/release/pm
         run: |
-          just configure -- --mirror http://127.0.0.1:8730 \
-            --arch ${{ matrix.arch }} --channel "$CHANNEL" \
+          just configure -- --arch ${{ matrix.arch }} --channel "$CHANNEL" \
             --version "$LOSOS_VERSION"
           just serve &
           for _ in 1 2 3 4 5 6 7 8 9 10; do
