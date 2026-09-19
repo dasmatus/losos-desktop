@@ -443,18 +443,13 @@ jobs:
           path: losos-desktop/release/
           if-no-files-found: warn
 
-      # The last step in the job, and last for a reason rather than by
-      # accident. A job log is read from its tail as often as from the run
-      # page -- the API hands back the end of it and nothing else -- and
-      # everything after the build writes several kilobytes of that tail on
-      # its own: the disk report, the artifact upload, then post-job cleanup.
-      # A build long enough to be worth reading is exactly the one whose
-      # error has already been pushed out of reach by the time anyone looks.
-      #
-      # So pm's block is repeated here, stripped of the frame it is drawn in
-      # and capped: what a reader needs is the package, the step and the
-      # command, and a repeat large enough to push itself out would be no
-      # better than the original.
+      # Last in the job, so that the end of the log is the answer rather than
+      # the disk report, the artifact upload and post-job cleanup. A failed
+      # build here is ten thousand lines of compiler output with fifteen that
+      # matter at the bottom, and pm names the package, the step and the
+      # command in those fifteen. Repeated stripped of the frame pm draws
+      # around them, and capped, because a repeat long enough to need
+      # scrolling is the thing it was meant to save.
       - name: Say what failed
         if: failure()
         run: |

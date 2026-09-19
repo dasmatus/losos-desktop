@@ -122,6 +122,17 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   word. The same applies to every build-time helper a build system looks up for
   itself — gperf, flex, msgfmt, bpftool, wayland-scanner: they reach the build
   through a meson `--native-file` `[binaries]` section, never through `PATH`.
+- **A program that decides what it is from its own name cannot survive C3.**
+  pm canonicalises a step's first word on the host, and canonicalising resolves
+  symlinks. rustup ships `cargo`, `rustc` and `clippy` as symlinks to `rustup`,
+  which reads back the name it was invoked under to know which tool to proxy —
+  so `cargo build --release` arrives in the jail as `rustup`, invoked as
+  `rustup`, and dies with `error: unexpected argument '--release' found` and a
+  `Usage: rustup[EXE] <+toolchain>` that names a program the recipe never
+  mentioned. The `Containerfile` points the `cargo` shim at the real binary for
+  exactly this reason; `docs/host-requirements.md` says the same for a native
+  build. Anything else multi-call — busybox, a `*-config` symlink farm — has the
+  same problem, and it only ever shows up in a real build.
 - **A compiled-in absolute path resolves into the host mirror.** pm's run jail
   extracts a package at `/pkg` *and* mirrors the host's `/usr` read-only, so a
   binary that opens `/usr/lib/os-release` gets the build host's file and reports

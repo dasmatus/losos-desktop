@@ -198,6 +198,23 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       x86_64-unknown-linux-musl \
       aarch64-unknown-linux-musl \
       wasm32-unknown-unknown \
+ `# The one line here that is not installation. rustup ships cargo as a` \
+ `# SYMLINK to rustup itself, and the binary decides which tool it is from` \
+ `# the name it was invoked under. pm canonicalises a step first word on` \
+ `# the host (C3), and that resolves the symlink -- so a recipe asking for` \
+ `# cargo build --release reaches the jail as rustup, invoked as rustup,` \
+ `# and rustup own argument parser rejects it:` \
+ `#` \
+ `#     error: unexpected argument --release found` \
+ `#     Usage: rustup[EXE] <+toolchain>` \
+ `#` \
+ `# Pointing the shim straight at the real cargo makes the canonical path` \
+ `# a cargo again. What is given up is rustup toolchain switching for that` \
+ `# one name -- +toolchain, rust-toolchain.toml -- which this image has no` \
+ `# use for: it pins RUST_VERSION and installs exactly that toolchain and` \
+ `# no other. rustc keeps its shim, because nothing canonicalises it --` \
+ `# cargo looks rustc up for itself and gets the name right.` \
+ && ln -sf "$(rustup which cargo)" "$CARGO_HOME/bin/cargo" \
  && chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"
 
 # mkosi, pinned to a commit rather than taken from the archive.
