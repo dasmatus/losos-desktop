@@ -305,6 +305,23 @@ exceptions:
       Do not reach for the per-scheme spelling gjs uses. _cfi_for only emits
       -fvisibility=hidden while at least one scheme survives, so naming all
       of them drops the flag identically, four times as long.
+  - package: libxcrypt
+    drops: [cfi, lto]
+    why: >
+      Two failures stacked, and only one of them is loud. The loud one is LTO
+      against symbol versioning: libxcrypt places its versioned aliases with
+      `.symver` directives in inline asm, and ThinLTO does not keep the local
+      definitions those name, so the link dies with `mold: fatal: LLVM gold
+      plugin: <inline asm>: default version symbol crypt_r@@XCRYPT_2.0 must be
+      defined`. The quiet one is the same visibility problem libcap has: a
+      version script cannot export a symbol the compiler already made hidden,
+      so the library links and ships with nothing in its dynamic table.
+
+      Measured as a matrix on 4.4.36, the pinned release, with the layer's
+      other flags: hidden+LTO and default+LTO both die on the .symver; hidden
+      without LTO builds and exports 0 symbols; default without LTO builds and
+      exports 9, `crypt@@XCRYPT_2.0` among them. So both have to go, and CFI
+      goes with LTO because it cannot be had without it.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.
