@@ -115,7 +115,7 @@ build target="":
     exit 1
   fi
 
-  target="$1"
+  target="${1:-}"
   if [ -z "$target" ]; then
     target=$(python3 -c 'import pathlib, yaml; layers = yaml.safe_load(pathlib.Path("'"{{repo}}"'/manifest/layers.yaml").read_text()) or []; print(layers[-1]["name"] if layers else "")')
   fi
