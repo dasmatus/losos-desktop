@@ -17,16 +17,16 @@ checks instead, which is cheaper and catches the same thing.
 
 A recipe with no dl_urls has no upstream version to agree with and is skipped.
 
-What this gate does NOT check, and is not going to. A version bump also moves
-the options the recipe passes to the new sources' build system, and nothing
-here validates them: an option name or value kind can only be checked against
-the `meson_options.txt` of the tarball itself, and the gates run with no
-sources and no network. That gap is real and has bitten once -- fwupd's recipe
-passed `-Dintrospection=false`, but fwupd 2.0.3 declares that option
-`type: 'feature'`, which accepts only enabled/disabled/auto. `false` is valid
-syntax for a boolean option, so the mistake looked right next to the thirty
-others on the same line, and nothing said otherwise until `meson setup` ran in
-a real build and died before one object compiled.
+One thing this gate deliberately does not check, and is not going to, is the
+options a recipe passes to its build system. A version bump moves those too,
+and an option name or value kind can only be checked against the
+`meson_options.txt` of the tarball itself -- which the gates, running with no
+sources and no network, do not have. That gap is real and has bitten once:
+fwupd's recipe passed `-Dintrospection=false`, but fwupd 2.0.3 declares that
+option `type: 'feature'`, which accepts only `enabled`, `disabled` or `auto`.
+`false` is valid syntax for a boolean option, so the mistake looked right next
+to the thirty others on the same line, and nothing said otherwise until
+`meson setup` ran in a real build and died before one object compiled.
 
 So a wrong option is invisible to `./do check`, and therefore invisible to the
 per-candidate legs in .github/workflows/update-sources.yml, which run exactly
