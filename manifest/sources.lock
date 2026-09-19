@@ -517,6 +517,25 @@ LLVM_CMAKE:
   version: '18.1.8'
   sha256: 59badef592dd34893cd319d42b323aaa990b452d05c7180ff20f23ab1b41e837
 
+# The unwinder, and the reason CFI can name the call site a violation happened
+# at rather than only raising SIGILL. musl has none and this tree builds no
+# other, so -fno-sanitize-trap=cfi had nowhere to get _Unwind_Backtrace from.
+# Same LLVM release as COMPILER_RT, and held to it for the same reason.
+LIBUNWIND:
+  url: https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/libunwind-18.1.8.src.tar.xz
+  version: '18.1.8'
+  sha256: c31577d16978b0da0e472ef751f74893a5b459a7ea4a383b75f7ab93cf1e6877
+
+# Six point eight kilobytes, holding three cmake modules, and libunwind does
+# not configure without one of them: its CMakeLists calls mangle_name, which
+# lives in HandleFlags.cmake here and nowhere else that a release ships. It is
+# not the `runtimes` BUILD entry point, which is a different thing and does
+# need the full LLVM tree.
+LLVM_RUNTIMES:
+  url: https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/runtimes-18.1.8.src.tar.xz
+  version: '18.1.8'
+  sha256: 9997c2e91e5438e2963306ba5019d85b5384b467535632738d8670ced8f07cb3
+
 NVIDIA_OPEN:
   url: https://github.com/NVIDIA/open-gpu-kernel-modules/archive/refs/tags/580.95.05.tar.gz
   version: 580.95.05

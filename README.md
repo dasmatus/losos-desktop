@@ -120,11 +120,13 @@ Read `docs/limits.md` before trusting anything here. The short version:
   Those libraries are inside the scheme as callers and outside it as callees.
   Open, and a design decision rather than a patch; `docs/limits.md` has the
   measurement and the three options.
-- **CFI traps rather than diagnoses, for now.** A violation stops the process
-  but does not name the call site it happened at, because the diagnosing
-  runtime walks the stack and there is no unwinder for the musl target in this
-  tree yet. Every scheme is still enforced, cross-DSO included. It is marked
-  temporary in `manifest/toolchain.yaml` with the condition that reverses it.
+- **The unwinder is built here, and CFI diagnoses rather than traps.** A
+  violation names the file, line and callee of the indirect call that failed
+  instead of raising SIGILL with nothing attached. That needs an unwinder,
+  which musl has none of, so `00-toolchain` builds LLVM's libunwind with a patch,
+  because libunwind configured on its own silently drops its assembly sources
+  and produces an archive that cannot unwind. `docs/limits.md` has the
+  measurement.
 - **`pm` does not consume dependencies.** A dependency's archive is *carried*
   into the dependent at `/dest/deps/`, and nothing unpacks it. The sysroot
   pattern in `tools/lib/sysroot.sh` is this repo's workaround, not a `pm`

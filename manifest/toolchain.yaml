@@ -84,10 +84,14 @@ target:
   # directory by absolute path, instead of naming gcc's and finding nothing.
   # Measured by asking the driver to print its link command, with and without.
   #
-  # unwindlib: none is only correct while CFI traps rather than diagnoses.
-  # See cfi.trap below; the two move together.
+  # unwindlib and cfi.trap move together: diagnose mode is what needs an
+  # unwinder at all, and `none` is only correct while CFI traps. LLVM's
+  # libunwind rather than libgcc_s, which is not in this sysroot and would be
+  # gcc's runtime in a tree that has no gcc. -lunwind is an ordinary library
+  # name and resolves through --sysroot, so unlike the runtimes this needs no
+  # resource-directory change.
   rtlib: compiler-rt
-  unwindlib: none
+  unwindlib: libunwind
   # Where clang looks for its own runtimes, its builtin headers and the CFI
   # ignorelist. Repointed at the sysroot, which is the only way the runtimes
   # this tree builds are the ones that get linked.
@@ -148,41 +152,21 @@ cfi:
   # is most of the calls there are. It costs a __cfi_check export per library
   # and a slower check at the boundary.
   cross_dso: true
-  # TEMPORARY, and the condition that reverses it is written here rather than
-  # remembered: set this back to `false` once the tree carries an unwinder for
-  # the musl target. This is not the settled posture.
+  # Diagnose, not trap. A violation prints the file and line of the indirect
+  # call that failed and the callee it was pointed at, which systemd-coredump
+  # can record; a SIGILL with nothing attached says only that a program died.
+  # -fsanitize-recover rides with it so the report is not the last thing the
+  # process ever does.
   #
-  # Diagnose is what this distribution wants. A violation that names its call
-  # site in the journal is something systemd-coredump can record; a SIGILL with
-  # no context is not. It is simply not available yet. -fno-sanitize-trap puts
-  # libclang_rt.cfi_diag on every link line, cfi_diag walks the stack to find
-  # the call site, and that walk calls into an unwinder:
-  #
-  #     ld.lld: error: undefined symbol: _Unwind_Backtrace
-  #     >>> referenced by sanitizer_unwind_linux_libcdep.cpp.o
-  #         in archive .../libclang_rt.cfi_diag-<arch>.a
-  #
-  # musl has no unwinder, libgcc_s is not in this sysroot, and LLVM's libunwind
-  # is not built here. Trap mode links libclang_rt.cfi.a instead, which carries
-  # no _Unwind reference at all. Measured on both, including running the result.
-  #
-  # What is lost meanwhile is the call site, and nothing else. CFI is still
-  # enforced -- every scheme above, cross-DSO included -- and a violation still
-  # stops the process. It stops with SIGILL and nothing attached, so the report
-  # says a program died rather than which indirect call was wrong.
-  #
-  # Restoring diagnose means building LLVM libunwind for the musl target into
-  # the sysroot and setting target.unwindlib to libunwind; -lunwind is an
-  # ordinary library name and resolves through --sysroot, so it needs no
-  # resource-directory change. It is not one recipe. libunwind's own
-  # CMakeLists.txt has no project() and no enable_language(ASM), so configuring
-  # it directly succeeds while silently dropping UnwindRegistersSave.S and
-  # UnwindRegistersRestore.S, and the archive that comes out has no
-  # __unw_getcontext in it. The supported entry point is runtimes/ with
-  # -DLLVM_ENABLE_RUNTIMES=libunwind, which needs GetHostTriple.cmake -- present
-  # in neither llvm-N-dev nor cmake-N.src.tar.xz, only in the full LLVM source
-  # tree. docs/limits.md carries the rest.
-  trap: true
+  # This costs an unwinder. -fno-sanitize-trap puts libclang_rt.cfi_diag on
+  # every link line, cfi_diag walks the stack to find the call site, and the
+  # walk calls _Unwind_Backtrace and _Unwind_GetIP -- which musl does not have.
+  # That is what recipes/00-toolchain/libunwind is for, and why target.unwindlib
+  # below names it. Tombstone: this was `true` for one commit, with a note
+  # saying diagnose was unavailable because building libunwind needed the full
+  # LLVM source tree. That was wrong. It needs a three-line patch declaring the
+  # project, and 127 KB of tarballs.
+  trap: false
   # -fvisibility=hidden is mandatory, not stylistic: CFI can only reason about
   # a function's type if it can see every definition, and a default-visible
   # symbol may be interposed at load time by something it never checked.
@@ -268,6 +252,66 @@ exceptions:
       an exception here is per package. Nothing is lost that CFI needed: musl
       already drops CFI, and LTO is only mandatory for the packages that keep
       it.
+  - package: libunwind
+    drops: [cfi, lto, unwindlib]
+    why: >
+      The unwinder cannot be handed itself. --unwindlib=libunwind on
+      libunwind's own shared link resolves to the library being linked, so
+      `unwindlib` is droppable on its own here and nowhere else; everything
+      else in `target` is kept, because unlike musl this does build against a
+      sysroot that already holds a libc and compiler-rt's crt objects.
+
+      Dropping it means --unwindlib=none, which is not the same as leaving the
+      flag off: off means clang's build-time default, and the Containerfile's
+      clang defaults to libgcc even under --rtlib=compiler-rt. No sysroot here
+      has libgcc_s. tools/lib/toolchain.py carries the measurement.
+
+      CFI and LTO come off for a reason beyond cost. cfi_diag calls into this
+      library to report a violation, so instrumenting it puts the reporter
+      inside the thing being reported on, and a CFI failure on the unwind path
+      recurses instead of printing. It is the same argument that keeps musl
+      out, one layer up.
+  # losos-15-hosttools, all three of it. These are the one kind of package in
+  # the tree that is not part of the OS being built so much as part of the
+  # machinery building it, and that distinction is the whole exemption.
+  - package: gperf
+    drops: [cfi, lto, target]
+    why: >
+      A build-time program has to run on the build host, and a musl-dynamic
+      binary cannot. Its interpreter is /lib/ld-musl-<arch>.so.1, and pm's jail
+      mirrors the HOST's /lib read-only (C7) -- the sysroot's copy is at
+      /build/sysroot/lib, which is not the absolute path compiled into the
+      binary. So dropping `target` here is not a concession, it is the point:
+      host libc, host sysroot, host resource directory, a binary the jail can
+      execve.
+
+      What makes this worth an exception rather than a shrug is that nothing
+      catches it. recipes/10-systemd/systemd/build.yaml.in:37-38 asserts
+      `test -x /build/sysroot/usr/bin/gperf` and the same for msgfmt, and
+      test -x passes on a binary that cannot run; the kernel's build reaches
+      LEX=/build/sysroot/usr/bin/flex
+      (recipes/10-systemd/linux/build.yaml.in:63) and fails with ENOENT on a
+      file that is plainly there, which reads as "flex was never installed"
+      rather than as "flex is the wrong libc".
+
+      CFI and LTO come off with it. They are a property of the shipped OS, and
+      these three are not shipped code in any sense that matters -- see the
+      note in docs/limits.md for the part of that sentence which is currently
+      a lie.
+  - package: flex
+    drops: [cfi, lto, target]
+    why: >
+      A build-time program: the kernel's kconfig runs it. Same argument as
+      gperf above, in full.
+  - package: gettext
+    drops: [cfi, lto, target]
+    why: >
+      msgfmt, which systemd runs for -Dtranslations=true. Same argument as
+      gperf above, with one consequence the other two do not have: gettext
+      configured against glibc finds gettext in the C library and builds no
+      libintl, where configured against musl it would. Nothing in this tree
+      asks for -lintl yet, so nothing breaks today; glib will, and
+      docs/limits.md says so.
   - package: linux
     drops: [cfi, lto, hardening]
     why: >

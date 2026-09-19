@@ -107,6 +107,7 @@ lint:
   python3 "{{repo}}/tools/gates/plugins.py"
   python3 "{{repo}}/tools/gates/workflow.py"
   python3 "{{repo}}/tools/gates/patches.py"
+  python3 "{{repo}}/tools/gates/cross-configure.py"
   python3 "{{repo}}/tools/gates/versions.py" --self-test
   python3 "{{repo}}/tools/check-latest" --self-test >/dev/null
   "{{repo}}/tools/gates/explain-all"
