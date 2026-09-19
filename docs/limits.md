@@ -45,6 +45,12 @@ roughly a sixfold multiplication of intermediate storage, and with a full GNOME
 stack the intermediates plausibly run to tens of gigabytes before the final
 tarball. `TMPDIR` must be on real disk, not tmpfs.
 
+The image layer adds to that: it holds the OS tree, the root filesystem as a
+partition image, a raw disk built around it, the qcow2 and the ISO in the same
+workspace at once. The disk images are sparse and the qcow2 leaves zero
+clusters unallocated, so the cost is close to the content rather than to the
+declared sizes — but it is still several copies of the tree.
+
 ## The GNOME layer is the long tail
 
 `recipes/30-gnome` is the minimum that produces a session, and it is a
@@ -67,6 +73,27 @@ writer's output against an independent parser — and that is the entire claim.
 `systemd-repart`, `systemd-firstboot`, homed, verity, sysupdate and gdm are all
 wired and none has been exercised. **Anyone who says this OS boots should say on
 what machine, once.**
+
+The installation media are subject to the same sentence, and the claim about
+them is now weaker rather than stronger. They are built by mkosi, xorriso and
+qemu-img, which are mature and are not this repository's to get wrong — but
+nothing here has run them: the environment this was developed in has none of
+them installed, which is the whole reason `Containerfile` exists. What runs
+inside the build is `assert-media.py`, which reads the finished files back and
+asserts the qcow2 is a qcow2 with an ESP and a discoverable root in it and that
+the ISO's boot catalog and its ESP partition entry point at the same bytes.
+`tools/gates/test-media.py` is what makes that claim worth anything: it feeds
+`assert-media.py` the shape the image layer produces and nine near-misses, and
+requires it to reject all nine. Without it the assertion could be vacuous and
+would report so as success.
+
+That proves the structures are the structures they claim to be. It proves
+nothing about firmware, and **nobody has put this ISO in front of any.**
+
+`tools/vm-test disk` is the test that would settle it: it hands the qcow2 to
+QEMU with UEFI firmware and requires the guest to say it came up, and CI runs
+it. It needs KVM and OVMF, which is exactly what this environment does not
+have.
 
 ## The upstream sources have not been fetched
 
@@ -99,7 +126,11 @@ it wraps.
 
 Something genuinely unclassifiable — `veritysetup`, say — would need
 `pm build --permissive`, and should be its own recipe saying so in its header
-rather than smuggled through a wrapper.
+rather than smuggled through a wrapper. That is also why the disk images are
+written by format writers in Python rather than by e2fsprogs, mtools and
+libisoburn built into the sysroot and driven from a shell script: the script
+would have been a third wrapper, hiding four more programs. See
+[`images.md`](images.md).
 
 ## The download-path derivation is undocumented behaviour
 

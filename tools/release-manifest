@@ -34,6 +34,11 @@ CHUNK = 1 << 20
 # with @v standing in for the version.
 UKI = "losos-desktop_{version}_{arch}.efi"
 ROOT = "losos-desktop_{version}_{gpt_root}.raw.xz"
+# The installation media. sysupdate ignores lines it has no MatchPattern for,
+# so listing them costs nothing there and gives whoever downloads an ISO a
+# digest to check it against.
+MEDIA = ["losos-desktop_{version}_{arch}.iso",
+         "losos-desktop_{version}_{arch}.qcow2"]
 
 # sysupdate takes the version from where @v sits in the pattern, so a version
 # containing an underscore or a dot in the wrong place silently splits wrong.
@@ -86,6 +91,13 @@ def main():
             f"{directory}:\n  " + "\n  ".join(missing)
         )
 
+    # Listed when present rather than required: a partial build that produced
+    # the transfers but not the media is still a publishable update, and
+    # failing here would turn it into no release at all.
+    optional = [name.format(version=args.version, arch=args.arch)
+                for name in MEDIA]
+    optional = [name for name in optional if (directory / name).exists()]
+
     manifest = directory / "SHA256SUMS"
 
     if args.check:
@@ -112,7 +124,8 @@ def main():
 
     # Two spaces and no `*`: the format sysupdate parses is the coreutils
     # sha256sum text format, and the binary-mode asterisk is not part of it.
-    lines = [f"{sha256(directory / name)}  {name}" for name in expected]
+    lines = [f"{sha256(directory / name)}  {name}"
+             for name in expected + optional]
     manifest.write_text("\n".join(lines) + "\n")
 
     print(f"release-manifest: {manifest}")

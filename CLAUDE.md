@@ -7,7 +7,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 `losos-desktop` is a **distribution**, not a program: a chain of
 [`pm`](https://github.com/dichhead/pm) build recipes that compiles a
 systemd-native GNOME desktop OS from pinned upstream sources and assembles a
-rootfs tarball, an initramfs and a UKI. There is almost no application source
+rootfs tarball, an initramfs, a UKI, an installer ISO and a QCOW2 disk. There is almost no application source
 here. What there is: recipe templates, a generator, a set of gates, and the
 documentation explaining why each is shaped the way it is.
 
@@ -76,6 +76,20 @@ tool that *can* be told about the local CA and serving the bytes over loopback
 sidesteps that without weakening anything: the SHA-256 pin is unchanged, so a
 mirror serving different bytes fails pm's check exactly as a bad upstream would.
 
+**The image layer is mkosi, and the plugins are what let it run.** `mkosi`,
+`xorriso` and `qemu-img` are all outside pm's fingerprint table (C2), and a
+command matching nothing aborts the build before any step runs. `plugins/`
+names them — pm consults a plugin only about a command no built-in fingerprint
+matched, so this extends the table without weakening it — and the
+`Containerfile` is what guarantees they are installed. mkosi drives
+`systemd-repart` with `RepartOffline=yes`, which populates filesystems through
+`mkfs`' own populate modes rather than a loop device the jail has no privilege
+for (C7). `docs/images.md` is the reasoning; read it before touching the image
+layer. The stdlib-only ext4, FAT, GPT, ISO and qcow2 writers this tree used to
+carry are gone: the fingerprint argument for them was already answered by
+`plugins/losos-image`, and the real gap — whether the tools were installed at
+all — is the Containerfile's.
+
 **`overlay/`** is the OS content this repo writes rather than fetches: units,
 drop-ins, presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`,
 networkd config, the kernel command line. The image layer stages it verbatim.
@@ -116,10 +130,44 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   recipe invalidates its signature and pm verifies before parsing (C10). If you
   run pm by hand after editing, sign first or the failure reads as a trust
   error.
+- **`./do build` re-generates before it builds, with the settings the last
+  `tools/configure` was given** — read back from `out/configure.args`. The
+  generated tree has an architecture, a channel and a version substituted into
+  it and says so nowhere, so a re-generation with the defaults would turn an
+  aarch64 tree into an x86_64 one and build it without complaint.
+- **The release version is baked into the image**, as the name of the UKI on
+  its ESP. That is the only place systemd-sysupdate can read a version from, so
+  `tools/configure --version` is not cosmetic: at its default an image's kernel
+  is unversioned, the first update installs a second one beside it and can
+  never retire either.
 - **`sources.lock` may ship unresolved hashes.** `TODO` is a sentinel, never a
   value to fill in by guessing. `tools/fetch-sources --update` writes what the
   bytes actually hashed to; `tools/configure` refuses to generate while any
   remain unless passed `--allow-unresolved`.
+
+## Keeping the pins current
+
+`tools/check-latest` asks every upstream what its newest stable release is.
+Most of them answer with a directory listing; the thirty-two on github.com have
+none, so those are asked over `api.github.com` and the answer carries the
+download URL, which is why no GitHub URL is composed by string surgery. Set
+`GITHUB_TOKEN` or the sweep runs out of anonymous quota a third of the way
+through and reports the rest as `unknown`.
+
+`--apply` moves three things together, and moving fewer is how the tree starts
+lying about what it contains: the lock's url and version, the lock's hash back
+to `TODO`, and the `version:` list of the recipe that downloads it (which
+`tools/gates/versions.py` checks against the lock). `HOLD` in that file names
+the sources whose newest release is not this tree's to take, with the reason --
+`COMPILER_RT` is version-locked to the host clang.
+
+`.github/workflows/update-sources.yml` runs that weekly and tests **each
+candidate alone** in its own matrix leg -- fetch the new bytes, hash them, run
+`./do check` -- before collecting the survivors into one pull request. A leg
+proves the URL exists and the tree still lints. It compiles nothing: nothing
+here validates a recipe's `-D` options against sources it does not have (see
+the tombstone in `tools/gates/`), so a bump that crosses a major version still
+needs a human and a release note.
 
 ## Conventions
 

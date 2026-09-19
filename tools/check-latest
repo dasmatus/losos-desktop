@@ -12,9 +12,18 @@ failure -- it is a version nobody can confirm from here, which is worth saying
 out loud.
 
     tools/check-latest                 # report
-    tools/check-latest --apply         # rewrite manifest/sources.lock
+    tools/check-latest --apply         # rewrite manifest/sources.lock + recipes
     tools/check-latest --only LINUX
     tools/check-latest --refresh       # ignore the cache
+    tools/check-latest --json out.json # machine-readable, for CI
+
+Thirty-two of the hundred and two sources live on github.com, where the release
+lives behind the REST API rather than in a directory listing: a release asset
+URL's parent path is not browsable, so the listing probe below reports every
+one of them as unknown. Those are asked over `api.github.com` instead, and the
+answer carries the download URL, so no URL is composed by string surgery for
+them. Set GITHUB_TOKEN: unauthenticated the API allows sixty requests an hour,
+and this reads one listing per GitHub source.
 
 Listings are cached for six hours and requests to one host are spaced a second
 apart. Both matter: this reads one listing per source, and twenty-seven of them
@@ -25,10 +34,20 @@ invocation, as fast as the link allows, is impolite by construction -- and
 Version comparison is by release tuple, not by string: '1.2.10' is newer than
 '1.2.9', and a plain sort says otherwise. Anything that does not parse as a
 release tuple is skipped rather than compared wrongly.
+
+`--apply` moves three things together, because moving fewer is how a tree
+starts lying about what it contains: the lock's url and version, the lock's
+sha256 back to the TODO sentinel (a hash cannot survive a version bump, and
+tools/fetch-sources is the only thing that may write a new one), and the
+`version:` list of the recipe that downloads it, which tools/gates/versions.py
+checks against the lock.
 """
 
 import argparse
 import hashlib
+import importlib.util
+import json
+import os
 import re
 import subprocess
 import sys
@@ -51,12 +70,34 @@ CACHE_TTL = 6 * 60 * 60
 # rude whatever the absolute number.
 HOST_DELAY = 1.0
 
+USER_AGENT = "losos-desktop check-latest (+https://github.com/dichhead/losos-desktop)"
+
 _last_request = {}
+# api.github.com calls that did not answer. Collected rather than raised: a
+# rate-limited sweep otherwise reports thirty-two sources as "unknown", which
+# reads exactly like thirty-two upstreams nobody can parse.
+_api_failures = []
 
 # A pre-release is never "latest": upstream directory listings carry alphas,
 # betas and release candidates alongside real releases, and picking one up
 # automatically is how a distribution ships a kernel nobody meant to ship.
 PRERELEASE = re.compile(r"(?:alpha|beta|rc\d*|pre\d*|dev\d*|-rc)", re.I)
+
+GITHUB_API = "https://api.github.com"
+
+# Sources whose newest upstream release is not this tree's to take, with the
+# reason, because a held source that does not say why becomes a source nobody
+# dares unhold. Reported as `held`, never proposed; `--include-held` asks
+# anyway.
+HOLD = {
+    "COMPILER_RT": (
+        "version-locked to the host clang on purpose -- compiler-rt and the "
+        "compiler that emits calls into it are one implementation split across "
+        "two tarballs, and the build hosts install clang 18 "
+        "(recipes/00-toolchain/compiler-rt/build.yaml.in, "
+        "docs/host-requirements.md). Bump the host toolchain first."
+    ),
+}
 
 
 def version_key(version):
@@ -67,8 +108,8 @@ def version_key(version):
     return parts
 
 
-def fetch(url, timeout=40, refresh=False):
-    """Fetch a directory listing, through a cache and a per-host throttle."""
+def fetch(url, timeout=40, refresh=False, headers=()):
+    """Fetch a URL, through a cache and a per-host throttle."""
     CACHE.mkdir(parents=True, exist_ok=True)
     entry = CACHE / hashlib.sha256(url.encode()).hexdigest()
 
@@ -82,15 +123,25 @@ def fetch(url, timeout=40, refresh=False):
         time.sleep(HOST_DELAY - elapsed)
     _last_request[host] = time.monotonic()
 
-    result = subprocess.run(
-        ["curl", "-sS", "-L", "--fail", "--max-time", str(timeout),
-         # Identify the tool. An unattended sweep that does not say who it is
-         # gives an upstream no way to complain to anyone but the IP.
-         "--user-agent", "losos-desktop check-latest (+https://github.com/dichhead/losos-desktop)",
-         url],
-        capture_output=True, text=True,
-    )
+    args = [
+        "curl", "-sS", "-L", "--fail", "--max-time", str(timeout),
+        # Identify the tool. An unattended sweep that does not say who it is
+        # gives an upstream no way to complain to anyone but the IP.
+        "--user-agent", USER_AGENT,
+        url,
+    ]
+    config = ""
+    if headers:
+        # Headers go in through curl's config file on stdin, not argv: one of
+        # them carries a token, and argv is readable by any process on the box
+        # and echoed by any shell tracing this tool.
+        args[1:1] = ["-K", "-"]
+        config = "".join(f'header = "{header}"\n' for header in headers)
+
+    result = subprocess.run(args, input=config, capture_output=True, text=True)
     if result.returncode != 0:
+        if host == urlsplit(GITHUB_API).netloc:
+            _api_failures.append(url)
         return None
     entry.write_text(result.stdout)
     return result.stdout
@@ -111,14 +162,161 @@ def from_listing(url, pattern, refresh=False):
     return newest(set(re.findall(pattern, body)))
 
 
-def probe(key, entry):
-    """Return the newest version upstream offers, or None if unknowable here.
+def github_headers():
+    headers = [
+        "Accept: application/vnd.github+json",
+        "X-GitHub-Api-Version: 2022-11-28",
+    ]
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        headers.append(f"Authorization: Bearer {token}")
+    return headers
+
+
+def version_pattern(text, version):
+    """A regex matching `text` with its version replaced by a capture group.
+
+    The shape is derived from what is already pinned rather than guessed at,
+    which is the only way to survive how little upstreams agree: expat's tag is
+    `R_2_6_3` for a tarball called `expat-2.6.3.tar.xz`, pcre2 tags
+    `pcre2-10.44`, llvm tags `llvmorg-18.1.8`, and NVIDIA tags a bare
+    `580.95.05`. A rule that stripped a leading `v` would be wrong for four of
+    them. Substituting the version we already trust cannot be.
+
+    Split from the right: the version sits next to the extension, and a package
+    whose *name* contains digits would otherwise steal the match.
+    """
+    head, found, tail = text.rpartition(version)
+    if not found:
+        return None
+    return re.compile(rf"^{re.escape(head)}(\d[\d.]*){re.escape(tail)}$")
+
+
+def parse_github(url):
+    """Split a github.com source URL into what the API needs to answer about.
+
+    Two shapes appear in sources.lock. A release asset
+    (`/releases/download/<tag>/<file>`) is upstream's own tarball, and the API
+    hands back its download URL directly. An archive
+    (`/archive/refs/tags/<tag>.tar.gz`) is GitHub generating a tarball from a
+    tag, for the upstreams that publish no dist tarball at all; there the tag
+    is what has to be matched and the URL is rebuilt from it.
+    """
+    match = re.match(
+        r"^https://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/(.+)$", url)
+    if match:
+        owner, repo, _tag, asset = match.groups()
+        return owner, repo, "release", asset
+
+    match = re.match(
+        r"^https://github\.com/([^/]+)/([^/]+)/archive/refs/tags/(.+?)"
+        r"(\.tar\.(?:gz|xz|bz2))$", url)
+    if match:
+        owner, repo, tag, suffix = match.groups()
+        return owner, repo, "archive", (tag, suffix)
+
+    return None
+
+
+def release_candidates(payload, pattern):
+    """{version: download url} for every release asset matching the shape.
+
+    Drafts and anything the API marks a prerelease are dropped before the name
+    is even looked at: upstream saying "this is not a release" is better
+    evidence than a regex over its tag.
+    """
+    found = {}
+    for release in payload:
+        if release.get("draft") or release.get("prerelease"):
+            continue
+        if PRERELEASE.search(str(release.get("tag_name") or "")):
+            continue
+        for asset in release.get("assets") or []:
+            match = pattern.match(str(asset.get("name") or ""))
+            if match and asset.get("browser_download_url"):
+                found[match.group(1)] = asset["browser_download_url"]
+    return found
+
+
+def tag_candidates(names, pattern, owner, repo, suffix):
+    """{version: archive url} for every tag name matching the shape."""
+    found = {}
+    for name in names:
+        if PRERELEASE.search(name):
+            continue
+        match = pattern.match(name)
+        if match:
+            found[match.group(1)] = (
+                f"https://github.com/{owner}/{repo}/archive/refs/tags/{name}{suffix}"
+            )
+    return found
+
+
+def probe_github(entry, refresh=False):
+    """Ask api.github.com. Returns (version, url), or None if it cannot say."""
+    parsed = parse_github(entry["url"])
+    if parsed is None:
+        return None
+    owner, repo, kind, detail = parsed
+    version = str(entry.get("version", ""))
+
+    body = fetch(f"{GITHUB_API}/repos/{owner}/{repo}/releases?per_page=100",
+                 headers=github_headers(), refresh=refresh)
+    releases = json.loads(body) if body else []
+    if not isinstance(releases, list):
+        # An error object rather than a list -- rate limit, or a repo that
+        # moved. Not a release list, and not something to iterate.
+        _api_failures.append(f"{owner}/{repo}")
+        releases = []
+
+    if kind == "release":
+        pattern = version_pattern(detail, version)
+        if pattern is None:
+            return None
+        found = release_candidates(releases, pattern)
+    else:
+        tag, suffix = detail
+        pattern = version_pattern(tag, version)
+        if pattern is None:
+            return None
+        names = [str(r.get("tag_name") or "") for r in releases
+                 if not r.get("draft") and not r.get("prerelease")]
+        found = tag_candidates(names, pattern, owner, repo, suffix)
+        if not found:
+            # Several of these upstreams tag without ever cutting a GitHub
+            # release -- which is why their URL is an archive in the first
+            # place. The tag list is the fallback, not the first choice: it
+            # carries no draft or prerelease flag, so only the name filters it.
+            #
+            # It is also only the first hundred tags. A repo with more, listed
+            # out of order, can hide a newer one -- which surfaces as
+            # `current`, never as a wrong bump.
+            body = fetch(f"{GITHUB_API}/repos/{owner}/{repo}/tags?per_page=100",
+                         headers=github_headers(), refresh=refresh)
+            tags = json.loads(body) if body else []
+            if isinstance(tags, list):
+                found = tag_candidates(
+                    [str(t.get("name") or "") for t in tags],
+                    pattern, owner, repo, suffix)
+
+    best = newest(found)
+    if best is None:
+        return None
+    return best, found[best]
+
+
+def probe(key, entry, refresh=False):
+    """Return (newest version, its url), or None if unknowable here.
 
     Each branch reads the listing that actually contains the releases, which is
     usually the parent of the tarball's own URL.
     """
     url = entry["url"]
     name = url.rsplit("/", 1)[-1]
+    pinned = str(entry.get("version", ""))
+
+    if urlsplit(url).netloc == "github.com":
+        return probe_github(entry, refresh=refresh)
 
     # GNOME: sources/<pkg>/<major.minor>/<pkg>-<version>.tar.xz. The series
     # directory has to be resolved first, because the newest tarball lives in
@@ -129,10 +327,18 @@ def probe(key, entry):
         series = from_listing(base, r'href="(\d+(?:\.\d+)?)/"')
         if series is None:
             return None
-        return from_listing(
+        latest = from_listing(
             f"{base}{series}/",
             rf'{re.escape(package)}-(\d[\d.]*)\.tar\.xz'
         )
+        if latest is None:
+            return None
+        # Built from the series the listing actually named, not by substituting
+        # into the old URL: the series is its own path segment, so 47.2 -> 48.0
+        # by string replacement leaves the URL pointing into .../47/ for a
+        # tarball that only exists under .../48/.
+        head, _, tail = name.rpartition(pinned)
+        return latest, f"{base}{series}/{head}{latest}{tail}"
 
     # kernel.org, and everything else that is a plain indexed directory.
     parent = url.rsplit("/", 1)[0] + "/"
@@ -142,48 +348,155 @@ def probe(key, entry):
         suffix = r"\.tar\.(?:xz|gz|bz2)"
         found = from_listing(parent, rf'{prefix}-(\d[\d.]*?){suffix}')
         if found:
-            return found
+            # Substituted across the whole URL rather than only the basename:
+            # several of these embed the version in a path segment as well as
+            # in the filename, and rebuilding from `parent` would carry the old
+            # segment forward.
+            return found, url.replace(pinned, found)
 
     return None
+
+
+def _versions_gate():
+    """The version gate, imported rather than reimplemented.
+
+    tools/gates/versions.py owns what a recipe's `version:` list must look like
+    and which recipes the rule applies to. Copying its two regexes here would
+    make this tool right until the day one of them changed, and the symptom
+    would be a bump that writes a recipe the gate then rejects.
+    """
+    path = REPO / "tools" / "gates" / "versions.py"
+    spec = importlib.util.spec_from_file_location("versions_gate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def bump_recipes(repo, key, version, gate=None):
+    """Rewrite the `version:` list of every recipe that downloads `key`.
+
+    A bump that moved sources.lock alone builds the new tarball under the old
+    name, everywhere: in the archive name, in `pm explain`, and in every
+    dependent's carried copy. tools/gates/versions.py fails that tree, so
+    without this every candidate bump would be rejected by `./do check` before
+    anything got the chance to test the bump itself.
+
+    A recipe that downloads more than one source is skipped, exactly as the
+    gate skips it: there is no single upstream version for it to agree with.
+    """
+    gate = gate or _versions_gate()
+    touched = []
+    items = "\n".join(f"- '{part}'" for part in version.split("."))
+
+    for template in sorted((repo / "recipes").glob("*/*/build.yaml.in")):
+        text = template.read_text()
+        keys = set(gate.URL_TOKEN.findall(text))
+        if keys != {key}:
+            continue
+        if not gate.VERSION_BLOCK.search(text):
+            continue
+        old = gate.recipe_version(text)
+        text = gate.VERSION_BLOCK.sub(f"version:\n{items}\n", text, count=1)
+
+        # The header comment states the version too -- "# zlib 1.3.1" -- and a
+        # header left behind is a recipe that reads as the old version to every
+        # human who opens it. Rewritten only when it is exactly the old version
+        # at the end of the first line, so a header that says something else
+        # is never mangled.
+        if old:
+            lines = text.splitlines()
+            stale = ".".join(old)
+            if lines and lines[0].startswith("# ") and lines[0].endswith(f" {stale}"):
+                lines[0] = lines[0][: -len(stale)] + version
+                text = "\n".join(lines) + "\n"
+
+        template.write_text(text)
+        touched.append(str(template.relative_to(repo)))
+
+    return touched
+
+
+def apply_to_lock(text, key, old_url, new_url, version):
+    """Move one entry in sources.lock to `version` at `new_url`.
+
+    The entry is found by scanning to the next top-level key rather than by a
+    fixed window of lines. A fixed window silently skips the fields of any
+    entry that grew a comment -- ZLIB carries three lines of one -- and the
+    field it skips is `sha256:`, which would leave the lock pinning new bytes
+    to the old hash. pm verifies that digest before it parses anything, so the
+    failure presents as a compromised mirror.
+    """
+    text = text.replace(old_url, new_url)
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith(f"{key}:"):
+            continue
+        for offset in range(index + 1, len(lines)):
+            stripped = lines[offset].strip()
+            if lines[offset] and not lines[offset][0].isspace() and stripped:
+                break
+            indent = lines[offset][: len(lines[offset]) - len(lines[offset].lstrip())]
+            if stripped.startswith("version:"):
+                lines[offset] = f"{indent}version: '{version}'"
+            elif stripped.startswith("sha256:"):
+                # A hash cannot survive a version bump, and nothing in this
+                # tree may compose one: TODO is the sentinel that sends the
+                # entry back through tools/fetch-sources --update.
+                lines[offset] = f"{indent}sha256: TODO"
+        break
+    return "\n".join(lines) + "\n"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true",
-                        help="rewrite sources.lock with the newest versions")
+                        help="rewrite sources.lock and the recipes that read it")
     parser.add_argument("--only", help="check a single sources.lock key")
     parser.add_argument("--refresh", action="store_true",
                         help="ignore the listing cache and re-fetch")
+    parser.add_argument("--json", metavar="PATH",
+                        help="also write the report as JSON, for CI to read")
+    parser.add_argument("--include-held", action="store_true",
+                        help="propose the sources in HOLD as well")
     args = parser.parse_args()
 
     lock = REPO / "manifest" / "sources.lock"
     doc = yaml.safe_load(lock.read_text()) or {}
 
-    outdated, current, unknown = [], [], []
+    outdated, current, unknown, held = [], [], [], []
     for key, entry in doc.items():
         if args.only and key != args.only:
             continue
         pinned = str(entry.get("version", ""))
-        latest = probe(key, entry)
-        if latest is None:
+        answer = probe(key, entry, refresh=args.refresh)
+        if answer is None:
             unknown.append((key, pinned, entry["url"]))
-        elif latest != pinned and version_key(latest) > version_key(pinned):
-            outdated.append((key, pinned, latest, entry["url"]))
+            continue
+        latest, url = answer
+        if latest != pinned and version_key(latest) > version_key(pinned):
+            if key in HOLD and not args.include_held:
+                held.append((key, pinned, latest, HOLD[key]))
+            else:
+                outdated.append((key, pinned, latest, entry["url"], url))
         else:
             current.append((key, pinned))
 
     for key, pinned in sorted(current):
         print(f"  current   {key:26} {pinned}")
-    for key, pinned, latest, _ in sorted(outdated):
+    for key, pinned, latest, _old, _new in sorted(outdated):
         print(f"  OUTDATED  {key:26} {pinned} -> {latest}")
+    for key, pinned, latest, _why in sorted(held):
+        print(f"  held      {key:26} {pinned} -> {latest}")
     for key, pinned, url in sorted(unknown):
         host = url.split("://")[1].split("/")[0]
         print(f"  unknown   {key:26} {pinned}  ({host})")
 
     print(
         f"\ncheck-latest: {len(current)} current, {len(outdated)} outdated, "
-        f"{len(unknown)} unknowable from here"
+        f"{len(held)} held, {len(unknown)} unknowable from here"
     )
+    for key, _pinned, _latest, why in sorted(held):
+        print(f"  {key} is held: {why}")
     if unknown:
         print(
             "  An `unknown` is a version this host cannot confirm -- usually a\n"
@@ -191,34 +504,237 @@ def main():
             "  guessed at, because a version invented here would be pinned to a\n"
             "  hash of whatever happened to answer."
         )
+    if _api_failures:
+        print(
+            f"  {len(_api_failures)} api.github.com request(s) did not answer. "
+            "Unauthenticated that\n  API allows sixty an hour; set GITHUB_TOKEN "
+            "and re-run with --refresh."
+        )
+
+    if args.json:
+        Path(args.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json).write_text(json.dumps({
+            "outdated": [
+                {"key": k, "from": p, "to": l, "url": new}
+                for k, p, l, _old, new in sorted(outdated)
+            ],
+            "held": [{"key": k, "from": p, "to": l, "why": w}
+                     for k, p, l, w in sorted(held)],
+            "current": [{"key": k, "version": v} for k, v in sorted(current)],
+            "unknown": [{"key": k, "version": v, "url": u}
+                        for k, v, u in sorted(unknown)],
+            "api_failures": len(_api_failures),
+        }, indent=2) + "\n")
 
     if args.apply and outdated:
         text = lock.read_text()
-        for key, pinned, latest, url in outdated:
-            # Rewrite the URL and the version together: every one of these URLs
-            # embeds the version, often more than once, so bumping the version
-            # field alone would leave the tree downloading the old tarball and
-            # calling it the new one.
-            text = text.replace(url, url.replace(pinned, latest))
-            lines = text.splitlines()
-            for index, line in enumerate(lines):
-                if line.startswith(f"{key}:"):
-                    for offset in range(index + 1, min(index + 6, len(lines))):
-                        if lines[offset].strip().startswith("version:"):
-                            indent = " " * (len(lines[offset]) - len(lines[offset].lstrip()))
-                            lines[offset] = f"{indent}version: {latest}"
-                        # The hash cannot survive a version bump.
-                        if lines[offset].strip().startswith("sha256:"):
-                            indent = " " * (len(lines[offset]) - len(lines[offset].lstrip()))
-                            lines[offset] = f"{indent}sha256: TODO"
-                    break
-            text = "\n".join(lines) + "\n"
+        for key, _pinned, latest, old_url, new_url in outdated:
+            text = apply_to_lock(text, key, old_url, new_url, latest)
         lock.write_text(text)
-        print(f"\ncheck-latest: bumped {len(outdated)} source(s); every hash it "
-              "touched is back to TODO.\n  Run tools/fetch-sources --update.")
+
+        gate = _versions_gate()
+        recipes = []
+        for key, _pinned, latest, _old, _new in outdated:
+            recipes += bump_recipes(REPO, key, latest, gate=gate)
+
+        print(f"\ncheck-latest: bumped {len(outdated)} source(s) and "
+              f"{len(recipes)} recipe(s); every hash it touched is back to "
+              "TODO.\n  Run tools/fetch-sources --update.")
+        for path in recipes:
+            print(f"    {path}")
 
     return 0
 
 
+# --- self-test ------------------------------------------------------------
+#
+# The part of this tool that can be wrong without saying so is the matching: a
+# pattern that fails to match reports a source as `current` forever, and one
+# that matches too much proposes a bump to something that is not a release.
+# Neither shows up in a report anyone reads. So the matching is exercised here
+# against payloads shaped like the upstreams this tree actually pins, with no
+# network involved.
+
+def self_test():
+    import tempfile
+
+    ok = True
+
+    def check(name, got, want):
+        nonlocal ok
+        if got != want:
+            ok = False
+            print(f"  MISSED  {name}", file=sys.stderr)
+            print(f"          expected {want!r}, got {got!r}", file=sys.stderr)
+        else:
+            print(f"  ok      {name}")
+
+    # -- version_pattern, over every tag and asset shape in sources.lock ----
+    shapes = [
+        ("expat-2.6.3.tar.xz", "2.6.3", "expat-2.7.1.tar.xz", "2.7.1",
+         "expat's tag is R_2_6_3 but its asset is not; the asset is what is matched"),
+        ("v4.1.1", "4.1.1", "v4.2.0", "4.2.0", "a leading v"),
+        ("580.95.05", "580.95.05", "581.0.0", "581.0.0", "NVIDIA tags a bare version"),
+        ("compiler-rt-18.1.8.src.tar.xz", "18.1.8",
+         "compiler-rt-19.1.0.src.tar.xz", "19.1.0", "an infix before the extension"),
+        ("pcre2-10.44.tar.bz2", "10.44", "pcre2-10.45.tar.bz2", "10.45",
+         "a package name ending in a digit"),
+        ("Linux-PAM-1.6.1.tar.xz", "1.6.1", "Linux-PAM-1.7.0.tar.xz", "1.7.0",
+         "mixed case"),
+    ]
+    for text, version, candidate, want, because in shapes:
+        pattern = version_pattern(text, version)
+        match = pattern.match(candidate) if pattern else None
+        check(f"{text} -> {candidate:30} ({because})",
+              match.group(1) if match else None, want)
+
+    pattern = version_pattern("expat-2.6.3.tar.xz", "2.6.3")
+    check("a different extension is not the same source",
+          pattern.match("expat-2.7.1.tar.gz"), None)
+    check("a signature beside it is not the source",
+          pattern.match("expat-2.7.1.tar.xz.asc"), None)
+    check("a version that is not in the text has no shape",
+          version_pattern("expat-2.6.3.tar.xz", "9.9.9"), None)
+
+    # -- release assets ----------------------------------------------------
+    releases = [
+        {"tag_name": "R_2_7_2", "draft": True, "prerelease": False,
+         "assets": [{"name": "expat-2.7.2.tar.xz",
+                     "browser_download_url": "https://example.invalid/draft"}]},
+        {"tag_name": "R_2_8_0_rc1", "draft": False, "prerelease": True,
+         "assets": [{"name": "expat-2.8.0.tar.xz",
+                     "browser_download_url": "https://example.invalid/rc"}]},
+        {"tag_name": "R_2_7_1", "draft": False, "prerelease": False,
+         "assets": [
+             {"name": "expat-2.7.1.tar.xz",
+              "browser_download_url": "https://example.invalid/2.7.1"},
+             {"name": "expat-2.7.1.tar.xz.asc",
+              "browser_download_url": "https://example.invalid/sig"},
+         ]},
+        {"tag_name": "R_2_6_3", "draft": False, "prerelease": False,
+         "assets": [{"name": "expat-2.6.3.tar.xz",
+                     "browser_download_url": "https://example.invalid/2.6.3"}]},
+    ]
+    found = release_candidates(releases, version_pattern("expat-2.6.3.tar.xz", "2.6.3"))
+    check("a draft release is not a release", "2.7.2" in found, False)
+    check("a prerelease is not a release", "2.8.0" in found, False)
+    check("the newest real release wins", newest(found), "2.7.1")
+    check("its url comes from the API, not from string surgery",
+          found["2.7.1"], "https://example.invalid/2.7.1")
+
+    # -- archive tags ------------------------------------------------------
+    tags = ["v261", "v261-rc1", "v260", "v99", "not-a-version"]
+    found = tag_candidates(tags, version_pattern("v261", "261"),
+                           "systemd", "systemd", ".tar.gz")
+    check("a release candidate tag is skipped", "261-rc1" in found, False)
+    check("a tag that is not a version is skipped", len(found), 3)
+    check("261 sorts above 99, which a string sort gets wrong",
+          newest(found), "261")
+    check("the archive url is rebuilt from the tag",
+          found["261"],
+          "https://github.com/systemd/systemd/archive/refs/tags/v261.tar.gz")
+
+    # -- parse_github ------------------------------------------------------
+    check("a release asset url",
+          parse_github("https://github.com/madler/zlib/releases/download/"
+                       "v1.3.1/zlib-1.3.1.tar.xz"),
+          ("madler", "zlib", "release", "zlib-1.3.1.tar.xz"))
+    check("an archive url",
+          parse_github("https://github.com/polkit-org/polkit/archive/refs/"
+                       "tags/125.tar.gz"),
+          ("polkit-org", "polkit", "archive", ("125", ".tar.gz")))
+    check("something else on github is not either",
+          parse_github("https://github.com/x/y/raw/main/z.tar.gz"), None)
+
+    # -- apply_to_lock -----------------------------------------------------
+    #
+    # Shaped like the real ZLIB entry, comment and all: the comment is what
+    # pushed `sha256:` out of the fixed six-line window this used to scan, so
+    # the bump landed with the old hash still in place.
+    entry = (
+        "ZLIB:\n"
+        "  # zlib.net serves only the current release and 1.3.1 has rolled\n"
+        "  # off it (404). This is the same tarball from the author's own\n"
+        "  # GitHub release, so the bytes are unchanged by the move.\n"
+        "  url: https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz\n"
+        "  version: '1.3.1'\n"
+        "  sha256: 38ef96b8dfe510d42707d9c781877914792541133e1870841463bfa73f883e32\n"
+        "\n"
+        "XZ:\n"
+        "  url: https://example.invalid/xz-5.6.3.tar.xz\n"
+        "  version: '5.6.3'\n"
+        "  sha256: cafe\n"
+    )
+    moved = apply_to_lock(
+        entry, "ZLIB",
+        "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz",
+        "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.xz",
+        "1.3.2")
+    parsed = yaml.safe_load(moved)
+    check("the url moves", parsed["ZLIB"]["url"].endswith("v1.3.2/zlib-1.3.2.tar.xz"), True)
+    check("the version moves, quoted", parsed["ZLIB"]["version"], "1.3.2")
+    check("the hash goes back to TODO past a three-line comment",
+          parsed["ZLIB"]["sha256"], "TODO")
+    check("the next entry is untouched", parsed["XZ"]["sha256"], "cafe")
+
+    # A trailing zero must survive the round trip: unquoted, YAML reads 2.70 as
+    # the float 2.7, which is how @VERSION_LIBCAP@ once rendered a directory
+    # name that did not exist.
+    trailing = apply_to_lock(
+        "LIBCAP:\n  url: https://example.invalid/libcap-2.69.tar.xz\n"
+        "  version: '2.69'\n  sha256: cafe\n",
+        "LIBCAP", "https://example.invalid/libcap-2.69.tar.xz",
+        "https://example.invalid/libcap-2.70.tar.xz", "2.70")
+    check("a trailing zero stays a string",
+          yaml.safe_load(trailing)["LIBCAP"]["version"], "2.70")
+
+    # -- bump_recipes ------------------------------------------------------
+    gate = _versions_gate()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "manifest").mkdir(parents=True)
+        (root / "manifest" / "sources.lock").write_text(
+            "ZLIB:\n  url: https://example.invalid/zlib-1.3.2.tar.xz\n"
+            "  version: '1.3.2'\n  sha256: TODO\n"
+            "LINUX:\n  url: https://example.invalid/linux-7.2.6.tar.xz\n"
+            "  version: '7.2.6'\n  sha256: TODO\n")
+        one = root / "recipes" / "00-base" / "zlib"
+        one.mkdir(parents=True)
+        (one / "build.yaml.in").write_text(
+            "# zlib 1.3.1\n#\n# Compression.\nname: zlib\nversion:\n- '1'\n- '3'\n"
+            "- '1'\ndependencies: []\nsteps:\n- stage: Prepare\n  name: fetch\n"
+            "  dl_urls:\n    @URL_ZLIB@: '@SHA256_ZLIB@'\n  run:\n  - true\n")
+        two = root / "recipes" / "00-base" / "kernel"
+        two.mkdir(parents=True)
+        (two / "build.yaml.in").write_text(
+            "# kernel\nname: kernel\nversion:\n- '7'\n- '2'\n- '6'\n"
+            "dependencies: []\nsteps:\n- stage: Prepare\n  name: fetch\n"
+            "  dl_urls:\n    @URL_LINUX@: '@SHA256_LINUX@'\n"
+            "    @URL_ZLIB@: '@SHA256_ZLIB@'\n  run:\n  - true\n")
+
+        touched = bump_recipes(root, "ZLIB", "1.3.2", gate=gate)
+        check("only the recipe that downloads it is touched",
+              touched, ["recipes/00-base/zlib/build.yaml.in"])
+        bumped = (one / "build.yaml.in").read_text()
+        check("the version list follows the source",
+              gate.recipe_version(bumped), ["1", "3", "2"])
+        check("the header comment follows too",
+              bumped.splitlines()[0], "# zlib 1.3.2")
+        check("a two-source recipe is skipped, as the gate skips it",
+              gate.recipe_version((two / "build.yaml.in").read_text()),
+              ["7", "2", "6"])
+        # The gate over the tree `--apply` would leave behind: the lock above
+        # already carries 1.3.2, so a recipe this wrote and a recipe the gate
+        # accepts have to be the same recipe.
+        failures, _ = gate.check(root)
+        check("and nothing the gate would reject was written",
+              [f for f in failures if "zlib" in f], [])
+
+    print("check-latest --self-test: " + ("all cases behave" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv:
+        sys.exit(self_test())
     sys.exit(main())

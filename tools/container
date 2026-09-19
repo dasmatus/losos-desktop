@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Build and run the build host described by the repository's Containerfile.
+
+`docs/host-requirements.md` says what a build host must provide; the
+Containerfile provides it; this puts the repository inside it. The point is that
+CI and a developer's machine run the *same* host, so "works here, fails in CI"
+stops being a category of bug.
+
+Three things this has to get right, and each of them is a whole class of
+confusing failure if it does not:
+
+  * **pm's jail is a user namespace inside the container.** A default Docker
+    container cannot create one, and the error is `Operation not permitted`
+    from inside pm's sandbox, which reads as a problem with the workspace.
+  * **pm resolves a step's first word on the host** (C3), and here the host is
+    the container. That is the whole reason this exists.
+  * **TMPDIR must be on real disk** (C11). `./do` already redirects it into
+    `out/tmp`, which is bind-mounted, so a build's several GB land on the
+    repository's filesystem and not in the container's RAM.
+
+The sibling `pm` checkout is mounted too, at the same relative position it has
+outside, because two gates resolve pm's *source* independently of `$PM` and
+silently downgrade when they cannot find it.
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+IMAGE = "localhost/losos-build"
+
+
+def runtime():
+    """podman if it is here, else docker.
+
+    podman first on purpose: rootless podman maps the invoking user into the
+    container, so files the build writes into the repository are owned by
+    whoever ran this. Rootless docker does the same; rootful docker does not,
+    and leaves a tree of root-owned artifacts behind that the next `./do clean`
+    cannot remove.
+    """
+    for candidate in ("podman", "docker"):
+        if shutil.which(candidate):
+            return candidate
+    sys.exit(
+        "container: neither podman nor docker is installed.\n"
+        "  The Containerfile is the build host; without a runtime you are back\n"
+        "  to installing docs/host-requirements.md by hand."
+    )
+
+
+def pm_root():
+    """Where the sibling pm checkout is, honouring PM_ROOT as the gates do."""
+    return Path(os.environ.get("PM_ROOT", REPO.parent / "pm")).resolve()
+
+
+def build(engine, args):
+    command = [engine, "build", "-t", IMAGE, "-f", str(REPO / "Containerfile")]
+    for pin in args.build_arg:
+        command += ["--build-arg", pin]
+    command.append(str(REPO))
+    return subprocess.call(command)
+
+
+def run(engine, args):
+    pm = pm_root()
+    if not pm.is_dir():
+        sys.exit(
+            f"container: no pm checkout at {pm}.\n"
+            "  Clone dichhead/pm beside this repository, or set PM_ROOT.\n"
+            "  tools/gates/plugins.py and fingerprint-lint.py read pm's source,\n"
+            "  and both downgrade to a pass when they cannot find it."
+        )
+
+    command = [
+        engine, "run", "--rm", "--init",
+        # pm's jail is a user namespace created inside this container. Docker's
+        # default seccomp profile and AppArmor confinement both deny part of
+        # what that needs, and the resulting EPERM names nothing useful.
+        "--security-opt", "seccomp=unconfined",
+        "--security-opt", "apparmor=unconfined",
+        # SELinux relabelling of a bind-mounted source tree is slow and, on a
+        # host that is not enforcing, pointless. The :z suffixes below would do
+        # it per-mount; disabling it wholesale keeps a first run from rewriting
+        # every file's label.
+        "--security-opt", "label=disable",
+        "-v", f"{REPO}:{REPO}",
+        "-v", f"{pm}:{pm}",
+        "-w", str(REPO),
+        # The gates read pm's source from here, and ./do runs the binary.
+        "-e", f"PM_ROOT={pm}",
+        "-e", f"PM={pm}/target/release/pm",
+    ]
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        command.append("-t")
+        command.append("-i")
+    command.append(IMAGE)
+    command += args.command or ["bash"]
+    return subprocess.call(command)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="verb", required=True)
+
+    builder = sub.add_parser("build", help="build the image")
+    builder.add_argument(
+        "--build-arg",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="override a pin, e.g. DEBIAN_SNAPSHOT=20260901T000000Z",
+    )
+    builder.set_defaults(handler=build)
+
+    runner = sub.add_parser("run", help="run a command in the image")
+    runner.add_argument("command", nargs=argparse.REMAINDER)
+    runner.set_defaults(handler=run)
+
+    args = parser.parse_args()
+    return args.handler(runtime(), args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

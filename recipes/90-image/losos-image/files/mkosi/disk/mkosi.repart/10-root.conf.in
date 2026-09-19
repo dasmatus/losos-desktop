@@ -1,0 +1,22 @@
+# The root filesystem.
+#
+# ExcludeFiles=/efi rather than a list of the directories to copy: /efi is
+# where the ESP is mounted on a running system, so it is a mount point in the
+# tree and its contents belong to the partition above. Without the exclusion
+# every unified kernel image would be in the image twice -- once on the ESP
+# where firmware reads it, and once inside the root filesystem where nothing
+# ever will -- and the root partition image that systemd-sysupdate ships would
+# carry a copy of the kernel it is shipped alongside.
+#
+# Minimize=guess sizes the partition to its contents. The disk is larger than
+# its partitions on purpose: the free space at the end is where systemd-repart
+# creates /home on first boot, and growing root into the rest of the disk is
+# also repart's, from overlay/usr/lib/repart.d.
+[Partition]
+Type=@ARCH_GPT_ROOT@
+Format=ext4
+Label=losos-root
+CopyFiles=/
+ExcludeFiles=/efi
+Minimize=guess
+SplitName=root
