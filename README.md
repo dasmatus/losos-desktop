@@ -64,7 +64,7 @@ cannot fetch over HTTPS on a host that re-terminates TLS. `just fetch` mirrors
 the tarballs with a tool that can, and `just build` serves them over loopback
 with the SHA-256 pins unchanged.
 
-Run `just` with no arguments for the full list. `./do` remains as a compatibility wrapper.
+Run `just` with no arguments for the full list. A legacy wrapper remains for compatibility.
 
 What the build host itself has to provide — `just`, clang, python3 with `jinja2`,
 cargo with the musl target, and working user namespaces among them — is in

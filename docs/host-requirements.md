@@ -22,7 +22,7 @@ variable, or an absolute path.
 | What | Why | Checked by |
 |---|---|---|
 | A kernel with **unprivileged user namespaces** | pm's jail is one. On Ubuntu 24.04 and derivatives `kernel.apparmor_restrict_unprivileged_userns=1` denies the `uid_map` write and nothing builds. | `tools/check-digest` says so by name |
-| **just** | The repository's entrypoint is the Justfile; `./do` only forwards to it for compatibility. | `just check` |
+| **just** | The repository's entrypoint is the Justfile; the legacy wrapper only forwards to it for compatibility. | `just check` |
 | **clang, lld, llvm-ar/nm/objcopy/strip** | The whole tree is compiled with them; `manifest/toolchain.yaml` names the exact binaries. | `tools/gates/toolchain-report.py` |
 | **python3** | Every meson invocation is `python3 …/meson.py`, because meson is vendored rather than installed. | `just check` |
 | **python3 `jinja2`** | fwupd's meson runs `python3 -c 'import jinja2'` and errors out without it; systemd generates sources with it too. A step cannot set `PYTHONPATH` — no shell, and `env` is banned — so this one cannot be vendored into the sysroot the way meson is. | fails at fwupd's configure step |
