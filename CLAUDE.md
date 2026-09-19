@@ -130,11 +130,19 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   `rustup`, and dies with `error: unexpected argument '--release' found` and a
   `Usage: rustup[EXE] <+toolchain>` that names a program the recipe never
   mentioned. The `Containerfile` puts links to the real `cargo`, `rustc` and
-  `rustdoc` ahead of rustup's own bin for exactly this reason, and `rustc` is
-  there because dropping the `cargo` shim drops the toolchain setup it did for
-  its children: the real cargo looks `rustc` up on `PATH`, lands back on a shim
-  once per crate, and rustup then tries to install a component into a finished
-  image. `docs/host-requirements.md` says the same for a native build. Anything
+  `rustdoc` in `/usr/local/bin`, ahead of rustup's own bin, for exactly this
+  reason — and that directory is not free to choose. pm hands the jail an
+  absolute program path, but the step it starts gets a `PATH` of its own, fixed
+  at `/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin`
+  (`CONTAINER_PATH` in pm's `sandbox.rs`), and nothing on the host can add to
+  it; links anywhere else are invisible to everything the step spawns. `rustc`
+  is one of the three because dropping the `cargo` shim drops the toolchain
+  setup it did for its children: the real cargo looks `rustc` up on `PATH` once
+  per crate and finds either nothing — `could not execute process rustc -vV
+  (never executed)` — or, if the links sit in rustup's own bin, a shim, which
+  decides the toolchain wants syncing and tries to install a component into a
+  finished image. `docs/host-requirements.md` says the same for a native
+  build. Anything
   else multi-call — busybox, a `*-config` symlink farm — has the same problem,
   and it only ever shows up in a real build.
 - **A compiled-in absolute path resolves into the host mirror.** pm's run jail

@@ -190,7 +190,7 @@ RUN for tool in ar nm ranlib strip objcopy objdump readelf; do \
 # distribution's pm plugins to components.
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/rust-bin:/usr/local/cargo/bin:$PATH
+    PATH=$PATH:/usr/local/cargo/bin
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --no-modify-path --profile minimal \
           --default-toolchain "$RUST_VERSION" \
@@ -209,30 +209,43 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
  `#     error: unexpected argument --release found` \
  `#     Usage: rustup[EXE] <+toolchain>` \
  `#` \
- `# A directory of links to the real binaries, ahead of rustup own bin on` \
- `# PATH, gives the canonical path a cargo again.` \
+ `# Links to the real binaries, ahead of rustup own bin on PATH, give the` \
+ `# canonical path a cargo again.` \
  `#` \
- `# rustc has to come along, and that is the half that is easy to miss. The` \
- `# rustup cargo shim sets the toolchain up for its child processes; the` \
- `# real cargo does not, so it looks rustc up on PATH and lands back on the` \
- `# shim once per crate. rustup then decides the toolchain wants syncing` \
- `# and tries to install a component into an image that is finished:` \
+ `# They go in /usr/local/bin rather than a directory of their own, because` \
+ `# they have to satisfy two different PATH lookups and only one of them is` \
+ `# this image to configure. pm canonicalises against the host PATH, and any` \
+ `# directory would do for that. The step it then starts gets a PATH of its` \
+ `# own -- fixed at /usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:` \
+ `# /sbin, pm sandbox.rs CONTAINER_PATH -- and nothing in this file can add` \
+ `# to it, so a directory outside that list is invisible to everything a` \
+ `# step spawns. Measured by running a step that printed its own PATH.` \
+ `#` \
+ `# rustc is what a step spawns, and that is the half that is easy to miss.` \
+ `# The rustup cargo shim sets the toolchain up for its child processes; the` \
+ `# real cargo does not, so it looks rustc up on PATH once per crate. With` \
+ `# the links in a directory of their own that lookup found nothing at all:` \
+ `#` \
+ `#     error: could not execute process rustc -vV (never executed)` \
+ `#` \
+ `# and with them in rustup own bin it found a shim, which decides the` \
+ `# toolchain wants syncing and tries to install a component into an image` \
+ `# that is finished:` \
  `#` \
  `#     error: component download failed for rust-src: could not rename` \
  `#     downloaded file ... No such file or directory` \
  `#` \
- `# which surfaces as a cargo build failing to compile a build script of` \
- `# a dependency, naming neither rustup nor this file. Linking rustc too` \
- `# keeps the whole build inside the toolchain and out of rustup.` \
+ `# Both surface as a cargo build failing on some dependency, naming neither` \
+ `# rustup nor this file.` \
  `#` \
- `# rustup itself stays on PATH and keeps its own name, which is what` \
- `# rustup target add above and anyone updating this image needs. What is` \
- `# given up is toolchain switching through these three names -- no` \
- `# +toolchain, no rust-toolchain.toml -- which an image that pins` \
- `# RUST_VERSION and installs exactly that toolchain has no use for.` \
- && mkdir -p /usr/local/rust-bin \
+ `# rustup itself keeps its own name and its own bin, moved to the END of` \
+ `# PATH so that bin cannot shadow the links again: rustup target add above` \
+ `# and anyone updating this image still need it. What is given up is` \
+ `# toolchain switching through these three names -- no +toolchain, no` \
+ `# rust-toolchain.toml -- which an image that pins RUST_VERSION and installs` \
+ `# exactly that toolchain has no use for.` \
  && for tool in cargo rustc rustdoc; do \
-      ln -sf "$(rustup which "$tool")" "/usr/local/rust-bin/$tool"; \
+      ln -sf "$(rustup which "$tool")" "/usr/local/bin/$tool"; \
     done \
  && chmod -R a+w "$RUSTUP_HOME" "$CARGO_HOME"
 
