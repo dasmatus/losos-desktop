@@ -92,7 +92,8 @@ jobs:
       # filled, since the pin decides the binary and the pin rarely moves.
       # `encoder: true` because this is the only job that builds the plugin
       # components, and pm's encoder is what wraps them.
-      - uses: ./losos-desktop/.github/actions/pm
+      - id: pm
+        uses: ./losos-desktop/.github/actions/pm
         with: { ref: "${{ env.PM_REF }}", encoder: "true" }
 
       # The components are not committed, so CI builds them -- and this is the
@@ -101,15 +102,21 @@ jobs:
       # `just check` (that has to run with no network and no wasm toolchain).
       #
       # Cached on everything that decides the .wasm files: the crates they are
-      # compiled from, the contract they are compiled against, and the pm commit
-      # whose encoder wraps them. Nothing reads plugins/dist out of the tree --
-      # tools/sign-all installs whatever is there into pm's trust store -- so a
-      # restore is indistinguishable from having just built them.
+      # compiled from, the contract they are compiled against, the pm commit
+      # whose encoder wraps them, and the compiler. That last one is taken from
+      # the action above rather than read again here -- this is a cargo build
+      # like pm's, so it has pm's inputs, and a key that leaves the compiler out
+      # stays an exact hit across a runner-image Rust bump and goes on serving
+      # components the installed compiler never produced.
+      #
+      # Nothing reads plugins/dist out of the tree -- tools/sign-all installs
+      # whatever is there into pm's trust store -- so a restore is
+      # indistinguishable from having just built them.
       - id: components
         uses: actions/cache/restore@v4
         with:
           path: losos-desktop/plugins/dist
-          key: plugins-${{ runner.os }}-${{ runner.arch }}-${{ env.PM_REF }}-${{ hashFiles('losos-desktop/plugins/**/*.rs', 'losos-desktop/plugins/**/Cargo.toml', 'losos-desktop/plugins/Cargo.lock', 'losos-desktop/plugins/wit/*.wit', 'losos-desktop/plugins/build.sh') }}
+          key: plugins-${{ runner.os }}-${{ runner.arch }}-${{ env.PM_REF }}-${{ steps.pm.outputs.rustc }}-${{ hashFiles('losos-desktop/plugins/**/*.rs', 'losos-desktop/plugins/**/Cargo.toml', 'losos-desktop/plugins/Cargo.lock', 'losos-desktop/plugins/wit/*.wit', 'losos-desktop/plugins/build.sh') }}
 
       - name: Build the plugin components
         if: steps.components.outputs.cache-hit != 'true'

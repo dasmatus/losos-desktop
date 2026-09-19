@@ -28,6 +28,16 @@ inputs:
       touch it, do not pay for it.
     default: "false"
 
+outputs:
+  rustc:
+    description: >
+      The runner's rustc identity, in the form this action keys its own caches
+      on. Exposed rather than kept private because anything else in the same
+      job that is cached across runs and comes out of a cargo build has the
+      same input, and a key that leaves it out goes on serving artefacts built
+      by a compiler the runner no longer has.
+    value: ${{ steps.pin.outputs.rustc }}
+
 runs:
   using: composite
   steps:

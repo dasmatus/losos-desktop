@@ -96,6 +96,24 @@ def check_pm_pin(path, doc):
                 "${{ env.PM_REF }}.\n    That is a second copy of the pin."
             )
 
+    # A job or a step may declare its own `env:`, and one naming PM_REF shadows
+    # the workflow's for everything under it. Every `${{ env.PM_REF }}` above
+    # would still read as one pin while resolving to two, which is the failure
+    # this check exists for wearing the shape that passes it.
+    for job, spec in (doc.get("jobs") or {}).items():
+        if "PM_REF" in ((spec or {}).get("env") or {}):
+            failures.append(
+                f"{where}: {job} declares its own env.PM_REF, which shadows "
+                "the workflow's\n    for every step in it."
+            )
+        for step in (spec or {}).get("steps") or []:
+            if "PM_REF" in (step.get("env") or {}):
+                name = step.get("name") or step.get("uses") or "a step"
+                failures.append(
+                    f"{where}: {job} has a step ({name}) with its own "
+                    "env.PM_REF.\n    It shadows the workflow's."
+                )
+
     return failures
 
 
