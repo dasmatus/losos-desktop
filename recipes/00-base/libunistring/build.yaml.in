@@ -28,11 +28,16 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# @CFLAGS_RSP_LIBUNISTRING@ and not @CFLAGS_RSP@, because an exception in
+# manifest/toolchain.yaml only reaches a package that names it: left spelling
+# the shared file this recipe would take the layer's -fvisibility=hidden, the
+# entry would change nothing, and nothing would say so.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libunistring /build/src/libunistring/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libunistring /build/src/libunistring/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LIBUNISTRING@ LDFLAGS=@LDFLAGS_RSP_LIBUNISTRING@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile
@@ -50,8 +55,16 @@ steps:
   - make -C /build/b/libunistring install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# locale_charset is named first because it is the symbol the build actually
+# stopped on: `make all` builds tests/test-localcharset, a noinst_PROGRAMS
+# target, and it could not find it. The other four are ordinary API out of
+# lib/libunistring.sym, so the check fails at libunistring rather than at
+# libidn2 two members later. __cfi_check is the separate assertion described
+# in check-exports.sh: the API symbols say the visibility exception took, and
+# this one says it stayed narrow and did not take CFI with it.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libunistring.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libunistring.so locale_charset u8_strlen u8_toupper uc_tolower uc_is_alpha __cfi_check
