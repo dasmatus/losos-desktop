@@ -20,6 +20,8 @@ SKOPEO = shutil.which("skopeo")
 RUN = subprocess.run
 loader = importlib.machinery.SourceFileLoader("pm_oci", str(REPO / "tools/pm-oci"))
 spec = importlib.util.spec_from_loader(loader.name, loader)
+if spec is None or spec.loader is None:
+    raise ImportError(f"cannot load OCI helper from {REPO / 'tools/pm-oci'}")
 oci = importlib.util.module_from_spec(spec)
 loader.exec_module(oci)
 
@@ -142,10 +144,14 @@ class OCITransportTests(unittest.TestCase):
                     self.assertEqual(len(members), 2)
                     self.assertEqual(members[0].name, "packages/" + self.archive.name)
                     self.assertTrue(members[0].isreg())
-                    self.assertEqual(archive.extractfile(members[0]).read(), self.payload)
+                    first = archive.extractfile(members[0])
+                    self.assertIsNotNone(first)
+                    self.assertEqual(first.read(), self.payload)
                     self.assertEqual(members[1].name, "packages/" + self.signature.name)
                     self.assertTrue(members[1].isreg())
-                    self.assertEqual(archive.extractfile(members[1]).read(), self.signature_payload)
+                    second = archive.extractfile(members[1])
+                    self.assertIsNotNone(second)
+                    self.assertEqual(second.read(), self.signature_payload)
                 self.pull(ref, arch)
                 self.assertEqual((self.output / self.archive.name).read_bytes(), self.payload)
                 self.assertEqual((self.output / self.signature.name).read_bytes(), self.signature_payload)
@@ -154,6 +160,7 @@ class OCITransportTests(unittest.TestCase):
 
     @unittest.skipUnless(SKOPEO, "skopeo is unavailable; mocked transport tests still run")
     def test_real_skopeo_local_roundtrip(self):
+        assert SKOPEO is not None
         for arch, oci_arch in oci.ARCHES.items():
             with self.subTest(arch=arch), oci.workspace(self.root) as work:
                 layout, copied = work / "source", work / "copied"
