@@ -52,6 +52,9 @@ case "$LIB" in
     accept_versions=true
     symbols='_Unwind_Backtrace _Unwind_GetIP'
     ;;
+  *)
+    symbols='__unw_getcontext _Unwind_Backtrace _Unwind_GetIP'
+    ;;
 esac
 
 for symbol in $symbols; do
