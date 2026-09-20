@@ -514,8 +514,8 @@ There is exactly one PAM service file in the whole tree, and it is not a login.
 format and nothing else -- so `make install` writes no service files. systemd
 installs one, `/usr/lib/pam.d/systemd-user`, which is the stack the *user
 manager* runs under. gdm would have been the only other source and it installs
-none: its `default-pam-config` resolves against the build container (see
-`recipes/30-gnome/gdm`), and no container this tree has used matches. Nothing
+none: its recipe passes `-Ddefault-pam-config=none` (see
+`recipes/30-gnome/gdm`), so the current Arch container cannot choose a distro PAM stack. Nothing
 under `overlay/` supplies any.
 
 So there is no `login`, no `gdm-password`, no `other`. `pam_systemd.so` and
