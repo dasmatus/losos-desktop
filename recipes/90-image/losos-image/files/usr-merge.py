@@ -36,8 +36,7 @@ def target_path(root, link):
 
 
 def resolve_source_path(root, relative):
-    current = root.resolve(strict=False)
-    resolved_root = current
+    current = root
     pending = deque(Path(relative).parts)
     seen = set()
 
@@ -48,7 +47,7 @@ def resolve_source_path(root, relative):
         if part == "..":
             current = current.parent
             try:
-                current.relative_to(resolved_root)
+                current.relative_to(root)
             except ValueError:
                 return None
             continue
@@ -60,14 +59,14 @@ def resolve_source_path(root, relative):
             seen.add(current)
             target = current.readlink()
             if target.is_absolute():
-                current = resolved_root
+                current = root
                 pending.extendleft(reversed(Path(str(target).lstrip("/")).parts))
             else:
                 current = current.parent
                 pending.extendleft(reversed(target.parts))
 
         try:
-            current.relative_to(resolved_root)
+            current.relative_to(root)
         except ValueError:
             return None
         if not current.exists() and not pending:
@@ -77,7 +76,7 @@ def resolve_source_path(root, relative):
 
 
 def check_source_path(root, relative):
-    resolved = resolve_source_path(root.resolve(), relative)
+    resolved = resolve_source_path(root, relative)
     if resolved is None:
         return fail(f"/{relative} resolves outside the staged root")
     if not resolved.exists():
