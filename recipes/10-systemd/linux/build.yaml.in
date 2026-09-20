@@ -55,10 +55,12 @@ steps:
   - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 olddefconfig
   # A fragment is only a request: fail before compiling if Kconfig discarded
   # the compressor or its boot default instead of silently shipping no zswap.
+  - grep -qx CONFIG_SWAP=y /build/b/linux/.config
   - grep -qx CONFIG_ZSWAP=y /build/b/linux/.config
   - grep -qx CONFIG_ZSWAP_DEFAULT_ON=y /build/b/linux/.config
   - grep -qx CONFIG_ZSWAP_COMPRESSOR_DEFAULT_842=y /build/b/linux/.config
   - grep -qx CONFIG_CRYPTO_842=y /build/b/linux/.config
+  - grep -qx CONFIG_ZSMALLOC=y /build/b/linux/.config
 
 - stage: Build
   name: compile

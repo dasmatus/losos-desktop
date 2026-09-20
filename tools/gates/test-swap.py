@@ -300,6 +300,11 @@ class SwapWiringTests(unittest.TestCase):
             with self.subTest(symbol=symbol):
                 settings = [line for line in lines if line.startswith(f"CONFIG_{symbol}=")]
                 self.assertEqual(settings, [f"CONFIG_{symbol}=y"])
+        recipe = self.active_lines("recipes/10-systemd/linux/build.yaml.in")
+        for symbol in ("SWAP", "ZSWAP", "ZSWAP_DEFAULT_ON",
+                       "ZSWAP_COMPRESSOR_DEFAULT_842", "CRYPTO_842", "ZSMALLOC"):
+            with self.subTest(symbol=symbol):
+                self.assertIn(f"- grep -qx CONFIG_{symbol}=y /build/b/linux/.config", recipe)
 
     def test_swap_utilities_enabled_and_patched(self):
         recipe = "recipes/00-base/util-linux"
