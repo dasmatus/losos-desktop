@@ -97,7 +97,7 @@ def check_target_dir(target):
     return 0
 
 
-def merge_dir(root, source_name, target_name):
+def check_merge_dir(root, source_name, target_name):
     source = root / source_name
     target = root / target_name
 
@@ -115,6 +115,18 @@ def merge_dir(root, source_name, target_name):
         status = check_entry(source, target)
         if status:
             return status
+    return 0
+
+
+def merge_dir(root, source_name, target_name):
+    source = root / source_name
+    target = root / target_name
+
+    if source.is_symlink():
+        return 0
+    if source.exists() and not source.is_dir():
+        return fail(f"/{source_name} exists but is not a directory")
+
     target.mkdir(parents=True, exist_ok=True)
     if source.is_dir():
         for child in list(source.iterdir()):
@@ -142,12 +154,31 @@ def os_release(root):
     return 0
 
 
+def check_os_release(root):
+    source = root / "usr/lib/os-release"
+    target = root / "etc/os-release"
+    if target.is_symlink():
+        if target_path(root, target) != source:
+            return fail(f"/etc/os-release already links to {target.readlink()}, not ../usr/lib/os-release")
+        return 0
+    if target.exists():
+        return fail("/etc/os-release exists and is not a symlink")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("root", help="assembled root filesystem to rewrite")
     args = parser.parse_args()
 
     root = Path(args.root)
+    for source_name, target_name in LINKS.items():
+        status = check_merge_dir(root, source_name, target_name)
+        if status:
+            return status
+    status = check_os_release(root)
+    if status:
+        return status
     status = check_source_path(root, "usr/lib/os-release")
     if status:
         return status

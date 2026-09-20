@@ -251,6 +251,32 @@ def test_usr_merge_rejects_outside_os_release(work, failures):
         failures.append("usr-merge: outside os-release should fail before rewriting compatibility paths")
     elif not failures:
         print("  usrmerge rejects /usr/lib/os-release paths that escape the staged root")
+ 
+
+def test_usr_merge_preflights_before_rewriting(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (root / "etc").mkdir()
+    (root / "bin" / "losos-release").write_text("#!/bin/sh\n")
+    (root / "usr" / "lib" / "os-release").write_text("ID=losos-desktop\n")
+    (root / "etc" / "os-release").write_text("ID=host\n")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted a non-symlink /etc/os-release")
+    elif "/etc/os-release exists and is not a symlink" not in result.stderr:
+        failures.append("usr-merge: /etc/os-release preflight did not explain the failure")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: /etc/os-release failure should happen before rewriting compatibility paths")
+    elif not (root / "bin" / "losos-release").exists():
+        failures.append("usr-merge: /etc/os-release failure should not move /bin contents")
+    elif not failures:
+        print("  usrmerge preflights /etc/os-release before rewriting compatibility paths")
 
 
 def test_usr_merge_rejects_unresolved_escape(work, failures):
@@ -468,6 +494,9 @@ def main():
         usr_unresolved = work / "usr-merge-unresolved"
         usr_unresolved.mkdir()
         test_usr_merge_rejects_unresolved_escape(usr_unresolved, failures)
+        usr_partial = work / "usr-merge-partial"
+        usr_partial.mkdir()
+        test_usr_merge_preflights_before_rewriting(usr_partial, failures)
         test_uki(work, failures)
 
     if failures:
