@@ -342,7 +342,7 @@ exceptions:
       The narrow `visibility` drop libcap uses is therefore not available
       here: it keeps the schemes, and the schemes need the LTO this package
       cannot have.
-  # The rest of losos-10-base, in member order. Seven packages, one fault, and
+  # The rest of losos-10-base, in member order. Eight packages, one fault, and
   # one piece of evidence behind all of them: none declares a single
   # `visibility("default")` anywhere in its tree -- not in its sources, not in
   # its generated `configure`, under either spelling of the attribute -- so
@@ -355,8 +355,8 @@ exceptions:
   # node can claim it, so a `global:` list has nothing left to promote. Proved
   # on libfido2, which names 267 symbols in src/export.gnu and exported none.
   #
-  # Said plainly, because it is the weaker part of this entry: six of the seven
-  # are not individually build-measured the way libcap and libxcrypt were.
+  # Said plainly, because it is the weaker part of this entry: seven of the
+  # eight are not individually build-measured the way libcap and libxcrypt were.
   # Nothing in this tree has built them yet. What is measured is the mechanism,
   # on the same clang, and the absence of any annotation for it to spare.
   # libunistring is the exception and is first below: the build reached it and
@@ -430,6 +430,32 @@ exceptions:
       verify it; asserting it now, with nothing able to compile json-c against
       the musl sysroot, would be a guess in a file whose whole convention is
       that nothing is guessed. If the patch lands, this entry comes out.
+  - package: cryptsetup
+    drops: [visibility]
+    why: >
+      Bare declarations throughout libcryptsetup.h -- `int crypt_init(struct
+      crypt_device **cd, const char *device);` -- with no export macro, and
+      the only __attribute__ in the public header is `deprecated`. Nothing in
+      configure.ac or the Makefile.am asks for visibility either way: the one
+      thing configure probes for near this is __symver__, which is symbol
+      versioning and a different mechanism.
+
+      It ships lib/libcryptsetup.sym, a `CRYPTSETUP_2.0 { global: ... }`
+      version script, which is the reassuring-looking case that is not.
+      Same shape as libfido2, which names 267 symbols in its own script and
+      exported none.
+
+      What an empty one costs is the reason this is not left to be discovered
+      later: systemd opens LUKS volumes through libcryptsetup, so it takes
+      encrypted root with it, and systemd is two layers up from where the
+      failure would be introduced.
+
+      Read in the Debian orig tarball for 2.7.5 rather than the pinned bytes
+      -- Debian repacks it, so the hash does not match sources.lock and that
+      is expected rather than a mirror problem. The contents are upstream
+      2.7.5; the declaration style and the .sym file are not the kind of
+      thing a repack changes, but it is a weaker read than libunistring's
+      and says so here.
   - package: tpm2-tss
     drops: [visibility]
     why: >
