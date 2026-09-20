@@ -15,14 +15,17 @@
 # evidence that it is fine: -fvisibility=hidden writes STV_HIDDEN into the
 # object, and a `global:` list has nothing left to promote.
 #
-# libfido2 used to be cited here as the case -- "ships a version script naming
-# 267 symbols and exported zero" -- and that was the right outcome attached to
-# the wrong cause. Its CMake build passes no version script to the linker at
-# all: src/export.gnu is in the tarball, and neither CMakeLists.txt nor
-# src/CMakeLists.txt at 1.15.0 mentions it, --version-script, or LINK_FLAGS.
-# The empty table was -fvisibility=hidden by itself, which is what
-# drops: [visibility] fixed. So libfido2 says nothing about version scripts in
-# either direction, and the paragraph below is where the real ones are.
+# libfido2 is the case, and it is a real one: src/export.gnu names 267 symbols
+# and the library exported none of them. The script is genuinely wired up --
+# CMakeLists.txt:361-368 at the 1.15.0 tag appends
+# -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/export.gnu to
+# CMAKE_SHARED_LINKER_FLAGS, three conditionals deep in the top-level file and
+# never as a target property, so grepping src/CMakeLists.txt for --version-script
+# or LINK_FLAGS finds nothing and reads as proof the script is unused. It is
+# used. The linker was handed 267 names that -fvisibility=hidden had already
+# made STV_HIDDEN and promoted not one of them, which is the paragraph above
+# rather than a build that forgot its own export list. drops: [visibility] is
+# what fixed it.
 #
 # THE OPPOSITE DIRECTION IS ALSO TRUE AND IS EASIER TO MISS. A version script
 # can DESTROY a symbol that was perfectly visible. Every one ending `local: *;`
@@ -38,6 +41,14 @@
 # enough to rescue a symbol; here, it is enough to remove one. Hence the two
 # different messages below, and share/cfi-export.map, which is appended to
 # every link so the second case cannot happen quietly.
+#
+# libfido2 is in both classes at once, which is worth saying because fixing one
+# leaves a library that passes the other's test. Hidden visibility came first
+# and emptied the table wholesale, API and all. drops: [visibility] gives the
+# API back -- and hands the version script real symbols to filter, at which
+# point `local: *;` at the end of src/export.gnu takes __cfi_check away
+# instead. So share/cfi-export.map is load-bearing for libfido2 itself, not
+# only for the packages whose dynamic tables were never empty to begin with.
 #
 # Symbols are NAMED rather than counted. A count is satisfied by a library
 # exporting some other handful, and the symbols that matter are the ones the

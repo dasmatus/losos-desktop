@@ -189,6 +189,19 @@ libqrencode is the same story without the version script -- 75 against 0 --
 and systemd wants it for the recovery-key QR that `systemd-cryptenroll`
 prints.
 
+Then the same version script bites from the other side, once the exception has
+given it something to bite. `src/export.gnu` ends `local: *;`, and with the API
+visible again that line is what decides the rest of the table -- including
+`__cfi_check`, which cross-DSO CFI needs exported from every shared object
+because the runtime dispatches into a library through it by name. Absent, the
+runtime marks libfido2's whole address range unchecked and says nothing, which
+would have undone the paragraph above about why `drops: [visibility]` beats
+`drops: [cfi]` here. `share/cfi-export.map` is appended to every link in the
+tree for this, and the `__cfi_check` in libfido2's `check-exports.sh` line is
+what would notice if it ever stopped working. So libfido2 is in both halves of
+the version-script story at once, and fixing either alone ships a library that
+passes the other's test.
+
 The exception is the narrow one on purpose. `drops: [cfi]` would also fix the
 symbols, and it is the wrong trade here: of every library in this tree
 libfido2 is the last one to unharden, because its input is CBOR arriving from
