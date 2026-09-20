@@ -152,6 +152,21 @@ cfi:
   # is most of the calls there are. It costs a __cfi_check export per library
   # and a slower check at the boundary.
   #
+  # That export is not free, and keeping it is share/cfi-export.map's job. The
+  # runtime finds a callee's __cfi_check by NAME in that library's dynamic
+  # symbol table (compiler-rt/lib/cfi/cfi.cpp:216 at llvmorg-18.1.3, which is
+  # the clang the Containerfile carries), and when it is not there :299 marks
+  # the whole module kUncheckedShadow -- every indirect call into the library
+  # passes with no check, no error and no warning. An upstream version script
+  # ending `local: *;` does exactly that, because __cfi_check is nobody's
+  # public API, and most of the version scripts in this tree end that way:
+  # tpm2-tss ships one per library, and cryptsetup, linux-pam, p11-kit,
+  # libpwquality, libfido2, libunistring, libtasn1, gnutls and curl each have
+  # one. So the map is appended to every link that keeps cross-DSO CFI, from
+  # tools/lib/toolchain.py's ldflags(), and the measurements behind it -- why a
+  # second version script works where --export-dynamic-symbol does not, and why
+  # the name is spelled as a glob -- are in the map's own header.
+  #
   # It costs one more thing, found at curl and written out in that recipe
   # because that is where the next person meets it. __cfi_check and
   # __cfi_check_fail are emitted into every object, and under -flto=thin the

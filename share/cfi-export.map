@@ -1,0 +1,65 @@
+# Keep __cfi_check in the dynamic symbol table of every library this tree
+# builds, whatever its own version script says.
+#
+# tools/configure copies this beside each layer's response files and
+# tools/lib/toolchain.py names it in LDFLAGS, so it is appended to every link
+# that keeps cross-DSO CFI -- not something a recipe opts into.
+#
+# WHY A SECOND VERSION SCRIPT
+#
+# Cross-DSO CFI dispatches into a shared object through that object's own
+# __cfi_check, and the runtime finds it BY NAME in the object's dynamic symbol
+# table: compiler-rt/lib/cfi/cfi.cpp:216 walks DT_SYMTAB looking for the
+# string. When it is not there, :299 marks the module's whole address range
+# kUncheckedShadow and every indirect call into that library passes without a
+# check. No error, no warning, no missing symbol at link time -- the library
+# just stops being covered.
+#
+# Upstream version scripts end `local: *;` as a matter of course, and
+# __cfi_check is not part of anybody's public API, so it is exactly what
+# `local: *;` is for. Measured on clang 18.1.3 with mold and with lld: a
+# library built with cross-DSO CFI and linked with a `global: api_*; local: *;`
+# script exports no __cfi_check at all. That is most of the version scripts in
+# this tree -- tpm2-tss ships one per library, and cryptsetup, linux-pam,
+# p11-kit, libpwquality, libfido2, libunistring, libtasn1, gnutls and curl all
+# have one.
+#
+# A second --version-script naming the symbol promotes it back. Measured, both
+# orders, mold and lld: the package's own versioning is untouched
+# (`api_one@@THEIR_VERSION` stays exactly that) and __cfi_check comes back
+# unversioned. Promotion can work at all only because __cfi_check is STV_DEFAULT
+# even under -fvisibility=hidden. A version script cannot promote a symbol the
+# compiler already made hidden, which is why this file does nothing for the
+# separate problem the `drops: [visibility]` exceptions in
+# manifest/toolchain.yaml exist for -- the two look alike and are not related.
+#
+# The alternatives do not work, and were tried rather than reasoned about:
+# -Wl,--export-dynamic-symbol=__cfi_check and -Wl,--dynamic-list= both leave
+# the symbol local under `local: *;`, on mold and on lld alike.
+#
+# WHY THE NAME IS SPELLED AS A GLOB
+#
+# `__cfi_chec[k]` matches exactly __cfi_check and nothing else, but it is a
+# PATTERN, and a pattern that matches nothing is silent. Spelled as a plain
+# name it is an exact assignment, and a link with no __cfi_check in it -- a
+# package carrying `drops: [cfi]`, anything in losos-00-toolchain, every
+# configure probe that links a five-line test program -- gets
+#
+#     mold: warning: cannot assign version `global` to symbol `__cfi_check`:
+#     symbol not found
+#
+# on mold, and on lld the same thing as a hard error. Since this file is on
+# every link in the tree, that is the difference between a no-op and a build
+# that cannot run a configure test. Measured both ways.
+#
+# There is no `local:` here on purpose. A version script that restricts nothing
+# is a no-op for a library that has no script of its own: measured, a library
+# linked with this file alone still exports everything it did before.
+#
+# Tombstone: ld.bfd cannot do this at all -- "anonymous version tag cannot be
+# combined with other version tags" -- so a tree that went back to bfd would
+# need every package's own script patched instead. mold is what
+# manifest/toolchain.yaml selects and lld is the fallback; both are fine.
+{
+  global: __cfi_chec[k];
+};

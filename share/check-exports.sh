@@ -63,7 +63,11 @@ for symbol in "$@"; do
     echo "check-exports: $LIB does not export $symbol"
     if [ "$symbol" = "__cfi_check" ]; then
       echo "check-exports: CFI was dropped for this package rather than kept."
-      echo "check-exports: a drops: [visibility] exception should still have it."
+      echo "check-exports: a drops: [visibility] exception should still have it,"
+      echo "check-exports: and so should a library whose own version script ends"
+      echo "check-exports: local: * -- share/cfi-export.map is on every link to"
+      echo "check-exports: promote this one symbol back past exactly that. If it"
+      echo "check-exports: is missing anyway, the map did not reach this link."
     else
       echo "check-exports: this is what -fvisibility=hidden does to a library"
       echo "check-exports: whose public API carries no visibility attribute."
