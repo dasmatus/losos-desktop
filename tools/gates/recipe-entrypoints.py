@@ -226,6 +226,15 @@ def created_by_patches(recipe_dir):
     return made
 
 
+# What a build system looks like from the outside, for the "it has this
+# instead" half of a failure. Only the root is reported: a meson.build three
+# directories down is a subproject, not the answer to what to run.
+MARKERS = (
+    "configure", "Configure", "configure.ac", "autogen.sh",
+    "meson.build", "CMakeLists.txt", "Makefile", "GNUmakefile", "Makefile.am",
+)
+
+
 def resolve(wanted, tarball, strip):
     """Stream the tarball, ticking off what was wanted; return what was not.
 
@@ -233,13 +242,23 @@ def resolve(wanted, tarball, strip):
     every entry point found in the first handful of members, and the kernel's
     tarball is a gigabyte of xz that nothing here needs decompressed in full.
     Only a real miss pays for the whole listing, which is the right way round.
+
+    A miss also collects the build systems the archive DOES have at its root.
+    Saying only what is absent leaves the reader to go and find the tarball,
+    which is the work this gate exists to save -- and the two findings that
+    first came out of it were a meson recipe over an autotools source and an
+    autotools recipe over a meson one, where the answer was in the listing
+    already read.
     """
     outstanding = dict(wanted)
+    found = set()
     with tarfile.open(tarball) as archive:
         for member in archive:
             parts = member.name.split("/")
             if len(parts) <= strip:
                 continue
+            if len(parts) == strip + 1 and parts[-1] in MARKERS:
+                found.add(parts[-1])
             # rstrip("/") because tar names a directory member with a trailing
             # slash, and one of the things a recipe copies IS a directory:
             # meson's own `mesonbuild` package. Matching the prefix as well
@@ -250,9 +269,11 @@ def resolve(wanted, tarball, strip):
                 if any(relative == name or relative.startswith(name + "/")
                        for name in names):
                     del outstanding[names]
+            # No early exit once something is missing: the rest of the
+            # listing is where the "instead" comes from.
             if not outstanding:
                 break
-    return outstanding
+    return outstanding, sorted(found)
 
 
 def self_test():
@@ -349,7 +370,7 @@ def self_test():
                 )
                 continue
 
-            missing = resolve(wanted, tarball, 1)
+            missing, _ = resolve(wanted, tarball, 1)
             if len(missing) != expect_missing:
                 failures.append(
                     f"{label}: {len(missing)} missing, expected "
@@ -424,15 +445,23 @@ def main():
                 continue
 
             checked += len(wanted)
-            for names, (verb, why) in resolve(wanted, tarball, strip).items():
+            missing, found = resolve(wanted, tarball, strip)
+            for names, (verb, why) in missing.items():
                 spelling = " or ".join(names)
+                instead = (
+                    f"    It does ship, at its root: {', '.join(found)}\n"
+                    if found else
+                    "    It ships no build system this gate recognises at its "
+                    "root, so read the listing yourself.\n"
+                )
                 failures.append(
                     f"{template.relative_to(REPO)}: the recipe {verb} `{why}`, "
                     f"and the pinned tarball has no {spelling}.\n"
                     f"    {entry['url']}\n"
+                    + instead +
                     f"    Either the source moved to another build system or "
-                    f"it never had this one. Read what the tarball does ship "
-                    f"before translating the options."
+                    f"it never had this one. Translate the options rather than "
+                    f"transcribing them."
                 )
 
     if failures:
