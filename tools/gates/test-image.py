@@ -253,6 +253,30 @@ def test_usr_merge_rejects_outside_os_release(work, failures):
         print("  usrmerge rejects /usr/lib/os-release paths that escape the staged root")
 
 
+def test_usr_merge_rejects_unresolved_escape(work, failures):
+    root = work / "root"
+    outside = work / "outside"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    outside.mkdir()
+    (outside / "os-release").write_text("ID=host\n")
+    (root / "usr" / "lib" / "os-release").symlink_to("missing/../../../../outside/os-release")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted an unresolved /usr/lib/os-release escape")
+    elif "resolves outside the staged root" not in result.stderr:
+        failures.append("usr-merge: unresolved os-release escape did not explain the invalid source path")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: unresolved os-release escape should fail before rewriting compatibility paths")
+    elif not failures:
+        print("  usrmerge rejects unresolved /usr/lib/os-release escapes")
+
+
 def test_usr_merge_rejects_dangling_directory_destination(work, failures):
     root = work / "root"
     (root / "usr" / "bin").mkdir(parents=True)
@@ -441,6 +465,9 @@ def main():
         usr_outside = work / "usr-merge-outside"
         usr_outside.mkdir()
         test_usr_merge_rejects_outside_os_release(usr_outside, failures)
+        usr_unresolved = work / "usr-merge-unresolved"
+        usr_unresolved.mkdir()
+        test_usr_merge_rejects_unresolved_escape(usr_unresolved, failures)
         test_uki(work, failures)
 
     if failures:

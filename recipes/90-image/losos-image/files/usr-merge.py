@@ -38,6 +38,8 @@ def check_source_path(root, relative):
     path = root / relative
     try:
         resolved = path.resolve(strict=False)
+        if ".." in resolved.parts:
+            raise ValueError
         resolved.relative_to(root.resolve())
     except ValueError:
         return fail(f"/{relative} resolves outside the staged root")
