@@ -1,0 +1,90 @@
+name: Set up Arch CI
+description: Install job dependencies and the pinned Rust toolchain inside an Arch job container.
+inputs:
+  packages:
+    description: Space-separated Arch packages needed by this job.
+    default: just python-yaml
+  rust:
+    description: Install the same Rust toolchain as the Containerfile.
+    default: "false"
+  nested:
+    description: Configure nested Podman for a privileged build job.
+    default: "false"
+  kvm:
+    description: Expose KVM when the VM host provides it, otherwise retain TCG.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Install Arch packages
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+        INSTALL_RUST: ${{ inputs.rust }}
+        NESTED: ${{ inputs.nested }}
+      run: |
+        read -r -a packages <<< "$PACKAGES"
+        # base-devel would introduce GCC/binutils into this clang-only host.
+        if [ "$INSTALL_RUST" = true ]; then
+          packages+=(clang lld llvm make pkgconf rustup)
+        fi
+        if [ "$NESTED" = true ]; then packages+=(podman); fi
+        # Never install against a newly synced index without upgrading the base.
+        pacman -Syu --needed --noconfirm "${packages[@]}"
+
+    - name: Install the pinned Rust toolchain
+      if: inputs.rust == 'true'
+      shell: bash
+      env:
+        RUSTUP_HOME: /usr/local/rustup
+        CARGO_HOME: /usr/local/cargo
+      run: |
+        # Keep both homes in pm's /usr mirror, not the invisible /root (C7).
+        rustup toolchain install 1.94.0 --profile minimal
+        rustup default 1.94.0
+        mkdir -p /usr/local/bin
+        # Native Rust and cc-rs look up cc/ar; clang itself looks up ld.
+        # Conventional names select LLVM without global RUSTFLAGS, which would
+        # also override wasm32's rust-lld when compiling the plugin components.
+        ln -sf /usr/bin/clang /usr/local/bin/cc
+        ln -sf /usr/bin/clang++ /usr/local/bin/c++
+        ln -sf /usr/bin/ld.lld /usr/local/bin/ld
+        ln -sf /usr/bin/llvm-ar /usr/local/bin/ar
+        # C3 resolves symlinks before execution: rustup proxies become rustup,
+        # so pm and its children must find the real tools on their fixed PATH.
+        for tool in cargo rustc rustdoc; do
+          ln -sf "$(rustup which --toolchain 1.94.0 "$tool")" "/usr/local/bin/$tool"
+        done
+        printf '%s\n' /usr/local/bin >> "$GITHUB_PATH"
+        printf '%s\n' "RUSTUP_HOME=$RUSTUP_HOME" "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
+
+    - name: Configure nested Podman
+      if: inputs.nested == 'true'
+      shell: bash
+      run: |
+        # A daemon inside the job sees the job's mounts and loopback mirror.
+        # A Docker socket on the VM would see neither. VFS avoids depending on
+        # overlay-on-overlay support in the outer container's backing store.
+        mkdir -p /etc/containers
+        printf '%s\n' '[storage]' 'driver = "vfs"' \
+          'runroot = "/run/containers/storage"' \
+          'graphroot = "/var/lib/containers/storage"' > /etc/containers/storage.conf
+        # There is no systemd manager inside a job container.
+        printf '%s\n' '[engine]' 'cgroup_manager = "cgroupfs"' \
+          'events_logger = "file"' '[containers]' 'cgroups = "disabled"' \
+          > /etc/containers/containers.conf
+        podman info
+
+    - name: Expose optional KVM
+      if: inputs.kvm == 'true'
+      shell: bash
+      run: |
+        # --device /dev/kvm would fail container creation on a host without
+        # KVM, before tools/vm-test can choose TCG. The read-only host /dev
+        # mount permits discovery; the device-cgroup rule allows only KVM.
+        if [ -c /host-dev/kvm ]; then
+          read -r kvm_major kvm_minor kvm_mode < <(stat -c '%t %T %a' /host-dev/kvm)
+          mknod -m "$kvm_mode" /dev/kvm c "$((16#$kvm_major))" "$((16#$kvm_minor))"
+        else
+          echo "Host has no KVM device; tools/vm-test will use TCG."
+        fi

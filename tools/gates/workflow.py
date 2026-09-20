@@ -28,8 +28,13 @@ a ref and execute the tree's own code from it -- images.yml on `pull_request`,
 update-sources.yml on a `workflow_dispatch` against any ref -- and a job running
 tree-supplied code has no business holding a token that can write to the
 repository. The job that genuinely publishes asks for the permission itself.
+
+Every job also runs in an Arch userspace. The hosted runner labels still name
+Ubuntu because GitHub provides the VM, not an Arch runner; the job container
+is what decides which distribution executes the steps.
 """
 
+import copy
 import re
 import sys
 from pathlib import Path
@@ -53,6 +58,53 @@ PM_REPO = "dichhead/pm"
 PM_ACTION = ".github/actions/pm"
 PM_REF_USE = re.compile(r"\$\{\{\s*env\.PM_REF\s*\}\}")
 COMMIT = re.compile(r"\A[0-9a-f]{40}\Z")
+
+ARCH_IMAGES = {
+    "ubuntu-24.04": "docker.io/library/archlinux:base",
+    "ubuntu-24.04-arm": "docker.io/menci/archlinuxarm:base",
+}
+
+
+def check_arch_jobs(path, doc):
+    """Keep runner architecture and job userspace paired, including matrices."""
+    failures = []
+    for job, spec in (doc.get("jobs") or {}).items():
+        where = f"{path.name}: {job}"
+        container = spec.get("container") or {}
+        image = container.get("image") if isinstance(container, dict) else container
+        matrix = (spec.get("strategy") or {}).get("matrix") or {}
+        legs = matrix.get("include") or [{}]
+        for leg in legs:
+            runner = spec.get("runs-on")
+            resolved = image
+            if runner == "${{ matrix.runner }}":
+                runner = leg.get("runner")
+            if image == "${{ matrix.image }}":
+                resolved = leg.get("image")
+            if runner not in ARCH_IMAGES or resolved != ARCH_IMAGES[runner]:
+                failures.append(
+                    f"{where} pairs runner {runner!r} with container {resolved!r}; "
+                    "use Arch Linux on x86_64 and Arch Linux ARM on aarch64."
+                )
+
+        shell = ((spec.get("defaults") or {}).get("run") or {}).get("shell")
+        if shell is None:
+            shell = ((doc.get("defaults") or {}).get("run") or {}).get("shell")
+        if shell != "bash":
+            failures.append(
+                f"{where} must default to bash; container jobs otherwise use sh, "
+                "which cannot preserve the build pipeline's PIPESTATUS."
+            )
+        for step in spec.get("steps") or []:
+            commands = "\n".join(
+                line for line in str(step.get("run", "")).splitlines()
+                if not line.lstrip().startswith("#")
+            )
+            if re.search(r"\bapt-get\b|apparmor_restrict_unprivileged_userns", commands):
+                failures.append(
+                    f"{where} still configures the Ubuntu host from an Arch job."
+                )
+    return failures
 
 
 def check_pm_pin(path, doc):
@@ -117,7 +169,53 @@ def check_pm_pin(path, doc):
     return failures
 
 
+def self_test():
+    """A matrix must prove both userspaces, not merely name an Arch image."""
+    good = {
+        "defaults": {"run": {"shell": "bash"}},
+        "jobs": {
+            "gates": {
+                "runs-on": "ubuntu-24.04",
+                "container": {"image": ARCH_IMAGES["ubuntu-24.04"]},
+            },
+            "build": {
+                "runs-on": "${{ matrix.runner }}",
+                "container": {"image": "${{ matrix.image }}"},
+                "strategy": {"matrix": {"include": [
+                    {"runner": runner, "image": image}
+                    for runner, image in ARCH_IMAGES.items()
+                ]}},
+            },
+        },
+    }
+    assert not check_arch_jobs(WORKFLOW, good)
+    for mutation in ("no-container", "wrong-arch", "shell", "apt", "sysctl"):
+        bad = copy.deepcopy(good)
+        gate = bad["jobs"]["gates"]
+        if mutation == "no-container":
+            del gate["container"]
+        elif mutation == "wrong-arch":
+            for leg in bad["jobs"]["build"]["strategy"]["matrix"]["include"]:
+                if leg.get("runner") == "ubuntu-24.04-arm":
+                    leg["image"] = ARCH_IMAGES["ubuntu-24.04"]
+                    break
+            else:
+                raise AssertionError("self-test fixture missing ubuntu-24.04-arm leg")
+        elif mutation == "shell":
+            del bad["defaults"]
+        else:
+            gate["steps"] = [{"run": (
+                "apt-get update" if mutation == "apt" else
+                "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+            )}]
+        assert check_arch_jobs(WORKFLOW, bad), mutation
+    print("workflow: Arch job regression checks passed")
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     if not WORKFLOW.exists():
         print(f"workflow: {WORKFLOW.relative_to(REPO)} absent; nothing to check")
         return 0
@@ -173,6 +271,7 @@ def main():
     for path in sorted(WORKFLOWS.glob("*.yml")):
         spec = yaml.safe_load(path.read_text()) or {}
         failures.extend(check_pm_pin(path, spec))
+        failures.extend(check_arch_jobs(path, spec))
 
         top = spec.get("permissions")
         if isinstance(top, dict) and top.get("contents") == "write":
@@ -192,7 +291,7 @@ def main():
 
     print(
         f"workflow: {len(downloads)} artifact download(s) resolve for "
-        f"{len(CHANNELS)} channel(s); one pm pin and least privilege at the "
+        f"{len(CHANNELS)} channel(s); Arch jobs, one pm pin and least privilege at the "
         f"top of {len(list(WORKFLOWS.glob('*.yml')))} workflow(s)"
     )
     return 0
