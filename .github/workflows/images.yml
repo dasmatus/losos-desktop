@@ -273,7 +273,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang lld mold llvm llvm-18-linker-tools libclang-rt-18-dev \
             just python3-yaml python3-jinja2 \
-            ninja-build cmake bison flex bc xz-utils bzip2
+            ninja-build cmake bison flex bc xz-utils bzip2 perl
 
       # losos-security is a cargo build and everything above the toolchain
       # layer is musl, so --target needs that target's std installed. Without

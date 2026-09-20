@@ -176,7 +176,38 @@ class Toolchain:
         kept = [s for s in (self.cfi.get("schemes") or []) if s not in drops]
         if not kept:
             return []
-        flags = [f"-fvisibility={self.cfi.get('visibility', 'hidden')}"]
+        # `visibility` is the narrow form of the same exemption, and it exists
+        # because the broad one costs too much. A package that annotates none
+        # of its exports comes out of -fvisibility=hidden with an empty dynamic
+        # symbol table -- it compiles, it installs, and the first consumer
+        # fails to link -- and `drops: [cfi]` fixes that only by taking the
+        # checks away from a library the whole system calls into.
+        #
+        # The flag stays on the line with its value changed rather than being
+        # removed, because clang rejects the scheme set outright when
+        # -fvisibility= is absent altogether:
+        #
+        #     invalid argument '-fsanitize=cfi-unrelated-cast' only allowed
+        #     with '-fvisibility='
+        #
+        # while accepting every scheme this tree enables, cross-DSO included,
+        # at -fvisibility=default. Measured on clang 18.1.3, which is what the
+        # Containerfile and the runners both carry. So hidden is a security
+        # choice here and not a compiler requirement: what CFI needs is for the
+        # value to be *stated*, and what it loses at `default` is the guarantee
+        # that no exported symbol is interposed at load time by something it
+        # never checked. That is a real loss, which is why this is per-package
+        # and why manifest/toolchain.yaml makes each entry say what it buys.
+        #
+        # This is also the knob the standing question turns on. If the default
+        # is ever inverted -- hidden opted into by the packages that annotate,
+        # rather than blanket with exceptions -- it is `cfi.visibility` that
+        # changes and this list that changes meaning with it. Nothing else here
+        # would move.
+        visibility = self.cfi.get("visibility", "hidden")
+        if "visibility" in drops:
+            visibility = "default"
+        flags = [f"-fvisibility={visibility}"]
         flags += [f"-fsanitize={scheme}" for scheme in kept]
         if self.cfi.get("cross_dso"):
             flags.append("-fsanitize-cfi-cross-dso")
@@ -259,10 +290,23 @@ class Toolchain:
             "@SYSROOT@": self.target.get("sysroot", "/build/sysroot"),
             "@RESOURCE_DIR_PREFIX@": self.resource_dir_prefix(),
         }
-        # meson native files want a TOML-ish list, not a shell string.
-        subs["@MESON_C_ARGS@"] = _ini_list(self.cflags())
-        subs["@MESON_LINK_ARGS@"] = _ini_list(self.ldflags())
+        subs.update(self.meson_subs())
         return subs
+
+    def meson_subs(self, package=None):
+        """The native file's two flag lists, for the layer or one exempt package.
+
+        meson native files want a TOML-ish list, not a shell string, which is
+        why these are not just @CFLAGS@ again. Taking `package` is what lets an
+        exempt meson build have a native file of its own: a meson recipe has no
+        CFLAGS= argument to name @CFLAGS_RSP_<PKG>@ on, so the only way its
+        exemption can reach the compiler is for the whole native file to be
+        generated for it.
+        """
+        return {
+            "@MESON_C_ARGS@": _ini_list(self.cflags(package)),
+            "@MESON_LINK_ARGS@": _ini_list(self.ldflags(package)),
+        }
 
 
 def _ini_list(flags):

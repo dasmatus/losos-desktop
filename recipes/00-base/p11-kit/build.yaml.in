@@ -19,11 +19,18 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_P11_KIT@ --no-same-owner -C /build/src/p11-kit --strip-components=1
 
+# --native-file is @NATIVE_INI_P11_KIT@ and not the layer's shared
+# native.ini, which is the only way p11-kit's `drops: [visibility]` in
+# manifest/toolchain.yaml can reach the compiler at all. meson takes flags
+# from the native file and from nowhere else, so there is no CFLAGS=
+# argument here to name a response file on -- which is exactly how gjs's
+# exemption sat inert for its whole life. tools/gates/exceptions-live.py
+# fails the build if this line goes back to the shared file.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --native-file @NATIVE_INI_P11_KIT@ --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled
 
 - stage: Build
   name: compile
@@ -44,3 +51,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libp11-kit.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libp11-kit.so p11_kit_modules_load p11_kit_modules_release p11_kit_module_get_name C_GetFunctionList
