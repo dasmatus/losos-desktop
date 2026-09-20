@@ -26,7 +26,7 @@ accept_versions=false
 
 case "$LIB" in
   *.so|*.so.*)
-    nm_flags='--dynamic --defined-only'
+nm_flags='--defined-only'
     accept_versions=true
     ;;
 esac
