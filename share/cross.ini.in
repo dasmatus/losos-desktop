@@ -1,0 +1,170 @@
+# meson cross file. Generated per layer by tools/configure.
+#
+# Three jobs, and the third is why this is a cross file and not a native one.
+#
+# [binaries] answers C3: pm canonicalises a step's first word on the HOST, so a
+# program that lives only in the jail can never be one -- but meson execs these
+# itself, from inside the jail, where the paths exist. That is the only way a
+# pm-built gperf or bpftool reaches a build.
+#
+# [built-in options] is where manifest/toolchain.yaml lands. No recipe spells a
+# compiler flag; tools/gates/toolchain-report.py fails the build if one tries.
+#
+# [host_machine] is what makes meson agree with the rest of this tree that
+# these are cross builds. The build host runs glibc and everything above
+# losos-00-toolchain is compiled against musl, so the binaries this toolchain
+# emits name /lib/ld-musl-<arch>.so.1 as their interpreter and pm's jail
+# mirrors the HOST's /lib read-only (C7). A native build's very first act is to
+# compile a test program AND RUN IT, and meson skips that run only when it
+# believes it is cross-compiling -- `is_cross and not has_exe_wrapper()` in
+# mesonbuild/compilers/compilers.py, and is_cross is true only when a cross
+# file supplied this section. Without it dbus, the first meson package this
+# tree ever compiled, died on its first line with
+#
+#     Build type: native build
+#     ERROR: Could not invoke sanity check executable: [Errno 2] No such file
+#     or directory: '.../meson-private/sanity_check_for_c.exe'
+#
+# which names the test binary rather than the loader that is actually missing,
+# and would have done the same for all forty-eight meson recipes in turn. It is
+# the same failure --host answers for autotools, in meson's spelling;
+# tools/gates/cross-configure.py enforces both.
+[binaries]
+c          = '@CC@'
+cpp        = '@CXX@'
+ar         = '@AR@'
+nm         = '@NM@'
+ranlib     = '@RANLIB@'
+strip      = '@STRIP@'
+objcopy    = '@OBJCOPY@'
+pkg-config = '@PKGCONFIG@'
+python3    = '@PYTHON@'
+# Built into the sysroot by an earlier layer. Absent until then, which is why
+# the systemd recipe asserts they exist before it configures.
+gperf      = '@SYSROOT@/usr/bin/gperf'
+msgfmt     = '@SYSROOT@/usr/bin/msgfmt'
+msgmerge   = '@SYSROOT@/usr/bin/msgmerge'
+xgettext   = '@SYSROOT@/usr/bin/xgettext'
+flex       = '@SYSROOT@/usr/bin/flex'
+bpftool    = '@SYSROOT@/usr/bin/bpftool'
+wayland-scanner = '@SYSROOT@/usr/bin/wayland-scanner'
+glib-compile-resources = '@SYSROOT@/usr/bin/glib-compile-resources'
+g-ir-scanner = '@SYSROOT@/usr/bin/g-ir-scanner'
+
+# Both architectures this tree targets are little-endian, so the value is
+# written rather than derived; a third one would have to say so here.
+[host_machine]
+system     = 'linux'
+kernel     = 'linux'
+subsystem  = 'linux'
+cpu_family = '@ARCH_MESON_CPU_FAMILY@'
+cpu        = '@ARCH_MESON_CPU@'
+endian     = 'little'
+
+[built-in options]
+prefix          = '/usr'
+libdir          = 'lib'
+sysconfdir      = '/etc'
+localstatedir   = '/var'
+pkg_config_path = '@SYSROOT@/usr/lib/pkgconfig:@SYSROOT@/usr/share/pkgconfig'
+c_args          = @MESON_C_ARGS@
+cpp_args        = @MESON_C_ARGS@
+c_link_args     = @MESON_LINK_ARGS@
+cpp_link_args   = @MESON_LINK_ARGS@
+# b_lto is deliberately NOT set here. meson's own LTO switch would add its idea
+# of -flto on top of the one already in c_args, and the two disagree about
+# ThinLTO's flags often enough to be worth avoiding.
+b_lto           = false
+# b_lundef is meson's --no-undefined, and it is off because cross-DSO CFI
+# needs the opposite. -fno-sanitize-trap=cfi makes every DSO call
+# __cfi_slowpath_diag and __ubsan_handle_cfi_check_fail, and clang links
+# libclang_rt.cfi_diag only into EXECUTABLES -- where it also passes
+# --export-dynamic, so the executable's .dynsym is what resolves those calls
+# for every library it loads. One shadow map per process is the whole design;
+# a copy of the runtime inside each .so would give each library its own and
+# check nothing.
+#
+# So every shared library in this tree legitimately leaves those two symbols
+# undefined, and has since the first CFI link. meson is the only build system
+# here that asks the linker to refuse it *by default* -- --no-undefined is
+# b_lundef's default, autotools and cmake do not pass it, and dbus was the
+# first meson package to reach a link at all:
+#
+#     mold: error: undefined symbol: __cfi_slowpath_diag
+#     >>> referenced by dbus-marshal-byteswap.c
+#
+# which reads as a missing library rather than as a deliberate one. Measured
+# both ways on clang 18.1.3: a -shared link never gets the runtime, with or
+# without -fsanitize-link-runtime, and an executable link gets it and
+# --export-dynamic together.
+#
+# meson being the only objector by default is a claim about everything else,
+# so it was checked as one rather than inferred from dbus linking: there is no
+# -Wl,-z,defs and no --no-undefined anywhere in tools/lib/toolchain.py,
+# manifest/toolchain.yaml or this directory.
+#
+# That check was too narrow and openssl proved it two members later. A
+# PACKAGE's own build system can ask for the same refusal, and openssl's does:
+# it links engines/afalg.so, engines/capi.so and providers/legacy.so with
+# -Wl,-z,defs and stopped the base layer on the same two symbols. Grepping
+# this tree's own flags says nothing about that, so this comment claims only
+# what it checked. openssl's fix is in its recipe, not here, because it is
+# openssl's flag and not one of ours -- and openssl already drops that flag
+# for sanitizer builds, which the response file is what hides from it.
+#
+# So the rest of the tree was swept for it rather than waited on. Two more:
+# tpm2-tss adds -Wl,--no-undefined at configure.ac:634, into the AM_LDFLAGS
+# every libtss2-*.so link names, and kmod adds the same flag at
+# configure.ac:296 through a CC_CHECK_FLAGS_APPEND probe. Each recipe takes it
+# off its own way, and each says how at the point of use.
+#
+# The first pass of that sweep got its scope wrong, which is worth keeping
+# because the mistake is easy to repeat. It covered only the members the build
+# had not yet reached, on the reasoning that anything already compiled was
+# proven -- and kmod had compiled. That was proof about the OLD build
+# container. kmod's flag comes from a probe that REPLACES the variable it is
+# testing (m4/attributes.m4:12-24), so an LDFLAGS probe links without
+# -fuse-ld=mold, --rtlib=compiler-rt or --unwindlib=libunwind while a CFLAGS
+# probe keeps all three -- which is why fourteen CFLAGS probes answered yes
+# and then all three LDFLAGS probes answered no together. On the old base that
+# link failed and configure appended nothing, so kmod built with none of the
+# flags its own build system asked for and looked exactly like a package that
+# had been proven. So a package that compiled is evidence about the container
+# it compiled in, and a probed flag makes that distinction load-bearing.
+#
+# Everything else is clear, read at the pinned version: zlib, xz, zstd, lz4,
+# libffi, pcre2, expat, libseccomp, curl, libmicrohttpd, libqrencode,
+# libgpg-error, libgcrypt, json-c, popt, cryptsetup, libcbor, libfido2,
+# nettle, libtasn1, libarchive, libbpf, gnutls, libpwquality, libpng,
+# libjpeg-turbo, libusb, sqlite and xdg-desktop-portal.
+#
+# libxcrypt asks for the flag too -- configure.ac:164-184 probes -Wl,-z,defs
+# and then -Wl,--no-undefined and puts whichever works into libcrypt_la_LDFLAGS
+# at Makefile.am:164 -- and needs nothing, for a reason that is luck rather
+# than design: its exception is `drops: [cfi, lto]`, so its objects carry no
+# CFI calls for the flag to catch. It is the one package here whose exemption
+# happens to immunise it against this. If that entry is ever narrowed to
+# `[lto]`, libxcrypt joins this list the same day.
+#
+# linux-pam and libarchive look like the class and are not, which is the part
+# worth writing down: both pass libtool's -no-undefined, on every PAM module
+# and on libarchive itself. That is a declaration and not a flag. ltmain.sh
+# turns it into allow_undefined_flag=$no_undefined_flag, and configure sets
+# no_undefined_flag only under solaris*, aix and sysv -- on linux-gnu it is
+# empty, so the whole thing expands to nothing. Grepping for the string finds
+# them; only reading what libtool does with it says they are safe.
+#
+# The shared ldflags do carry
+# -Wl,-z,now, which is the opposite kind of switch -- it moves resolution
+# from first call to load -- and that is the one that decides whether the
+# design holds. Built as a pair on glibc and run: a .so with those two
+# undefined, an executable linked against it, clean under -z now. Not musl,
+# and nothing has booted, so it is evidence and not proof.
+#
+# What it costs is real: a library that genuinely fails to resolve one of its
+# own symbols now links, and fails when something loads it -- at load rather
+# than at first call, because of -z now. That is the trade cross-DSO CFI asks
+# for, and manifest/toolchain.yaml's cfi.cross_dso is where it would be
+# unmade.
+b_lundef        = false
+b_pie           = true

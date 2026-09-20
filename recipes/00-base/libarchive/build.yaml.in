@@ -33,7 +33,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libarchive /build/src/libarchive/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libarchive /build/src/libarchive/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile
@@ -55,4 +55,22 @@ steps:
   name: staged
   dl_urls: null
   run:
+  # libarchive clears this class itself: its configure probes for
+  # visibility support and, on success, adds -D__LIBARCHIVE_ENABLE_VISIBILITY
+  # to CFLAGS, which is what turns __LA_DECL in archive.h into the
+  # attribute. On failure it silently keeps neither, and the probe is a
+  # link rather than a compile -- so it depends on the sysroot being
+  # complete. That is the case this check exists for.
+  #
+  # There is a second way for that probe to answer no, read out of
+  # configure.ac 1387-1396 rather than guessed: it runs with
+  # `-fvisibility=hidden -Werror` appended to this tree's own CFLAGS, so a
+  # *warning* from any flag in the response file fails it as surely as a
+  # missing library would. clang emits one of those for a link flag on a
+  # compile-and-link line -- `argument unused during compilation: '-pie'` is
+  # in this layer's build log already -- and autoconf compiles and links in
+  # one command. Whether it fires here is not knowable without running the
+  # build, which is the argument for asserting the outcome rather than
+  # reasoning about the probe.
   - test -e /dest/usr/lib/libarchive.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libarchive.so archive_read_new archive_write_new archive_entry_new archive_version_string

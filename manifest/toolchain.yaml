@@ -37,10 +37,12 @@ compiler:
   # so clang drives it the way it drives a gold-compatible linker -- asked to
   # print its link line, the driver adds `-plugin .../LLVMgold.so` and
   # `-plugin-opt=thinlto` with mold and adds neither with lld. LLVMgold.so is
-  # therefore load-bearing from here on, and Debian ships it in
-  # `llvm-N-linker-tools`, which `llvm-N-dev` does NOT depend on -- the
-  # Containerfile names it for that reason and nothing else. Without it the
-  # first link in the tree stops with
+  # therefore load-bearing from here on, and where it lives is a packaging
+  # decision rather than a fixed path: Arch ships it inside `llvm`, Debian
+  # splits it into `llvm-N-linker-tools`, which `llvm-N-dev` does NOT depend
+  # on. The Containerfile asks clang for it -- `clang -print-file-name=` is
+  # the same lookup the driver performs -- rather than asserting either
+  # layout. Without it the first link in the tree stops with
   #
   #     mold: fatal: could not open plugin file: .../LLVMgold.so
   #
@@ -151,6 +153,51 @@ cfi:
   # it, a call from libfoo.so into libbar.so is unchecked, which on a desktop
   # is most of the calls there are. It costs a __cfi_check export per library
   # and a slower check at the boundary.
+  #
+  # That export is not free, and keeping it is share/cfi-export.map's job. The
+  # runtime finds a callee's __cfi_check by NAME in that library's dynamic
+  # symbol table (compiler-rt/lib/cfi/cfi.cpp:216, the same line at both
+  # llvmorg-18.1.3 and llvmorg-19.1.7), and when it is not there :299 marks
+  # the whole module kUncheckedShadow -- every indirect call into the library
+  # passes with no check, no error and no warning. An upstream version script
+  # ending `local: *;` does exactly that, because __cfi_check is nobody's
+  # public API, and most of the version scripts in this tree end that way:
+  # tpm2-tss ships one per library, and cryptsetup, linux-pam, p11-kit,
+  # libpwquality, libfido2, libunistring, libtasn1, gnutls and curl each have
+  # one. So the map is appended to every link that keeps cross-DSO CFI, from
+  # tools/lib/toolchain.py's ldflags(), and the measurements behind it -- why a
+  # second version script works where --export-dynamic-symbol does not, and why
+  # the name is spelled as a glob -- are in the map's own header.
+  #
+  # It costs one more thing, found at curl. __cfi_check and
+  # __cfi_check_fail are emitted into every object, and under -flto=thin the
+  # object is LLVM bitcode, so llvm-nm lists them -- which breaks libtool's
+  # configure-time probe for its global symbol pipe. The probe generates a C
+  # file declaring every symbol it saw and taking its address, and compiling
+  # `extern char __cfi_check;` with -fsanitize-cfi-cross-dso crashes clang
+  # 18.1.3 AND 19.1.1 in CodeGenFunction::EmitCfiCheckStub() -- reproduced on
+  # both, because the container's is 19 and for a while this said 18. libtool
+  # treats that as the
+  # pipe not working, sets it empty and carries on, so EVERY autotools package
+  # in this tree has an empty symbol pipe and only the ones that ask libtool
+  # to compute an export list ever find out. Three packages here can:
+  # curl, gnutls and libtasn1, each of them only on the `else` of a version
+  # script. curl reaches that else unconditionally and so needs the other
+  # branch asked for by name, which is what --enable-versioned-symbols does;
+  # its recipe is where that is written out, because that is where the next
+  # person meets it.
+  #
+  # gnutls and libtasn1 need nothing, and that was measured rather than
+  # assumed, because a probe answering the convenient way has already cost
+  # this tree two evenings. Their branch is gnulib's gl_LD_VERSION_SCRIPT
+  # (m4/ld-version-script.m4, read in libtasn1 4.19.0 bytes whose SHA-256
+  # matches sources.lock exactly), and it answers yes only if the linker
+  # REJECTS a malformed version script and then accepts a valid one -- the
+  # first link is deliberately given a file containing the word `foo`. Run
+  # against the linker this tree actually uses: mold fails the garbage map
+  # with `expected '{', but got EOF` and links the valid one, so the
+  # conditional is true and both take the version script. If that ever
+  # changes, --enable-ld-version-script skips the probe outright.
   cross_dso: true
   # Diagnose, not trap. A violation prints the file and line of the indirect
   # call that failed and the callee it was pointed at, which systemd-coredump
@@ -159,8 +206,17 @@ cfi:
   # process ever does.
   #
   # This costs an unwinder. -fno-sanitize-trap puts libclang_rt.cfi_diag on
-  # every link line, cfi_diag walks the stack to find the call site, and the
-  # walk calls _Unwind_Backtrace and _Unwind_GetIP -- which musl does not have.
+  # every EXECUTABLE's link line, cfi_diag walks the stack to find the call
+  # site, and the walk calls _Unwind_Backtrace and _Unwind_GetIP -- which musl
+  # does not have.
+  #
+  # Executable is the word that matters, and it was missing here. clang links
+  # no sanitizer runtime into a -shared link at all, so every library this
+  # tree builds calls __cfi_slowpath_diag and __ubsan_handle_cfi_check_fail
+  # and defines neither; the executable that loads it resolves both, because
+  # clang passes --export-dynamic on the same link that pulls the runtime in.
+  # That is cross-DSO CFI working as designed -- one shadow map per process --
+  # and it is why share/cross.ini.in turns meson's b_lundef off.
   # That is what recipes/00-toolchain/libunwind is for, and why target.unwindlib
   # below names it. Tombstone: this was `true` for one commit, with a note
   # saying diagnose was unavailable because building libunwind needed the full
@@ -262,9 +318,12 @@ exceptions:
       sysroot that already holds a libc and compiler-rt's crt objects.
 
       Dropping it means --unwindlib=none, which is not the same as leaving the
-      flag off: off means clang's build-time default, and the Containerfile's
-      clang defaults to libgcc even under --rtlib=compiler-rt. No sysroot here
-      has libgcc_s. tools/lib/toolchain.py carries the measurement.
+      flag off: off means clang's build-time default, and the clang this was
+      measured on defaults to libgcc even under --rtlib=compiler-rt. No
+      sysroot here has libgcc_s. Stating the flag is what makes the default
+      irrelevant, so this holds whatever the base's clang was built to prefer
+      -- which matters now that the base is Arch and pins no version.
+      tools/lib/toolchain.py carries the measurement.
 
       `stdlibxx` is the same argument one language over: most of libunwind is
       C++, cmake links it with clang++, and clang++ links libstdc++ by
@@ -279,6 +338,314 @@ exceptions:
       inside the thing being reported on, and a CFI failure on the unwind path
       recurses instead of printing. It is the same argument that keeps musl
       out, one layer up.
+  - package: libcap
+    drops: [visibility]
+    why: >
+      libcap annotates no export at all -- the single visibility attribute in
+      its sources marks something *hidden*, in execable.h -- so it relies on
+      default visibility the way it has since before the attribute existed,
+      and it ships no linker version script to make up for it. Compiled with
+      -fvisibility=hidden its .so comes out with an empty dynamic symbol
+      table, and the first thing to link against it is libcap's own getcap:
+      `undefined reference to cap_get_file`, `cap_to_text`, `cap_free`.
+      Measured both ways on 2.73, the release just above the pin: with the
+      flag, zero dynamic symbols defined and progs/ fails to link; without
+      it, 68 exported and the programs link. It is the same shape as zstd's
+      CLI, which docs/limits.md records, except that here the symbols are the
+      whole point of the package rather than an extra.
+
+      `visibility` and not `cfi`, which is what this entry said for one
+      commit. Both get the symbols back, because -fvisibility= is only on the
+      line as CFI's precondition and falls off with it -- but `cfi` also
+      takes the checks away from a library every unit in the system feeds
+      capability text to, and it does not have to. clang accepts this tree's
+      whole scheme set with -fsanitize-cfi-cross-dso at -fvisibility=default;
+      what it refuses is -fvisibility= missing altogether. Checked on 19.1.1
+      and on 18.1.3. So libcap keeps indirect-call checking and loses only the
+      guarantee that nothing interposes its exports at load time, which for a
+      library that has been default-visible since 1999 is the status quo
+      everywhere else rather than a new hole.
+
+      It keeps LTO, hardening and the target flags too.
+
+      Do not reach for the per-scheme spelling gjs uses. Naming every scheme
+      empties `kept` and drops -fvisibility= entirely, which is a third
+      behaviour again, four times as long to write.
+  - package: libxcrypt
+    drops: [cfi, lto]
+    why: >
+      Two failures stacked, and only one of them is loud. The loud one is LTO
+      against symbol versioning: libxcrypt places its versioned aliases with
+      `.symver` directives in inline asm, and ThinLTO does not keep the local
+      definitions those name, so the link dies with `mold: fatal: LLVM gold
+      plugin: <inline asm>: default version symbol crypt_r@@XCRYPT_2.0 must be
+      defined`. The quiet one is the same visibility problem libcap has: a
+      version script cannot export a symbol the compiler already made hidden,
+      so the library links and ships with nothing in its dynamic table.
+
+      Measured as a matrix on 4.4.36, the pinned release, with the layer's
+      other flags: hidden+LTO and default+LTO both die on the .symver; hidden
+      without LTO builds and exports 0 symbols; default without LTO builds and
+      exports 9, `crypt@@XCRYPT_2.0` among them. So both have to go, and CFI
+      goes with LTO because it cannot be had without it.
+
+      The narrow `visibility` drop libcap uses is therefore not available
+      here: it keeps the schemes, and the schemes need the LTO this package
+      cannot have.
+  # The rest of losos-10-base, in member order. Eleven packages, one fault, and
+  # one piece of evidence behind all of them: none declares a single
+  # `visibility("default")` anywhere in its tree -- not in its sources, not in
+  # its generated `configure`, under either spelling of the attribute -- so
+  # under the layer's -fvisibility=hidden each ships a library with an empty
+  # dynamic symbol table. Checked against the hash-pinned tarball in
+  # manifest/sources.lock, not against whatever upstream ships today.
+  #
+  # Seven of the eleven pass a linker version script, and openssl's util/*.num
+  # files are the same machinery under another name -- which is the trap
+  # rather than the reassurance: the linker makes a hidden symbol local before
+  # a version node can claim it, so a `global:` list has nothing left to
+  # promote. Proved on libfido2, which names 267 symbols in src/export.gnu and
+  # exported none.
+  #
+  # Said plainly, because it is the weaker part of this entry: eight of the
+  # eleven are not individually build-measured the way libcap and libxcrypt
+  # were. Nothing in this tree has built them yet. What is measured is the
+  # mechanism, on the same clang, and the absence of any annotation for it to
+  # spare. Three are exceptions: libqrencode and libfido2 were each built both
+  # ways and their entries carry the counts, and libunistring is first below
+  # because the build reached it and it failed, which is what the rest of this
+  # paragraph is predicting. Each carries
+  # a check-exports line naming symbols out of its own version script or
+  # headers, so if one of them is somehow fine the exception costs it only
+  # interposition protection, and if it is not the build says so at the package
+  # instead of four layers later.
+  #
+  # `visibility` and not `cfi` throughout: at -fvisibility=default clang keeps
+  # every scheme and cross-DSO, so none of these gives up indirect-call
+  # checking. See libcap above for the measurement.
+  - package: libunistring
+    drops: [visibility]
+    why: >
+      The one in this group the build actually reached. losos-10-base stopped
+      here on both architectures with
+
+          mold: error: undefined symbol: setlocale_null
+          mold: error: undefined symbol: locale_charset
+
+      linking `test-localcharset`, which is a `noinst_PROGRAMS` target and so
+      is built by `make all` rather than only by `make check`. Both symbols
+      are defined in lib/ -- localcharset.c and setlocale_null.c -- and both
+      are in the library's own list of exports, so this is not a test reaching
+      for something private. It is the library exporting nothing.
+
+      The API is bare. `extern ucs4_t uc_toupper (ucs4_t uc) _UC_ATTRIBUTE_CONST;`
+      is the shape throughout, and _UC_ATTRIBUTE_CONST is
+      `__attribute__((__const__))` in lib/unitypes.in.h -- a purity attribute
+      that looks like a hook and is not one, exactly as PAM_NONNULL does for
+      linux-pam below.
+
+      What makes this entry unusually well evidenced is that upstream says the
+      quiet part in lib/Makefile.am. It generates libunistring.sym, 627
+      symbols extracted from the installed headers, in the format libtool's
+      -export-symbols wants -- and then declines to pass it: "we don't use
+      this option, because it would prevent us from building some of the
+      gnulib unit tests." Upstream refused to narrow its export set for that
+      reason. The layer's -fvisibility=hidden narrows it to nothing, and the
+      gnulib unit tests are precisely what stopped.
+
+      The reasoning above was read in 1.1 and 1.3 rather than in the pinned
+      1.2: ftp.gnu.org is not reachable from where this was diagnosed and the
+      Ubuntu archive carries those two. The Makefile.am comment, the bare
+      declarations and the unused gl_VISIBILITY are in both neighbours, so the
+      mechanism is bracketed rather than read.
+
+      The fault itself needs no bracket. The pinned 1.2 bytes are what failed,
+      on the symbol this entry names, on two branches independently -- #62 and
+      #61 stopped at this member with the same two undefined symbols on both
+      architectures before either had the fix. So a later reader who finds
+      ftp.gnu.org unreachable and doubts the bracket can stop there: what is
+      inferred is why libunistring exports nothing, not that it does.
+  - package: openssl
+    drops: [visibility]
+    why: >
+      Declares its API bare -- `int SSL_connect(SSL *s);` -- with no export
+      macro to hook and no visibility attribute anywhere in 3.3.2. It builds
+      libcrypto and libssl from its own perl-driven Configure and derives their
+      symbol lists from util/libcrypto.num and util/libssl.num, which is
+      version-script machinery and cannot outrank STV_HIDDEN either.
+
+      Giving up interposition protection on the system's crypto library is not
+      nothing, and it is worth saying that openssl is default-visible on every
+      distribution that ships it, so this is the status quo elsewhere rather
+      than a hole opened here. CFI stays on, which is the part that would
+      actually have been missed.
+  - package: json-c
+    drops: [visibility]
+    why: >
+      json-c has the hook zlib had and it is still not usable here. Every
+      public header opens with `#ifndef JSON_EXPORT` / `#define JSON_EXPORT
+      extern` for the non-MSVC case, which is exactly ZEXPORT's shape -- but it
+      is repeated in five headers behind that guard, so whichever one an
+      include order reaches first wins and a patch has to land in all of them
+      identically to be sound. That is a patch worth writing once a build can
+      verify it; asserting it now, with nothing able to compile json-c against
+      the musl sysroot, would be a guess in a file whose whole convention is
+      that nothing is guessed. If the patch lands, this entry comes out.
+  - package: cryptsetup
+    drops: [visibility]
+    why: >
+      Bare declarations throughout libcryptsetup.h -- `int crypt_init(struct
+      crypt_device **cd, const char *device);` -- with no export macro, and
+      the only __attribute__ in the public header is `deprecated`. Nothing in
+      configure.ac or the Makefile.am asks for visibility either way: the one
+      thing configure probes for near this is __symver__, which is symbol
+      versioning and a different mechanism.
+
+      It ships lib/libcryptsetup.sym, a `CRYPTSETUP_2.0 { global: ... }`
+      version script, which is the reassuring-looking case that is not.
+      Same shape as libfido2, which names 267 symbols in its own script and
+      exported none.
+
+      What an empty one costs is the reason this is not left to be discovered
+      later, and the cost is worse than "a library exports nothing" sounds.
+      systemd does not LINK against libcryptsetup. It dlopens it:
+      dlopen_many_sym_or_warn(&cryptsetup_dl, "libcryptsetup.so.12", ...) at
+      src/shared/cryptsetup-util.c:286, resolving 51 symbols by name. Read at
+      v261, which for systemd is the pinned bytes -- sources.lock pins a tag
+      archive there, so the tag and the tarball are the same tree.
+
+      So an empty libcryptsetup fails no link anywhere in this tree. systemd
+      builds, the image builds, everything ships, and the first symptom is a
+      root volume that will not unlock. The check-exports line in the recipe
+      is not a nicety on this package; it is the only thing standing between
+      -fvisibility=hidden and a machine that does not start.
+
+      Read in the Debian orig tarball for 2.7.5 rather than the pinned bytes
+      -- Debian repacks it, so the hash does not match sources.lock and that
+      is expected rather than a mirror problem. The contents are upstream
+      2.7.5; the declaration style and the .sym file are not the kind of
+      thing a repack changes, but it is a weaker read than libunistring's
+      and says so here.
+  - package: tpm2-tss
+    drops: [visibility]
+    why: >
+      Public declarations return TSS2_RC and carry no decorator. It ships a
+      version script per library -- tss2-esys.map, tss2-sys.map, tss2-mu.map
+      and eight more -- which is the case that looks safest and is not.
+      systemd reaches TPM2 through libtss2-esys, so an empty one takes
+      measured boot and TPM2-bound disk encryption with it.
+  - package: linux-pam
+    drops: [visibility]
+    why: >
+      `extern int PAM_NONNULL((1,3,4)) pam_start(...)`. PAM_NONNULL is an
+      attribute macro and looks like a hook, but it decorates only the
+      functions that take pointers, so it is not the place an export attribute
+      belongs. libpam.map lists the API and cannot rescue it.
+  - package: p11-kit
+    drops: [visibility]
+    why: >
+      Bare declarations and libp11-kit.map. It is also the reason meson
+      exemptions had to work at all: p11-kit is a meson build, it has no
+      CFLAGS= argument to name a response file on, and so it names
+      @CROSS_INI_P11_KIT@ instead. The *cross* file and not the native one,
+      because share/native.ini.in carries no flags at all -- it describes the
+      build machine, whose compiler must stay at the host's defaults -- so a
+      per-package copy of it would have nothing in it to drop.
+
+      An earlier draft of this entry said gnutls links p11-kit directly and
+      that an empty one would surface there. It does not: the gnutls recipe
+      passes --without-p11-kit, and nothing else in this tree names p11-kit at
+      all. systemd's -Dp11kit=enabled is what reaches it, four layers up, so
+      the recipe's check-exports line is the only thing that would catch an
+      empty one at the package.
+  - package: gnutls
+    drops: [visibility]
+    why: >
+      The one this group missed, and the one that looks least like it needs an
+      entry. gnutls has a macro with exactly the right name in exactly the
+      right place -- lib/includes/gnutls/gnutls.h.in defines _SYM_EXPORT as
+      `__declspec(dllimport)` for the Windows case at :68 and as nothing at
+      all at :70 -- and the whole public API is declared through it. So a
+      reader grepping for an export hook finds one, on every declaration, and
+      it expands to the empty string on every platform this tree builds.
+
+      What actually exports libgnutls is entirely linker-side and entirely too
+      late: lib/Makefile.am:281 adds -Wl,--version-script=libgnutls.map and
+      :283 adds -export-symbols-regex '^(gnutls|_gnutls).*'. Both run after
+      the compiler has already made every symbol STV_HIDDEN, and neither can
+      promote one back. Upstream can rely on them because upstream compiles
+      default-visible: lib/common.mk's AM_CFLAGS is warning flags and
+      dependency CFLAGS and nothing else, and configure.ac never uses
+      CFLAG_VISIBILITY, so gnutls never asks for hidden visibility itself.
+      This tree asks for it on gnutls's behalf.
+
+      Left alone it would not have been silent, only late. systemd builds with
+      -Dgnutls=enabled and links journal-remote and journal-gatewayd against
+      it, so an empty libgnutls fails a link in losos-20-systemd -- five
+      layers and several hours after the package that caused it, with an error
+      naming systemd. The check-exports line the recipe now carries is what
+      turns that into a failure at gnutls.
+
+      The gnutls recipe also spelled the shared @CFLAGS_RSP@, so even an
+      entry here would have been written to disk and read by nothing. Both
+      halves are in the same commit for that reason.
+
+      Read from gnutls's own repository at the 3.8.7 tag, not from the pinned
+      tarball: www.gnupg.org is not reachable from where this was diagnosed.
+      The lock pins a release tarball there, so the generated `configure`
+      differs from the tag by definition -- but configure.ac, lib/Makefile.am,
+      lib/common.mk and the installed headers are the authored tree, and those
+      are what this entry rests on.
+  - package: libpwquality
+    drops: [visibility]
+    why: >
+      Bare declarations, libpwquality.map, nothing else. The smallest of the
+      group and the same shape as the rest; systemd-homed asks it whether a
+      password is acceptable.
+  - package: libqrencode
+    drops: [visibility]
+    why: >
+      libqrencode annotates no export and ships no version script -- the only
+      `visibility` anywhere in its tarball is libtool's own probe in configure
+      and aclocal.m4, which defines nothing for the package. It has relied on
+      default visibility since before the attribute existed.
+
+      Measured on 4.1.1, the pinned release, built both ways: without hidden
+      visibility libqrencode.so defines 75 dynamic functions and exports
+      QRcode_encodeString; with it, zero and none. systemd is the consumer
+      (-Dqrencode=enabled, for the recovery-key QR that systemd-cryptenroll
+      prints) and would find nothing to link against.
+
+      The narrow drop rather than `cfi`, so the schemes stay.
+  - package: libfido2
+    drops: [visibility]
+    why: >
+      The same exemption, and worth its own entry because libfido2 looks like
+      it should not need one. It *does* ship a linker version script,
+      src/export.gnu, naming 267 symbols -- and that is exactly the trap: a
+      version script cannot re-export a symbol the compiler already marked
+      hidden. -fvisibility=hidden writes STV_HIDDEN into the object and
+      `global:` has nothing left to promote. There is not one visibility
+      attribute anywhere in its sources to make up for it, checked against the
+      pinned tarball rather than the public header alone.
+
+      Measured on 1.15.0, from bytes whose SHA-256 matches sources.lock:
+      267 dynamic functions defined at default visibility, 0 at hidden, with
+      fido_dev_open present in the first and absent in the second. A
+      libfido2.so that exports nothing is the feature gone -- systemd is built
+      -Dlibfido2=enabled for systemd-cryptenroll and homed.
+
+      `visibility` and not `cfi`, deliberately and with feeling: of everything
+      in this tree libfido2 is the last library to unharden, because its input
+      is CBOR arriving from a device the user just plugged in. What is given
+      up here is only the guarantee that no exported symbol is interposed at
+      load time; every scheme still checks. docs/yubikey.md carries the
+      reasoning and the measurement.
+
+      Not measured: this package under CFI and ThinLTO together, which no
+      build has reached yet. Its version script is a linker script rather than
+      libxcrypt's inline-asm .symver directives, so it has no reason to fail
+      the way that one does -- but that is an argument, not a result.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.
@@ -329,6 +696,45 @@ exceptions:
       something that does not link, and -D_FORTIFY_SOURCE fights the kernel's
       own string routines. The kernel's config fragment turns on the kernel's
       equivalents instead.
+  # losos-30-graphics. The same class as the base layer's six, found by
+  # sweeping ahead of the build rather than waiting for it: none of the three
+  # carries a single `visibility("default")` anywhere in its tree, and none
+  # sets `gnu_symbol_visibility` in its own build either. That second half
+  # matters as evidence. A project that hides its own symbols has to annotate
+  # its exports or it would ship an empty library for everyone, not just for
+  # us -- glib, graphene, libepoxy and libxkbcommon all do exactly that and are
+  # why they are not on this list. These three instead assume the default is
+  # `default`, which is true everywhere except here.
+  #
+  # Checked against the hash-pinned tarballs. sqlite is a fourth candidate on
+  # the same evidence from its headers, and is not here because sqlite.org
+  # could not be reached to verify the pinned bytes; it is written up in
+  # docs/limits.md instead of guessed at.
+  - package: harfbuzz
+    drops: [visibility]
+    why: >
+      HB_EXTERN is `extern` and nothing more: hb-common.h defines it that way
+      behind `#ifndef`, and the only place hb.hh redefines it is the MSVC
+      branch. The `-DHB_EXTERN=` in src/meson.build is for g-ir-scanner and
+      does not reach the library. pango, cairo and gtk4 all link it, so an
+      empty libharfbuzz would surface three packages later as a text-shaping
+      failure with no obvious cause.
+
+      A meson build, so it names @CROSS_INI_HARFBUZZ@ rather than a response
+      file -- see p11-kit for why that is the only way.
+  - package: libpng
+    drops: [visibility]
+    why: >
+      PNG_EXPORT resolves through PNG_IMPEXP, which pngconf.h defines as empty
+      on everything that is not Windows. libpng's symbol versioning does not
+      help for the usual reason. cairo, gdk-pixbuf and gtk4 all link it.
+  - package: libjpeg-turbo
+    drops: [visibility]
+    why: >
+      jmorecfg.h spells its two declaration macros `#define GLOBAL(type) type`
+      and `#define EXTERN(type) extern type`, which is the libjpeg API as it
+      has been since 1991. Both libjpeg and libturbojpeg are affected, so both
+      are checked; gdk-pixbuf is the consumer.
   - package: gjs
     drops: [cfi-vcall, cfi-nvcall, cfi-derived-cast, cfi-unrelated-cast]
     why: >

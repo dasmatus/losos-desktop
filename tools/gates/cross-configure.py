@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every autotools configure must say it is cross-compiling, because it is.
+"""Every configure must say it is cross-compiling, because it is.
 
 The build host runs glibc and everything above losos-00-toolchain is compiled
 against musl. Even when the architectures match, that is a cross build: the
@@ -23,6 +23,26 @@ cross-compiled at all, and for which --host would be a false statement rather
 than a missing one. It is a list of names, not a rule, because every entry on
 it had to be argued for.
 
+meson spells the same statement --cross-file, and gets it wrong the same way.
+A native build's first act is to compile a test program and RUN it, and meson
+skips that run only when a cross file's [host_machine] section has told it the
+build is cross -- `is_cross and not has_exe_wrapper()`. So a `meson setup` with
+only --native-file dies on its first line with
+
+    Build type: native build
+    ERROR: Could not invoke sanity check executable: [Errno 2] No such file
+    or directory: '.../meson-private/sanity_check_for_c.exe'
+
+naming the test binary rather than the loader that is actually missing. dbus
+found that, being the first meson package this tree ever compiled; the other
+forty-seven would have found it one build at a time. share/cross.ini.in is the
+file, and a recipe reaches it as @RECIPE@/cross.ini or, for a package with a
+toolchain exception, @CROSS_INI_<PKG>@.
+
+There is no meson EXEMPT list and there should not be one: a package that is
+not cross-compiled here is a `drops: [target]` host tool, and all three of
+those are autotools.
+
 This is a template gate rather than a generated-file one on purpose: the
 answer has to be in the recipe a human edits.
 """
@@ -38,6 +58,26 @@ REPO = Path(__file__).resolve().parent.parent.parent
 # alternative catches a step whose configure takes no arguments at all, which
 # is the one shape a lookahead for whitespace alone would wave through.
 CONFIGURE = re.compile(r"/configure(?=\s|$)")
+
+# A step that runs `meson setup`. The recipe spells it `python3 <meson.py>
+# setup` (C3 -- meson is not on the build hosts, and a step's first word is
+# resolved there), so the pair is what identifies it rather than the word
+# `meson` alone, which every one of these recipes also says in a comment.
+MESON_SETUP = re.compile(r"meson\.py\s+setup(?=\s|$)")
+
+# The machine files tools/configure generates, and the only spellings a
+# recipe may name. @RECIPE@/cross.ini and @RECIPE@/native.ini are the layer's
+# pair; @CROSS_INI_<PKG>@ is the per-package cross file an entry in
+# manifest/toolchain.yaml produces, and tools/gates/exceptions-live.py is what
+# checks the exception it carries is real.
+GENERATED_MACHINE_FILE = re.compile(
+    r"^(@RECIPE@/(cross|native)\.ini|@CROSS_INI_[A-Z0-9_]+@)$"
+)
+
+# --cross-file/--native-file and what follows it. pm splits a command on
+# whitespace (C1), so the argument is always the next word; meson's
+# --cross-file=<path> form would not survive a recipe anyway.
+MACHINE_FILE_FLAG = re.compile(r"--(cross|native)-file")
 
 # Tombstone: this gate was briefly rewritten to yaml.safe_load the template and
 # walk steps[].run instead of scanning lines, which is the tidier shape and
@@ -73,12 +113,70 @@ EXEMPT = {
 def main():
     failures = []
     checked = 0
+    meson_checked = 0
 
     for template in sorted((REPO / "recipes").glob("*/*/build.yaml.in")):
         package = template.parent.name
         for number, line in enumerate(template.read_text().splitlines(), 1):
             stripped = line.strip()
-            if stripped.startswith("#") or not CONFIGURE.search(line):
+            if stripped.startswith("#"):
+                continue
+
+            if MESON_SETUP.search(line):
+                meson_checked += 1
+                # A recipe supplying a machine file of its own receives none
+                # of manifest/toolchain.yaml and nothing else notices: the
+                # report gate reads the generated flag files, and a recipe
+                # that does not use them is invisible to it. systemd was that
+                # recipe -- a private native.ini with -O2 and an include path,
+                # no musl target, no LTO, no CFI, no hardening, for the one
+                # package this whole distribution is built around.
+                #
+                # exceptions-live.py asks the inverse question, which is why
+                # it could not catch this: systemd had no exception at all.
+                words = line.split()
+                seen = []
+                for index, word in enumerate(words):
+                    if not MACHINE_FILE_FLAG.fullmatch(word):
+                        continue
+                    seen.append(word)
+                    named = words[index + 1] if index + 1 < len(words) else ""
+                    if not GENERATED_MACHINE_FILE.match(named):
+                        failures.append(
+                            f"{template.relative_to(REPO)}:{number}: "
+                            f"{word} {named or '(nothing)'} is not a file "
+                            f"tools/configure generates.\n    Name "
+                            f"@RECIPE@/cross.ini, @RECIPE@/native.ini or "
+                            f"@CROSS_INI_<PKG>@. A machine file of its own "
+                            f"gives {package} none of manifest/toolchain.yaml "
+                            f"and nothing else here would say so."
+                        )
+                for flag in ("--cross-file", "--native-file"):
+                    if seen.count(flag) > 1:
+                        failures.append(
+                            f"{template.relative_to(REPO)}:{number}: {flag} "
+                            f"is given {seen.count(flag)} times.\n    meson "
+                            f"merges machine files in order, so a repeat is a "
+                            f"no-op that reads as deliberate in a tree where "
+                            f"repetition usually is."
+                        )
+                    elif not seen.count(flag):
+                        failures.append(
+                            f"{template.relative_to(REPO)}:{number}: meson "
+                            f"setup with no {flag}.\n    "
+                            + ("Add --cross-file @RECIPE@/cross.ini (or "
+                               "@CROSS_INI_"
+                               + package.upper().replace("-", "_")
+                               + "@ if it has a toolchain exception); "
+                               "--native-file alone is a native build."
+                               if flag == "--cross-file" else
+                               "Add --native-file @RECIPE@/native.ini: a "
+                               "cross build needs a build-machine compiler "
+                               "too, and meson looks for `cc` on the jail's "
+                               "PATH without one.")
+                        )
+
+            if not CONFIGURE.search(line):
                 continue
             if package in EXEMPT:
                 continue
@@ -98,7 +196,8 @@ def main():
 
     print(
         f"cross-configure: {checked} autotools configure call(s) say --host, "
-        f"{len(EXEMPT)} exempt"
+        f"{len(EXEMPT)} exempt; {meson_checked} meson setup call(s) name "
+        f"a generated cross file and a generated native file"
     )
     return 0
 

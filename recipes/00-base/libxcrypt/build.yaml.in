@@ -29,11 +29,17 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+# @CFLAGS_RSP_LIBXCRYPT@ rather than the layer's shared files, and naming it
+# is the whole mechanism: left spelling the shared one the manifest exception
+# would be inert and nothing would say so. libxcrypt drops LTO and CFI, for
+# two separate reasons that manifest/toolchain.yaml sets out -- ThinLTO does
+# not keep the local symbols its inline-asm `.symver` aliases name, and hidden
+# visibility empties its dynamic table in a way its version script cannot undo.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libxcrypt /build/src/libxcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --enable-obsolete-api=no
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libxcrypt /build/src/libxcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LIBXCRYPT@ LDFLAGS=@LDFLAGS_RSP_LIBXCRYPT@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --enable-obsolete-api=no
 
 - stage: Build
   name: compile
@@ -56,3 +62,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcrypt.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcrypt.so crypt crypt_r crypt_gensalt

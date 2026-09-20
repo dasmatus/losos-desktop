@@ -29,11 +29,47 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# --enable-versioned-symbols is not cosmetic and not about ABI policy. It picks
+# which of the two export-restriction mechanisms in lib/Makefile.am:117-124 the
+# build uses. The default (`else`) is -export-symbols-regex, which asks libtool
+# to compute the list by piping $NM output through
+# $lt_cv_sys_global_symbol_pipe -- and that variable is empty in every
+# autotools package in this tree, because the probe that sets it crashes clang
+# under -flto=thin plus cross-DSO CFI. curl is simply the first package here to
+# ask libtool for an export list and so the first to find out; the failure is a
+# shell syntax error on a bare `|` inside libtool, which names nothing useful.
+# With this flag the `if` branch is taken instead: libtool hands
+# lib/libcurl.vers to the linker and never reads a symbol itself. That is also
+# how every mainstream distribution builds curl.
+#
+# --disable-symbol-hiding is the trap alternative and must not be used here. It
+# empties both branches, so the shell error goes away -- and it does it by
+# making CURL_EXTERN expand to nothing, which drops libcurl straight into the
+# hidden-visibility class and ships a library with no dynamic symbol table at
+# all. systemd dlopens libcurl (meson.build:1191 keeps only a partial
+# dependency; src/shared/curl-util.h resolves ten symbols by dlsym), so that
+# would fail no link anywhere in this tree and first show up as importd and
+# sysupdate being unable to fetch anything.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/curl /build/src/curl/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --with-openssl --without-libpsl
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/curl /build/src/curl/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --with-openssl --without-libpsl --enable-versioned-symbols
+
+# The version script configure just generated says `global: curl_*; local: *;`,
+# which hides __cfi_check along with everything else that is not public API.
+# Cross-DSO CFI dispatches into a shared object through that object's own
+# __cfi_check, looked up by name in its dynamic symbol table, so stripping it
+# turns CFI off for libcurl silently -- in the one library here that parses
+# hostile network bytes. The script promotes it and, just as importantly,
+# refuses to continue if configure quietly declined --enable-versioned-symbols
+# (it only warns) and left the build heading back into the libtool failure.
+- stage: Build
+  name: version-script
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/files/curl/version-script.sh /build/b/curl
 
 - stage: Build
   name: compile
@@ -56,3 +92,13 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcurl.so
+  # The SONAME systemd's dlopen actually asks for. A bump would stop it finding
+  # the library at all, and nothing in this tree links libcurl to notice.
+  - test -e /dest/usr/lib/libcurl.so.4
+  # These are systemd's dlsym list (src/shared/curl-util.h:12-23) rather than a
+  # sample: with a dlopen there is no link anywhere in the tree to fail, so this
+  # is the only check standing between a restricted export list and an importd
+  # that cannot fetch. __cfi_check is named because this recipe rewrites the
+  # version script to keep it -- if that rewrite ever silently stops applying,
+  # this is what says so.
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcurl.so curl_easy_init curl_easy_setopt curl_easy_perform curl_easy_header curl_slist_append __cfi_check
