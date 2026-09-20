@@ -82,9 +82,6 @@ def resolve_source_path(root, relative):
 
 
 def check_source_path(root, relative):
-    source = root / relative
-    if not source.exists() and not source.is_symlink():
-        return fail(f"/{relative} is missing")
     resolved = resolve_source_path(root, relative)
     if resolved is None:
         return fail(f"/{relative} resolves outside the staged root")
