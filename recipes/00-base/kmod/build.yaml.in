@@ -27,10 +27,7 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
+#
 # PKG_CONFIG_PATH names /usr/share/pkgconfig as well as /usr/lib/pkgconfig,
 # and kmod is where that stopped being optional. zlib's CMakeLists sets
 # INSTALL_PKGCONFIG_DIR to ${CMAKE_INSTALL_PREFIX}/share/pkgconfig and this
@@ -50,6 +47,10 @@ steps:
 # prefix= under share/pkgconfig, so the rest of the machinery was ready for
 # it. Every recipe in the tree names both now, and tools/new-recipe emits
 # both, because the next one to need it would fail the same way.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
   - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --with-xz --with-zstd --with-zlib
 
 - stage: Build

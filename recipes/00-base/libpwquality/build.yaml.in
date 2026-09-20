@@ -29,10 +29,7 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
+#
 # The flags are this package's own response files, not the layer's shared
 # pair, and naming them is the entire mechanism: manifest/toolchain.yaml
 # gives libpwquality `drops: [visibility]`, tools/configure writes
@@ -40,6 +37,10 @@ steps:
 # @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
 # read by nothing. Without it libpwquality installs empty and
 # systemd-homed is the first thing to say so.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
   - /bin/sh @RECIPE@/in-dir.sh /build/b/libpwquality /build/src/libpwquality/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LIBPWQUALITY@ LDFLAGS=@LDFLAGS_RSP_LIBPWQUALITY@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-python-bindings
 
 - stage: Build

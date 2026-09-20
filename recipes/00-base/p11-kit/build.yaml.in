@@ -19,10 +19,6 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_P11_KIT@ --no-same-owner -C /build/src/p11-kit --strip-components=1
 
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
 # --native-file is @NATIVE_INI_P11_KIT@ and not the layer's shared
 # native.ini, which is the only way p11-kit's `drops: [visibility]` in
 # manifest/toolchain.yaml can reach the compiler at all. meson takes flags
@@ -30,6 +26,10 @@ steps:
 # argument here to name a response file on -- which is exactly how gjs's
 # exemption sat inert for its whole life. tools/gates/exceptions-live.py
 # fails the build if this line goes back to the shared file.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
   - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --native-file @NATIVE_INI_P11_KIT@ --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled
 
 - stage: Build
