@@ -124,7 +124,7 @@ steps:
   - test -e /dest/usr/lib/libtss2-mu.so.0
   - test -e /dest/usr/lib/libtss2-rc.so.0
   - test -e /dest/usr/lib/libtss2-tcti-device.so.0
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-esys.so Esys_Initialize Esys_Finalize Esys_Startup Esys_GetRandom Esys_Unseal Esys_PolicyPCR __cfi_check
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-mu.so Tss2_MU_TPM2B_PUBLIC_Marshal Tss2_MU_TPM2B_PUBLIC_Unmarshal Tss2_MU_TPM2B_PRIVATE_Unmarshal Tss2_MU_TPML_PCR_SELECTION_Marshal __cfi_check
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-rc.so Tss2_RC_Decode __cfi_check
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-tcti-device.so Tss2_Tcti_Device_Init Tss2_Tcti_Info __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-esys.so.0 Esys_Initialize Esys_Finalize Esys_Startup Esys_GetRandom Esys_Unseal Esys_PolicyPCR __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-mu.so.0 Tss2_MU_TPM2B_PUBLIC_Marshal Tss2_MU_TPM2B_PUBLIC_Unmarshal Tss2_MU_TPM2B_PRIVATE_Unmarshal Tss2_MU_TPML_PCR_SELECTION_Marshal __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-rc.so.0 Tss2_RC_Decode __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-tcti-device.so.0 Tss2_Tcti_Device_Init Tss2_Tcti_Info __cfi_check
