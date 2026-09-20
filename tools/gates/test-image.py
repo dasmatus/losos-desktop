@@ -395,8 +395,8 @@ def test_usr_merge_rejects_escape_and_return(work, failures):
     (root / "bin").mkdir()
     (outside / "lib").mkdir(parents=True)
     (root / "usr" / "lib" / "real").write_text("ID=losos-desktop\n")
-    (outside / "lib" / "os-release").symlink_to(root / "usr" / "lib" / "real")
-    (root / "usr" / "lib" / "escape").symlink_to(outside / "lib")
+    (outside / "lib" / "os-release").symlink_to("../../root/usr/lib/real")
+    (root / "usr" / "lib" / "escape").symlink_to("../../../outside/lib")
     (root / "usr" / "lib" / "os-release").symlink_to("escape/os-release")
 
     result = subprocess.run(
