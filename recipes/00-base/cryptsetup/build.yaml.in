@@ -56,13 +56,29 @@ steps:
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
 # The symbols are taken from lib/libcryptsetup.sym, which is the version
-# script that cannot rescue this package rather than evidence that it does
-# not need rescuing. crypt_load and crypt_activate_by_passphrase are the two
-# systemd actually opens a LUKS volume through, so they are the ones whose
-# absence would cost an encrypted root.
+# script that cannot rescue this package rather than evidence that it does not
+# need rescuing. They are chosen rather than sampled, because systemd reaches
+# this library only by dlopen -- 51 symbols resolved by name at
+# src/shared/cryptsetup-util.c:286 -- so nothing in this tree would fail to
+# link if they were missing, and the first report would be a machine that does
+# not boot.
+#
+# Two unlock paths, and a regression can take one without the other:
+# crypt_load and crypt_activate_by_passphrase are the passphrase path,
+# crypt_token_json_get and crypt_activate_by_token_pin the FIDO2 one, where
+# systemd-cryptenroll writes the credential into the LUKS2 header as a token
+# and systemd-cryptsetup reads it back. Naming only the first pair would pass
+# on a library that had lost hardware unlock entirely, so do not trim this
+# line back to four "representative" symbols.
+#
+# The versioned name is checked as well as the linker name. systemd opens
+# libcryptsetup.so.12 and nothing else here asserts the soname the consumer
+# actually asks for, so a soname bump upstream would be invisible until boot
+# for the same reason everything else on this package is.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcryptsetup.so
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcryptsetup.so crypt_init crypt_load crypt_activate_by_passphrase crypt_free __cfi_check
+  - test -e /dest/usr/lib/libcryptsetup.so.12
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcryptsetup.so crypt_load crypt_activate_by_passphrase crypt_token_json_get crypt_activate_by_token_pin crypt_init crypt_free __cfi_check

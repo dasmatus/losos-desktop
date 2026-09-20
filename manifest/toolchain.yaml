@@ -453,9 +453,18 @@ exceptions:
       exported none.
 
       What an empty one costs is the reason this is not left to be discovered
-      later: systemd opens LUKS volumes through libcryptsetup, so it takes
-      encrypted root with it, and systemd is two layers up from where the
-      failure would be introduced.
+      later, and the cost is worse than "a library exports nothing" sounds.
+      systemd does not LINK against libcryptsetup. It dlopens it:
+      dlopen_many_sym_or_warn(&cryptsetup_dl, "libcryptsetup.so.12", ...) at
+      src/shared/cryptsetup-util.c:286, resolving 51 symbols by name. Read at
+      v261, which for systemd is the pinned bytes -- sources.lock pins a tag
+      archive there, so the tag and the tarball are the same tree.
+
+      So an empty libcryptsetup fails no link anywhere in this tree. systemd
+      builds, the image builds, everything ships, and the first symptom is a
+      root volume that will not unlock. The check-exports line in the recipe
+      is not a nicety on this package; it is the only thing standing between
+      -fvisibility=hidden and a machine that does not start.
 
       Read in the Debian orig tarball for 2.7.5 rather than the pinned bytes
       -- Debian repacks it, so the hash does not match sources.lock and that
