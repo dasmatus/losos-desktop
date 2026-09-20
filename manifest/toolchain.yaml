@@ -164,10 +164,19 @@ cfi:
   # in this tree has an empty symbol pipe and only the ones that ask libtool
   # to compute an export list ever find out. Three packages here can:
   # curl, gnutls and libtasn1, each of them only on the `else` of a version
-  # script. curl's recipe takes the other branch; gnutls's and libtasn1's is
-  # chosen by a probe that normally answers yes, and if it ever does not, the
-  # build stops with a libtool shell syntax error rather than shipping
-  # something wrong.
+  # script. curl's recipe takes the other branch explicitly.
+  #
+  # gnutls and libtasn1 need nothing, and that was measured rather than
+  # assumed, because a probe answering the convenient way has already cost
+  # this tree two evenings. Their branch is gnulib's gl_LD_VERSION_SCRIPT
+  # (m4/ld-version-script.m4, read in libtasn1 4.19.0 bytes whose SHA-256
+  # matches sources.lock exactly), and it answers yes only if the linker
+  # REJECTS a malformed version script and then accepts a valid one -- the
+  # first link is deliberately given a file containing the word `foo`. Run
+  # against the linker this tree actually uses: mold fails the garbage map
+  # with `expected '{', but got EOF` and links the valid one, so the
+  # conditional is true and both take the version script. If that ever
+  # changes, --enable-ld-version-script skips the probe outright.
   cross_dso: true
   # Diagnose, not trap. A violation prints the file and line of the indirect
   # call that failed and the callee it was pointed at, which systemd-coredump

@@ -91,6 +91,10 @@ steps:
 # to the same libtool syntax error rather than quietly producing something
 # wrong, so this is not a silent dependency.
 #
+# gnutls and libtasn1 reach the same else branch and need nothing: theirs is
+# chosen by gnulib's gl_LD_VERSION_SCRIPT, which was run against mold rather
+# than assumed. manifest/toolchain.yaml, beside cfi.cross_dso, has that.
+#
 # Read at the curl-8_22_0 tag in curl's own repository: curl.se is not
 # reachable from here, and the lock pins a release tarball, so the generated
 # configure differs while configure.ac, lib/Makefile.am and the headers are
