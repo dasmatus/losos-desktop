@@ -28,7 +28,7 @@ def target_path(root, link):
     else:
         candidate = Path(os.path.normpath(str(link.parent / target)))
     try:
-        candidate.relative_to(root)
+        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
     except ValueError:
         return None
     return candidate

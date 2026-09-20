@@ -186,6 +186,29 @@ def test_usr_merge_rejects_escape(work, failures):
         print("  usrmerge rejects compatibility symlinks that escape the staged root")
 
 
+def test_usr_merge_rejects_symlinked_target_escape(work, failures):
+    root = work / "root"
+    outside = work / "outside"
+    root.mkdir()
+    (outside / "lib").mkdir(parents=True)
+    (outside / "lib" / "os-release").write_text("ID=losos-desktop\n")
+    (root / "usr").symlink_to(outside)
+    (root / "bin").symlink_to("/usr/bin")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append(
+            "usr-merge: accepted a compatibility symlink through a symlinked /usr escape"
+        )
+    elif "not usr/bin" not in result.stderr:
+        failures.append("usr-merge: symlinked target escape did not explain the invalid target")
+    elif not failures:
+        print("  usrmerge rejects compatibility symlinks whose target resolves outside the root")
+
+
 def test_usr_merge_requires_os_release(work, failures):
     root = work / "root"
     (root / "usr" / "bin").mkdir(parents=True)
@@ -406,6 +429,9 @@ def main():
         usr_escape = work / "usr-merge-escape"
         usr_escape.mkdir()
         test_usr_merge_rejects_escape(usr_escape, failures)
+        usr_target_escape = work / "usr-merge-target-escape"
+        usr_target_escape.mkdir()
+        test_usr_merge_rejects_symlinked_target_escape(usr_target_escape, failures)
         usr_dangling = work / "usr-merge-dangling"
         usr_dangling.mkdir()
         test_usr_merge_rejects_dangling_directory_destination(usr_dangling, failures)
