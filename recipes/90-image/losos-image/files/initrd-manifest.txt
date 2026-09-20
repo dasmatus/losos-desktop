@@ -26,6 +26,7 @@ usr/lib/udev
 usr/bin/systemd-repart
 usr/lib/repart.d
 usr/lib/repart.sysinstall.d
+usr/lib/systemd/systemd-sysinstall
 # Size swap on the booted machine, never on the image builder. repart calls
 # mkswap; systemd's generated .swap units call swapon and swapoff.
 usr/lib/losos/losos-swap
