@@ -27,10 +27,7 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
+#
 # PKG_CONFIG_PATH names /usr/share/pkgconfig as well as /usr/lib/pkgconfig,
 # and kmod is where that stopped being optional. zlib's CMakeLists sets
 # INSTALL_PKGCONFIG_DIR to ${CMAKE_INSTALL_PREFIX}/share/pkgconfig and this
@@ -50,7 +47,28 @@ steps:
 # prefix= under share/pkgconfig, so the rest of the machinery was ready for
 # it. Every recipe in the tree names both now, and tools/new-recipe emits
 # both, because the next one to need it would fail the same way.
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --with-xz --with-zstd --with-zlib
+#
+# --disable-manpages, because kmod's manpages are written in scdoc and
+# building them shells out to the scdoc compiler. Nothing installs it: not the
+# Containerfile, not the runners, not any recipe. configure looks for it only
+# when manpages are enabled -- AC_ARG_ENABLE([manpages]) defaults to yes, and
+# with nothing found it stops the build with
+#
+#     configure: error: *** scdoc needed for building manpages.
+#     Either install it or pass --disable-manpages
+#
+# Disabling is the answer rather than installing scdoc, because this image
+# carries no manpages at all: systemd is built -Dman=disabled and gnutls,
+# libtasn1, linux-pam and a dozen meson recipes turn their documentation off
+# the same way. Installing a compiler to produce files the image then drops is
+# the expensive half of a trade nothing here wants. The option gates the whole
+# man/ subdirectory through AM_CONDITIONAL(BUILD_MANPAGES), and scdoc appears
+# nowhere else in the tree, so the library and the tools are untouched.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-manpages --with-xz --with-zstd --with-zlib
 
 - stage: Build
   name: compile

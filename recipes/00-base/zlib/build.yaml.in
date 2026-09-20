@@ -60,7 +60,7 @@ steps:
 
 # `test -e` was this whole step once, and it passed against a libz.so with an
 # empty dynamic symbol table. A file existing is not a library; see
-# files/check-exports.sh.
+# share/check-exports.sh.
 - stage: Test
   name: staged
   dl_urls: null
