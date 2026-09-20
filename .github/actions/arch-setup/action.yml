@@ -35,7 +35,7 @@ runs:
 
     - name: Install BasedPyright
       shell: bash
-      run: python -m pip install --user basedpyright
+      run: python3 -m pip install --user basedpyright
 
     - name: Install the pinned Rust toolchain
       if: inputs.rust == 'true'

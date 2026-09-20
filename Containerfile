@@ -269,8 +269,8 @@ RUN pacman -Syu --noconfirm --needed \
 
 # basedpyright is part of `just check`, but Arch ships it outside the main
 # repositories. Installing it here keeps the container host aligned with the gate.
-RUN python -m pip install --no-cache-dir basedpyright \
- && python -m basedpyright --version >/dev/null
+RUN python3 -m pip install --no-cache-dir basedpyright \
+ && python3 -m basedpyright --version >/dev/null
 
 # What the package list above cannot state, asserted here, because each of
 # these fails late and in someone else's name if it is missing.
