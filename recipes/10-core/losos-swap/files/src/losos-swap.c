@@ -163,11 +163,10 @@ int main(int argc, char **argv)
     int result = write_config(dir, bytes);
     if (result < 0)
         perror("losos-swap: write " CONFIG);
-    else if (close(dir) < 0) {
+    int close_result = close(dir);
+    if (close_result < 0 && result >= 0) {
         perror("losos-swap: close output directory");
         return EXIT_FAILURE;
     }
-    if (result < 0)
-        close(dir);
     return result < 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }
