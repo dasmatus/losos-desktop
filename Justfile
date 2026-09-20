@@ -42,7 +42,8 @@ default:
     '  plugins [crate]            build the pm plugin components into plugins/dist' \
     '                             (needs the wasm32 Rust target; not part of check)' \
     '  clean                      remove out/recipes, out/pkgs, out/tmp' \
-    '  container build            build the image the Containerfile describes' \
+    '  container pull             download or refresh the published build host' \
+    '  container build            explicitly rebuild the image locally' \
     '  container [command]        run an arbitrary command inside it, or a shell' \
     '                             with no command. The image is the build host:' \
     '                             it is what docs/host-requirements.md asks for,' \
@@ -53,6 +54,7 @@ default:
     '  container-run <command>    run an arbitrary command inside the container host' \
     '' \
     'Environment:' \
+    '  LOSOS_CONTAINER_IMAGE  build-host image tag or digest (default GHCR latest)' \
     '  PM                   path to the pm binary (default ../pm/target/release/pm)' \
     '  LOSOS_MIRROR_PORT    loopback port for the source mirror (default 8730)' \
     '  PM_ROOT              path to the sibling pm checkout (default ../pm). Two' \
@@ -103,6 +105,7 @@ lint:
   python3 "{{repo}}/tools/gates/test-image.py"
   python3 "{{repo}}/tools/gates/test-media.py"
   python3 "{{repo}}/tools/gates/test-libvirt.py"
+  python3 "{{repo}}/tools/gates/test-container.py"
   python3 "{{repo}}/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "{{repo}}/tools/gates/plugins.py"
   python3 "{{repo}}/tools/gates/workflow.py" --self-test
@@ -197,7 +200,6 @@ build target="":
   build_in_container() {
     local args_backup status
     echo "just: host lacks the pinned mkosi image-build prerequisites; building $1 in the container host" >&2
-    python3 "{{repo}}/tools/container" build
     # configure rewrites sources to 127.0.0.1:$LOSOS_MIRROR_PORT when the local
     # mirror exists, so the fallback container needs the host network to reach it.
     # The recursive `just build` reads out/configure.args back from disk, so keep
@@ -328,9 +330,8 @@ container *args:
   if [ "${1:-}" = "--" ]; then shift; fi
   if [ $# -eq 0 ]; then
     python3 "{{repo}}/tools/container" run
-  elif [ "$1" = build ]; then
-    shift
-    python3 "{{repo}}/tools/container" build "$@"
+  elif [ "$1" = build ] || [ "$1" = pull ]; then
+    python3 "{{repo}}/tools/container" "$@"
   elif [ "$1" = check ]; then
     shift
     just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" container-check "$@"

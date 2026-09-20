@@ -57,6 +57,9 @@
 ARG BASE_IMAGE=docker.io/library/archlinux:base
 FROM ${BASE_IMAGE}
 
+LABEL org.opencontainers.image.source="https://github.com/dasmatus/losos-desktop" \
+      org.opencontainers.image.description="losos-desktop build host, not the desktop OS"
+
 # Tombstone: this file used to be `FROM debian:trixie-slim` with a
 # `DEBIAN_SNAPSHOT=<timestamp>` argument pointing apt at snapshot.debian.org,
 # and that snapshot was the only reason the base was Debian -- it is the one

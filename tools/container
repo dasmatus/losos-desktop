@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the build host described by the repository's Containerfile.
+"""Pull, build and run the build host described by the repository's Containerfile.
 
 `docs/host-requirements.md` says what a build host must provide; the
 Containerfile provides it; this puts the repository inside it. The point is that
@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-IMAGE = "localhost/losos-build"
+IMAGE = "ghcr.io/dasmatus/losos-desktop/build-host:latest"
 
 # Which base image the Containerfile is built from, per host architecture.
 #
@@ -137,8 +137,27 @@ def base_image():
         )
 
 
+def image():
+    """Allow a digest pin or a locally built tag without changing every caller."""
+    return os.environ.get("LOSOS_CONTAINER_IMAGE", IMAGE)
+
+
+def pull(engine, args):
+    return subprocess.call([engine, "pull", image()])
+
+
+def ensure_image(engine):
+    """Reuse the local copy; an unavailable registry must not trigger a rebuild."""
+    if subprocess.call(
+        [engine, "image", "inspect", image()],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ) == 0:
+        return 0
+    return pull(engine, None)
+
+
 def build(engine, args):
-    command = [engine, "build", "-t", IMAGE, "-f", str(REPO / "Containerfile")]
+    command = [engine, "build", "-t", image(), "-f", str(REPO / "Containerfile")]
     # An explicit --build-arg wins, so overriding the base stays possible and
     # this does not quietly pass it twice with the caller's copy losing.
     if not any(pin == "BASE_IMAGE" or pin.startswith("BASE_IMAGE=") for pin in args.build_arg):
@@ -159,6 +178,10 @@ def run(engine, args):
             "  tools/gates/plugins.py and fingerprint-lint.py read pm's source,\n"
             "  and both downgrade to a pass when they cannot find it."
         )
+
+    status = ensure_image(engine)
+    if status:
+        return status
 
     command = [
         engine, "run", "--rm", "--init",
@@ -209,7 +232,7 @@ def run(engine, args):
     if sys.stdin.isatty() and sys.stdout.isatty():
         command.append("-t")
         command.append("-i")
-    command.append(IMAGE)
+    command.append(image())
 
     # `just container-run -- cargo build ...` forwards that `--` as a literal
     # first argument rather than consuming it: it is just's own end-of-options
@@ -243,6 +266,9 @@ def main():
         help="override a pin, e.g. BASE_IMAGE=<image> or MKOSI_COMMIT=<sha>",
     )
     builder.set_defaults(handler=build)
+
+    puller = sub.add_parser("pull", help="download or refresh the published image")
+    puller.set_defaults(handler=pull)
 
     runner = sub.add_parser("run", help="run a command in the image")
     runner.add_argument("command", nargs=argparse.REMAINDER)

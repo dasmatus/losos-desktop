@@ -80,6 +80,12 @@ cargo with the musl target, and working user namespaces among them — is in
 is a list rather than a bootstrap step because pm resolves a step's first word
 on the host: a tool that installs a tool would have the same problem.
 
+The build host is also published as
+`ghcr.io/dasmatus/losos-desktop/build-host:latest` for amd64 and arm64.
+Use `just container pull` and `just container-check` to reuse it without
+rebuilding the Containerfile. See [container usage](docs/container.md) for
+digest pinning, local builds and the pm checkout still required.
+
 ## What has actually been built
 
 Honesty matters more here than ambition, so: the environment this was developed
