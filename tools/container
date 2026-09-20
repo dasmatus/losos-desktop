@@ -223,7 +223,13 @@ def warn_if_unrunnable(pm_binary, pm, mounts):
 
 
 def build(engine, args):
-    command = [engine, "build", "-t", image(), "-f", str(REPO / "Containerfile")]
+    target_image = image()
+    if "@" in target_image:
+        sys.exit(
+            "container: build needs a tag target, but LOSOS_CONTAINER_IMAGE is a digest reference.\n"
+            "  Use a tag (for example ghcr.io/dasmatus/losos-desktop/build-host:dev) for local builds."
+        )
+    command = [engine, "build", "-t", target_image, "-f", str(REPO / "Containerfile")]
     # An explicit --build-arg wins, so overriding the base stays possible and
     # this does not quietly pass it twice with the caller's copy losing.
     if not any(pin == "BASE_IMAGE" or pin.startswith("BASE_IMAGE=") for pin in args.build_arg):

@@ -78,6 +78,13 @@ class ContainerTests(unittest.TestCase):
                 base.assert_not_called()
                 self.assertIn("BASE_IMAGE=custom:base", call.call_args.args[0])
 
+    def test_explicit_build_rejects_digest_target(self):
+        with patch.dict(os.environ, {"LOSOS_CONTAINER_IMAGE": "ghcr.io/example/host@sha256:" + "a" * 64}):
+            with patch.object(container.subprocess, "call") as call:
+                with self.assertRaises(SystemExit):
+                    container.build("docker", argparse.Namespace(build_arg=[]))
+                call.assert_not_called()
+
     def test_run_preserves_mounts_and_engine_options(self):
         for engine, option in (("docker", "systempaths=unconfined"), ("podman", "unmask=ALL")):
             with self.subTest(engine=engine), patch.object(container, "pm_root", return_value=REPO):
