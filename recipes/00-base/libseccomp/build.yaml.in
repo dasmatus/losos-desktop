@@ -56,3 +56,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libseccomp.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libseccomp.so seccomp_init seccomp_rule_add seccomp_load seccomp_release

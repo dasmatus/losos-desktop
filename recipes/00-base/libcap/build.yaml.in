@@ -85,7 +85,16 @@ steps:
   name: staged
   dl_urls: null
   run:
+  # __cfi_check among the names because libcap carries `drops: [visibility]`
+  # in manifest/toolchain.yaml, and that exception claims two things at
+  # once: the API comes back, and the CFI checks do not go away. It takes
+  # both kinds of symbol to hold it to that. The cap_* names say the
+  # visibility half worked; __cfi_check says the exception was the narrow
+  # one rather than `drops: [cfi]`. Neither says the other -- __cfi_check
+  # is emitted at hidden visibility too, so on its own it would pass on
+  # exactly the empty library this check exists to catch.
   - test -e /dest/usr/lib/libcap.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcap.so cap_get_proc cap_get_file cap_to_text cap_free __cfi_check
   - test -e /dest/usr/include/sys/capability.h
   - test -e /dest/usr/lib/pkgconfig/libcap.pc
   - test -e /dest/usr/sbin/setcap

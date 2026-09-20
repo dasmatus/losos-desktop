@@ -56,3 +56,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libexpat.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libexpat.so XML_ParserCreate XML_Parse XML_SetElementHandler XML_ParserFree

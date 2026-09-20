@@ -62,3 +62,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcrypt.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcrypt.so crypt crypt_r crypt_gensalt
