@@ -151,6 +151,23 @@ cfi:
   # it, a call from libfoo.so into libbar.so is unchecked, which on a desktop
   # is most of the calls there are. It costs a __cfi_check export per library
   # and a slower check at the boundary.
+  #
+  # It costs one more thing, found at curl and written out in that recipe
+  # because that is where the next person meets it. __cfi_check and
+  # __cfi_check_fail are emitted into every object, and under -flto=thin the
+  # object is LLVM bitcode, so llvm-nm lists them -- which breaks libtool's
+  # configure-time probe for its global symbol pipe. The probe generates a C
+  # file declaring every symbol it saw and taking its address, and compiling
+  # `extern char __cfi_check;` with -fsanitize-cfi-cross-dso crashes clang
+  # 18.1.3 in CodeGenFunction::EmitCfiCheckStub(). libtool treats that as the
+  # pipe not working, sets it empty and carries on, so EVERY autotools package
+  # in this tree has an empty symbol pipe and only the ones that ask libtool
+  # to compute an export list ever find out. Three packages here can:
+  # curl, gnutls and libtasn1, each of them only on the `else` of a version
+  # script. curl's recipe takes the other branch; gnutls's and libtasn1's is
+  # chosen by a probe that normally answers yes, and if it ever does not, the
+  # build stops with a libtool shell syntax error rather than shipping
+  # something wrong.
   cross_dso: true
   # Diagnose, not trap. A violation prints the file and line of the indirect
   # call that failed and the callee it was pointed at, which systemd-coredump
