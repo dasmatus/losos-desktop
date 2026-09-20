@@ -52,6 +52,13 @@ def parse_cpio(data):
     return entries
 
 
+def symlink_target(root, path):
+    target = path.readlink()
+    if target.is_absolute():
+        return root / str(target).lstrip("/")
+    return Path((path.parent / target).resolve(strict=False))
+
+
 def test_cpio(work, failures):
     root = work / "root"
     (root / "usr" / "lib").mkdir(parents=True)
@@ -108,8 +115,14 @@ def test_usr_merge(work, failures):
     (root / "bin").mkdir()
     (root / "lib").mkdir()
     (root / "etc").mkdir()
+    (root / "usr" / "bin" / "helpers").mkdir()
+    (root / "bin" / "helpers").mkdir()
+    (root / "sbin").symlink_to("/usr/sbin")
+    (root / "etc" / "os-release").symlink_to("/usr/lib/os-release")
 
     (root / "bin" / "losos-release").write_text("#!/bin/sh\n")
+    (root / "bin" / "helpers" / "moved").write_text("moved\n")
+    (root / "usr" / "bin" / "helpers" / "kept").write_text("kept\n")
     (root / "lib" / "ld-musl-test.so.1").symlink_to("/usr/lib/libc.so")
     (root / "usr" / "lib" / "libc.so").write_text("libc\n")
     (root / "usr" / "lib" / "os-release").write_text("ID=losos-desktop\n")
@@ -120,26 +133,30 @@ def test_usr_merge(work, failures):
     )
 
     checks = {
-        "bin": "usr/bin",
-        "lib": "usr/lib",
-        "sbin": "usr/sbin",
-        "lib32": "usr/lib32",
-        "lib64": "usr/lib64",
-        "etc/os-release": "../usr/lib/os-release",
+        "bin": root / "usr/bin",
+        "lib": root / "usr/lib",
+        "sbin": root / "usr/sbin",
+        "lib32": root / "usr/lib32",
+        "lib64": root / "usr/lib64",
+        "etc/os-release": root / "usr/lib/os-release",
     }
     for relative, expected in checks.items():
         path = root / relative
         if not path.is_symlink():
             failures.append(f"usr-merge: {relative} is not a symlink")
             continue
-        actual = path.readlink().as_posix()
+        actual = symlink_target(root, path)
         if actual != expected:
             failures.append(
-                f"usr-merge: {relative} points at {actual!r}, expected {expected!r}"
+                f"usr-merge: {relative} resolves to {actual!r}, expected {expected!r}"
             )
 
     if (root / "usr" / "bin" / "losos-release").read_text() != "#!/bin/sh\n":
         failures.append("usr-merge: /bin contents were not moved into /usr/bin")
+    if (root / "usr" / "bin" / "helpers" / "moved").read_text() != "moved\n":
+        failures.append("usr-merge: nested /bin directories were not merged into /usr/bin")
+    if (root / "usr" / "bin" / "helpers" / "kept").read_text() != "kept\n":
+        failures.append("usr-merge: existing /usr/bin entries were not preserved")
     if not (root / "usr" / "lib" / "ld-musl-test.so.1").is_symlink():
         failures.append("usr-merge: musl loader entry was not moved into /usr/lib")
     if (root / "lib").exists() and not (root / "lib").is_symlink():
@@ -147,6 +164,46 @@ def test_usr_merge(work, failures):
 
     if not failures:
         print("  usrmerge root compatibility paths now resolve through /usr")
+
+
+def test_usr_merge_rejects_escape(work, failures):
+    root = work / "root"
+    root.mkdir()
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "usr" / "lib" / "os-release").write_text("ID=losos-desktop\n")
+    (root / "bin").symlink_to("../outside")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted a compatibility symlink that escapes the staged root")
+    elif "not usr/bin" not in result.stderr:
+        failures.append("usr-merge: escape rejection did not explain the invalid target")
+    elif not failures:
+        print("  usrmerge rejects compatibility symlinks that escape the staged root")
+
+
+def test_usr_merge_requires_os_release(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "etc").mkdir()
+    (root / "bin").mkdir()
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted a tree with no /usr/lib/os-release")
+    elif "/usr/lib/os-release is missing" not in result.stderr:
+        failures.append("usr-merge: missing os-release did not explain the failure")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: missing os-release should fail before rewriting compatibility paths")
+    elif not failures:
+        print("  usrmerge requires /usr/lib/os-release before rewriting the tree")
 
 
 def synthetic_stub(path):
@@ -302,6 +359,12 @@ def main():
         usr_work = work / "usr-merge"
         usr_work.mkdir()
         test_usr_merge(usr_work, failures)
+        usr_escape = work / "usr-merge-escape"
+        usr_escape.mkdir()
+        test_usr_merge_rejects_escape(usr_escape, failures)
+        usr_missing = work / "usr-merge-missing"
+        usr_missing.mkdir()
+        test_usr_merge_requires_os_release(usr_missing, failures)
         test_uki(work, failures)
 
     if failures:
