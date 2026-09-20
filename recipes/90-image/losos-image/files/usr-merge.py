@@ -168,6 +168,9 @@ def os_release(root):
         return 0
     if target.exists():
         return fail("/etc/os-release exists and is not a symlink")
+    status = check_os_release_parent(root)
+    if status:
+        return status
 
     target.symlink_to("../usr/lib/os-release")
     return 0
