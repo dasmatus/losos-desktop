@@ -56,7 +56,7 @@ def move_entry(source, destination):
 
 def check_entry(source, destination):
     if source.is_dir() and not source.is_symlink():
-        if destination.exists():
+        if destination.exists() or destination.is_symlink():
             if destination.is_symlink() or not destination.is_dir():
                 return fail(f"{destination} already exists and is not a directory")
             for child in source.iterdir():

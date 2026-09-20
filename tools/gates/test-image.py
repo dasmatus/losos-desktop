@@ -206,6 +206,26 @@ def test_usr_merge_requires_os_release(work, failures):
         print("  usrmerge requires /usr/lib/os-release before rewriting the tree")
 
 
+def test_usr_merge_rejects_dangling_directory_destination(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "usr" / "lib" / "os-release").write_text("ID=losos-desktop\n")
+    (root / "bin" / "helpers").mkdir(parents=True)
+    (root / "usr" / "bin" / "helpers").symlink_to("../missing")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted a dangling symlink destination for a directory merge")
+    elif "helpers already exists and is not a directory" not in result.stderr:
+        failures.append("usr-merge: dangling directory destination did not explain the conflict")
+    elif not failures:
+        print("  usrmerge rejects dangling symlink destinations during directory preflight")
+
+
 def synthetic_stub(path):
     """A minimal PE32+ shaped like systemd's linuxx64.efi.stub."""
     alignment = 4096
@@ -362,6 +382,9 @@ def main():
         usr_escape = work / "usr-merge-escape"
         usr_escape.mkdir()
         test_usr_merge_rejects_escape(usr_escape, failures)
+        usr_dangling = work / "usr-merge-dangling"
+        usr_dangling.mkdir()
+        test_usr_merge_rejects_dangling_directory_destination(usr_dangling, failures)
         usr_missing = work / "usr-merge-missing"
         usr_missing.mkdir()
         test_usr_merge_requires_os_release(usr_missing, failures)
