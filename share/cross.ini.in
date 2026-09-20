@@ -112,13 +112,38 @@ b_lto           = false
 # openssl's flag and not one of ours -- and openssl already drops that flag
 # for sanitizer builds, which the response file is what hides from it.
 #
-# So the rest of the base layer was swept for it rather than waited on, and
-# there is one more: tpm2-tss adds -Wl,--no-undefined itself, at
-# configure.ac:634, into the AM_LDFLAGS every libtss2-*.so link names. Its
-# recipe turns the block off. Everything else in the layer is clear --
-# curl, libmicrohttpd, libqrencode, libgpg-error, libgcrypt, json-c, popt,
-# cryptsetup, libcbor, libfido2, nettle, libtasn1, libarchive and libbpf, read
-# at the pinned version.
+# So the rest of the tree was swept for it rather than waited on. Two more:
+# tpm2-tss adds -Wl,--no-undefined at configure.ac:634, into the AM_LDFLAGS
+# every libtss2-*.so link names, and kmod adds the same flag at
+# configure.ac:296 through a CC_CHECK_FLAGS_APPEND probe. Each recipe takes it
+# off its own way, and each says how at the point of use.
+#
+# The first pass of that sweep got its scope wrong, which is worth keeping
+# because the mistake is easy to repeat. It covered only the members the build
+# had not yet reached, on the reasoning that anything already compiled was
+# proven -- and kmod had compiled. That was proof about the OLD build
+# container. kmod's flag comes from a probe, the probe links a trivial program
+# with the full response file, and on the Debian base that link failed: all
+# three of its LDFLAGS probes answered no together while the fourteen CFLAGS
+# probes before them answered yes. Three unrelated linker flags do not become
+# unsupported at once; one link was failing and configure drew the only
+# conclusion it could. kmod built by accident. So a package that compiled is
+# evidence about the container it compiled in, and a probed flag makes that
+# distinction load-bearing.
+#
+# Everything else is clear, read at the pinned version: zlib, xz, zstd, lz4,
+# libffi, pcre2, expat, libseccomp, curl, libmicrohttpd, libqrencode,
+# libgpg-error, libgcrypt, json-c, popt, cryptsetup, libcbor, libfido2,
+# nettle, libtasn1, libarchive, libbpf, gnutls, libpwquality, libpng,
+# libjpeg-turbo, libusb, sqlite and xdg-desktop-portal.
+#
+# libxcrypt asks for the flag too -- configure.ac:164-184 probes -Wl,-z,defs
+# and then -Wl,--no-undefined and puts whichever works into libcrypt_la_LDFLAGS
+# at Makefile.am:164 -- and needs nothing, for a reason that is luck rather
+# than design: its exception is `drops: [cfi, lto]`, so its objects carry no
+# CFI calls for the flag to catch. It is the one package here whose exemption
+# happens to immunise it against this. If that entry is ever narrowed to
+# `[lto]`, libxcrypt joins this list the same day.
 #
 # linux-pam and libarchive look like the class and are not, which is the part
 # worth writing down: both pass libtool's -no-undefined, on every PAM module
