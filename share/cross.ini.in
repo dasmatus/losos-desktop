@@ -122,14 +122,15 @@ b_lto           = false
 # because the mistake is easy to repeat. It covered only the members the build
 # had not yet reached, on the reasoning that anything already compiled was
 # proven -- and kmod had compiled. That was proof about the OLD build
-# container. kmod's flag comes from a probe, the probe links a trivial program
-# with the full response file, and on the Debian base that link failed: all
-# three of its LDFLAGS probes answered no together while the fourteen CFLAGS
-# probes before them answered yes. Three unrelated linker flags do not become
-# unsupported at once; one link was failing and configure drew the only
-# conclusion it could. kmod built by accident. So a package that compiled is
-# evidence about the container it compiled in, and a probed flag makes that
-# distinction load-bearing.
+# container. kmod's flag comes from a probe that REPLACES the variable it is
+# testing (m4/attributes.m4:12-24), so an LDFLAGS probe links without
+# -fuse-ld=mold, --rtlib=compiler-rt or --unwindlib=libunwind while a CFLAGS
+# probe keeps all three -- which is why fourteen CFLAGS probes answered yes
+# and then all three LDFLAGS probes answered no together. On the old base that
+# link failed and configure appended nothing, so kmod built with none of the
+# flags its own build system asked for and looked exactly like a package that
+# had been proven. So a package that compiled is evidence about the container
+# it compiled in, and a probed flag makes that distinction load-bearing.
 #
 # Everything else is clear, read at the pinned version: zlib, xz, zstd, lz4,
 # libffi, pcre2, expat, libseccomp, curl, libmicrohttpd, libqrencode,

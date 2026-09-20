@@ -148,6 +148,14 @@ def stage_support(recipe_out, member_dirs, subs):
         target.write_text(substitute(helper.read_text(), subs))
         target.chmod(0o755)
 
+    # share/*.map is the linker's, not a step's: cfi-export.map is named in
+    # LDFLAGS and read by mold, which runs inside the jail and so needs the
+    # file on the same mount as the response file that names it.
+    for script in sorted((REPO / "share").glob("*.map")):
+        (recipe_out / script.name).write_text(
+            substitute(script.read_text(), subs)
+        )
+
     for package, source in member_dirs:
         files = source / "files"
         if files.is_dir():
@@ -348,6 +356,18 @@ def main():
         # The `@file` form clang expands. The leading @ is clang's, not ours.
         local["@CFLAGS_RSP@"] = f"@{recipe_out}/cflags.rsp"
         local["@LDFLAGS_RSP@"] = f"@{recipe_out}/ldflags.rsp"
+
+        # Before anything asks the toolchain for a flag list, because that is
+        # what consumes it. stage_support() copies the file itself, further
+        # down, and both halves have to agree on the name.
+        toolchain.cfi_export_map = recipe_out / "cfi-export.map"
+        # ...and the shared meson flag lists are recomputed here rather than
+        # inherited, because `placeholders()` built them once for the whole run
+        # -- before there was a layer to name the map in. An exempt package's
+        # cross file already gets a fresh pair below; without this the shared
+        # one was the only flag list in the tree missing the map, which is the
+        # kind of gap that shows up as one meson library silently unchecked.
+        local.update(toolchain.meson_subs())
 
         # A separate response file per exempt package. Written BEFORE the
         # members render, because rendering is what consumes these names:

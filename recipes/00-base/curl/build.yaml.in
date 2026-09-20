@@ -30,76 +30,46 @@ steps:
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
 #
-# --enable-versioned-symbols is not about versioned symbols. It is how curl is
-# kept away from libtool's global symbol pipe, which does not work anywhere in
-# this tree and takes a while to explain, so: the base layer stopped here with
+# --enable-versioned-symbols is not cosmetic and not about ABI policy. It picks
+# which of the two export-restriction mechanisms in lib/Makefile.am:117-124 the
+# build uses. The default (`else`) is -export-symbols-regex, which asks libtool
+# to compute the list by piping $NM output through
+# $lt_cv_sys_global_symbol_pipe -- and that variable is empty in every
+# autotools package in this tree, because the probe that sets it crashes clang
+# under -flto=thin plus cross-DSO CFI. curl is simply the first package here to
+# ask libtool for an export list and so the first to find out; the failure is a
+# shell syntax error on a bare `|` inside libtool, which names nothing useful.
+# With this flag the `if` branch is taken instead: libtool hands
+# lib/libcurl.vers to the linker and never reads a symbol itself. That is also
+# how every mainstream distribution builds curl.
 #
-#     ../libtool: eval: line 1877: syntax error near unexpected token `|'
-#     ../libtool: eval: line 1877: `/usr/bin/llvm-nm  .libs/libcurl_la-...
-#
-# which is a shell error rather than a link error, and it is what an empty
-# $global_symbol_pipe looks like: ltmain evals `$NM <objects> | $pipe`, and
-# with the pipe empty the line ends in a bare `|`.
-#
-# The pipe is empty because libtool's configure-time probe for it FAILED, and
-# it failed because clang crashes. The probe compiles a tiny file, runs $NM
-# over the object, and then generates a second C file declaring every symbol
-# it found and taking each one's address. Under -flto=thin the object is LLVM
-# bitcode, and llvm-nm lists what cross-DSO CFI put there:
-#
-#     ---------------- W __cfi_check
-#     ---------------- W __cfi_check_fail
-#
-# so the generated file contains `extern char __cfi_check;` and
-# `&__cfi_check`. Compiling that with the same -fsanitize-cfi-cross-dso makes
-# clang 18.1.3 die in CodeGenFunction::EmitCfiCheckStub() -- a signal and a
-# "PLEASE submit a bug report", not a diagnostic. libtool concludes the pipe
-# does not work, sets it empty, prints `failed`, and carries on. Reproduced
-# here step by step on clang 18.1.3 rather than deduced from the log.
-#
-# So EVERY autotools package in this tree has an empty symbol pipe, and it has
-# been that way since the first CFI build. It only matters to a package that
-# asks libtool to compute an export list, and curl is the first one the build
-# has reached: lib/Makefile.am:122 adds -export-symbols-regex '^curl_.*'.
-#
-# That line is the `else` branch. :118 is the other one, and the switch is
-# CURL_LT_SHLIB_USE_VERSIONED_SYMBOLS:
-#
-#     if CURL_LT_SHLIB_USE_VERSIONED_SYMBOLS
-#     libcurl_la_LDFLAGS_EXTRA += -Wl,--version-script=libcurl.vers
-#     else
-#     if DOING_CURL_SYMBOL_HIDING
-#     libcurl_la_LDFLAGS_EXTRA += -export-symbols-regex '^curl_.*'
-#
-# A version script is a flag libtool hands to the linker and never reads, so
-# taking that branch is the whole fix. configure.ac:2807-2853 turns the
-# conditional on, and with --with-openssl the symbols are versioned
-# CURL_OPENSSL_4, which is what every distribution shipping curl against
-# OpenSSL already does.
-#
-# The other way out of that `else` would be --disable-symbol-hiding, and it is
-# a trap. DOING_CURL_SYMBOL_HIDING off means CURL_HIDDEN_SYMBOLS is undefined,
-# which makes CURL_EXTERN expand to nothing (include/curl/curl.h:137) -- and
-# this layer passes -fvisibility=hidden regardless, so libcurl would install
-# with an empty dynamic symbol table and need an exception it does not
-# currently need. With symbol hiding left on, CURL_EXTERN is
-# __attribute__((__visibility__("default"))) (m4/curl-compilers.m4:1506) and
-# curl is annotated, which is why it has no entry in manifest/toolchain.yaml.
-#
-# If curl's own probe for the option ever answers no -- it greps
-# `$LD --help` for version-script at configure.ac:2818 -- the build comes back
-# to the same libtool syntax error rather than quietly producing something
-# wrong, so this is not a silent dependency.
-#
-# Read at the curl-8_22_0 tag in curl's own repository: curl.se is not
-# reachable from here, and the lock pins a release tarball, so the generated
-# configure differs while configure.ac, lib/Makefile.am and the headers are
-# the authored tree.
+# --disable-symbol-hiding is the trap alternative and must not be used here. It
+# empties both branches, so the shell error goes away -- and it does it by
+# making CURL_EXTERN expand to nothing, which drops libcurl straight into the
+# hidden-visibility class and ships a library with no dynamic symbol table at
+# all. systemd dlopens libcurl (meson.build:1191 keeps only a partial
+# dependency; src/shared/curl-util.h resolves ten symbols by dlsym), so that
+# would fail no link anywhere in this tree and first show up as importd and
+# sysupdate being unable to fetch anything.
 - stage: Build
   name: configure
   dl_urls: null
   run:
   - /bin/sh @RECIPE@/in-dir.sh /build/b/curl /build/src/curl/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --with-openssl --without-libpsl --enable-versioned-symbols
+
+# The version script configure just generated says `global: curl_*; local: *;`,
+# which hides __cfi_check along with everything else that is not public API.
+# Cross-DSO CFI dispatches into a shared object through that object's own
+# __cfi_check, looked up by name in its dynamic symbol table, so stripping it
+# turns CFI off for libcurl silently -- in the one library here that parses
+# hostile network bytes. The script promotes it and, just as importantly,
+# refuses to continue if configure quietly declined --enable-versioned-symbols
+# (it only warns) and left the build heading back into the libtool failure.
+- stage: Build
+  name: version-script
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/files/curl/version-script.sh /build/b/curl
 
 - stage: Build
   name: compile
@@ -117,13 +87,18 @@ steps:
   - make -C /build/b/curl install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
-# systemd links libcurl (-Dlibcurl=enabled), so an empty one would fail a link
-# rather than ship -- but the version script is new here and these say it was
-# applied and kept the right side of it. __cfi_check says the schemes survived.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcurl.so
+  # The SONAME systemd's dlopen actually asks for. A bump would stop it finding
+  # the library at all, and nothing in this tree links libcurl to notice.
   - test -e /dest/usr/lib/libcurl.so.4
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcurl.so curl_easy_init curl_easy_setopt curl_easy_perform curl_multi_init curl_global_init curl_url_set __cfi_check
+  # These are systemd's dlsym list (src/shared/curl-util.h:12-23) rather than a
+  # sample: with a dlopen there is no link anywhere in the tree to fail, so this
+  # is the only check standing between a restricted export list and an importd
+  # that cannot fetch. __cfi_check is named because this recipe rewrites the
+  # version script to keep it -- if that rewrite ever silently stops applying,
+  # this is what says so.
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcurl.so curl_easy_init curl_easy_setopt curl_easy_perform curl_easy_header curl_slist_append __cfi_check

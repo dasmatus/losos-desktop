@@ -100,13 +100,31 @@ steps:
 #
 # Why this was not found by the sweep that found openssl's and tpm2-tss's:
 # kmod had already compiled, and that looked like proof. It was proof about
-# the old build container. The probe is a link of a trivial program with the
-# full response file, and on the Debian base it failed -- all three LDFLAGS
-# probes answered no together while the fourteen CFLAGS probes before them
-# answered yes, which is one link failing rather than three flags being
-# unsupported. kmod got its flags dropped for the wrong reason and built by
-# accident. The Arch base links the probe, answers yes, and asks for what it
-# cannot have.
+# the old build container, and the probe is worth reading to see why.
+#
+# m4/attributes.m4:12-24 is CC_CHECK_FLAG_APPEND, and the line that matters is
+# that it REPLACES the variable under test:
+#
+#     eval "AS_TR_SH([$2])='-Werror `echo "$3" | sed 's/^-Wno-/-W/'`'"
+#     AC_LINK_IFELSE([AC_LANG_SOURCE([int main(void) { return 0; } ])], ...)
+#
+# So a CFLAGS probe links with CFLAGS=`-Werror <flag>` and this tree's whole
+# LDFLAGS response file -- --target, --sysroot, -fuse-ld=mold,
+# --rtlib=compiler-rt, --unwindlib=libunwind -- still on the line. An LDFLAGS
+# probe links with all of that GONE, replaced by `-Werror <flag>`, and only
+# the CFLAGS response file left. That asymmetry is the whole of the log's
+# signature: fourteen CFLAGS probes answer yes and then all three LDFLAGS
+# probes answer no together, not because three unrelated linker flags became
+# unsupported but because the link they are tested with no longer has the
+# linker or the runtime this toolchain needs.
+#
+# On the old base that link failed and configure appended nothing, so kmod
+# built with none of the flags its own build system asked for -- by accident,
+# and looking exactly like a package that had been proven. The new base links
+# it, answers yes, and kmod asks for what cross-DSO CFI cannot give. What
+# differs between the two bases is not in kmod and is not yet established;
+# the container job now prints clang, llvm-config and mold versions, which is
+# where that answer will come from.
 #
 # kmod's own -fvisibility=hidden in OUR_CFLAGS is deliberately left alone. It
 # is the positive case: a package that compiles hidden must annotate, and kmod
