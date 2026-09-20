@@ -58,11 +58,23 @@ steps:
   run:
   - /bin/sh @RECIPE@/in-dir.sh /build/b/libgcrypt /build/src/libgcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ CC_FOR_BUILD=@CC@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
+# o_flag_munging is overridden rather than left to upstream. libgcrypt builds
+# its jitter-entropy object by echoing its own compile line through that make
+# variable and sed-rewriting -O2 to -O0 in the text, which finds nothing here:
+# CFLAGS is a clang @response-file, so the optimisation level is in the file
+# and not on the line. jitterentropy-base.c:58 then refuses to compile. A
+# command-line assignment beats the Makefile's own (upstream uses `=`, not
+# `override`), and files/o-flag-munging.sh carries the reasoning and the
+# measurement -- including why --disable-jent-support is not the answer.
+#
+# Only the compile step needs it: the rule has run by the time install does,
+# and a rule that somehow fired again would fail loudly rather than quietly
+# build the collector with the optimiser on.
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - make -C /build/b/libgcrypt -j @JOBS@
+  - make -C /build/b/libgcrypt -j @JOBS@ o_flag_munging=@RECIPE@/files/libgcrypt/o-flag-munging.sh
 
 # DESTDIR as a make argument, not the environment variable: pm already sets
 # DESTDIR=/dest, and the second install has to override it.
