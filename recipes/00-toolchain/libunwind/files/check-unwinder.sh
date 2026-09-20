@@ -15,13 +15,19 @@
 #   * The archive is asked for __unw_getcontext, because that is the symbol
 #     the assembly defines and therefore the one that goes missing when cmake
 #     drops the assembly. It is read out of the ordinary symbol table.
-#   * The shared library is asked only for the public unwind ABI, because
-#     __unw_getcontext is NOT in its dynamic symbol table and cannot be:
-#     src/assembly.h:258 defines DEFINE_LIBUNWIND_FUNCTION to emit
-#     HIDDEN_SYMBOL alongside .globl, and HIDDEN_SYMBOL is `.hidden name`
-#     (assembly.h:141). Upstream hides every __unw_* entry point on purpose;
-#     they are libunwind's internal interface, reached from inside the
-#     library, and only the _Unwind_ names are meant to be linked against.
+#   * The shared library is asked for unw_getcontext, the public alias of
+#     the same assembly routine, plus the public unwind ABI. __unw_getcontext
+#     is NOT in its dynamic symbol table and cannot be: src/assembly.h:258
+#     defines DEFINE_LIBUNWIND_FUNCTION to emit HIDDEN_SYMBOL alongside
+#     .globl, and HIDDEN_SYMBOL is `.hidden name` (assembly.h:141). Upstream
+#     hides every __unw_* entry point on purpose; they are libunwind's
+#     internal interface. UnwindRegistersSave.S declares the unw_* weak
+#     aliases beside them, so in the shared object, whose dynamic table is
+#     what `nm -D` reads, the hidden name is a local symbol and cannot show
+#     up at all. Measured on the staged library: `nm` lists
+#     `t __unw_getcontext` and `W unw_getcontext` at the same address,
+#     `nm -D` lists only the alias. The alias is defined in the same
+#     assembly file, so its presence proves the same thing.
 #
 # Tombstone: this script asked both libraries for all three symbols, and the
 # .so passed anyway, because `nm --defined-only` reads .symtab where a hidden
@@ -44,20 +50,17 @@ LIB="${2:?usage: check-unwinder.sh <nm> <library>}"
 
 nm_flags='--defined-only'
 accept_versions=false
-symbols='__unw_getcontext _Unwind_Backtrace _Unwind_GetIP'
+getcontext='__unw_getcontext'
 
 case "$LIB" in
   *.so|*.so.*)
     nm_flags='-D --defined-only'
     accept_versions=true
-    symbols='_Unwind_Backtrace _Unwind_GetIP'
-    ;;
-  *)
-    symbols='__unw_getcontext _Unwind_Backtrace _Unwind_GetIP'
+    getcontext='unw_getcontext'
     ;;
 esac
 
-for symbol in $symbols; do
+for symbol in "$getcontext" _Unwind_Backtrace _Unwind_GetIP; do
   if [ "$accept_versions" = true ]; then
     symbol_pattern="[ 	]$symbol($|@)"
     grep_flags='-Eq'
@@ -71,7 +74,7 @@ for symbol in $symbols; do
     # for this exact failure read `stderr: <no output>` and named only the
     # command. A diagnosis nobody reads is not a diagnosis.
     echo "check-unwinder: $LIB does not define $symbol" >&2
-    echo "check-unwinder: if it is __unw_getcontext, cmake dropped the" >&2
+    echo "check-unwinder: if it is $getcontext, cmake dropped the" >&2
     echo "check-unwinder: assembly sources -- see files/patches." >&2
     exit 1
   fi

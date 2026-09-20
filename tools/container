@@ -137,6 +137,73 @@ def base_image():
         )
 
 
+# Where a distribution puts its dynamic loader. Anything else in an ELF's
+# PT_INTERP came from a private toolchain prefix -- Homebrew, Nix, conda -- and
+# is a directory this image has never heard of.
+SYSTEM_LOADER_DIRS = ("/lib/", "/lib64/", "/usr/lib/", "/usr/lib64/")
+
+
+def elf_interpreter(binary):
+    """The PT_INTERP of a 64-bit ELF, or None if there is not one to read.
+
+    None covers every uninteresting case at once: a static binary, a file that
+    is not an ELF, a 32-bit or big-endian one, a short read. This is advice
+    about a confusing error message, so anything unparsed is simply no advice.
+    """
+    try:
+        blob = binary.read_bytes()
+    except OSError:
+        return None
+    if blob[:4] != b"\x7fELF" or blob[4:6] != b"\x02\x01":
+        return None
+    phoff = int.from_bytes(blob[0x20:0x28], "little")
+    phentsize = int.from_bytes(blob[0x36:0x38], "little")
+    phnum = int.from_bytes(blob[0x38:0x3A], "little")
+    for index in range(phnum):
+        header = blob[phoff + index * phentsize:][:phentsize]
+        if len(header) < 40 or int.from_bytes(header[:4], "little") != 3:
+            continue
+        offset = int.from_bytes(header[8:16], "little")
+        size = int.from_bytes(header[32:40], "little")
+        return blob[offset:offset + size].split(b"\x00")[0].decode(errors="replace")
+    return None
+
+
+def warn_if_unrunnable(pm_binary, pm, mounts):
+    """Say so when the pm binary cannot possibly execute inside the image.
+
+    pm is mounted in rather than installed, so the binary the host built is the
+    binary the container runs -- and a host whose toolchain lives in its own
+    prefix produces one whose ELF interpreter is a path in that prefix. Nothing
+    mounts it, so the loader is absent and the kernel's refusal names the
+    program rather than the loader:
+
+      .../pm: cannot execute: required file not found
+
+    which reads as a missing pm, and pm is right there. The answer is the one
+    CI already takes -- build pm inside the image -- so this names it.
+
+    A warning rather than a refusal, because `container run cargo build` is
+    exactly how that is fixed, and a hard failure here would block the fix.
+    """
+    interpreter = elf_interpreter(pm_binary)
+    if interpreter is None:
+        return
+    if interpreter.startswith(SYSTEM_LOADER_DIRS):
+        return
+    if any(Path(interpreter).is_relative_to(mount) for mount in mounts):
+        return
+    print(
+        f"container: warning: {pm_binary} needs the loader at {interpreter},\n"
+        "  which is a path from the host's own toolchain prefix and is not in\n"
+        "  this image. Anything that runs pm inside the container will fail\n"
+        "  with `cannot execute: required file not found`. Build pm in the\n"
+        "  image first, as CI does:\n"
+        f"    ./do container-run -- cargo build --release --manifest-path {pm / 'Cargo.toml'}",
+        file=sys.stderr,
+    )
+
+
 def build(engine, args):
     command = [engine, "build", "-t", IMAGE, "-f", str(REPO / "Containerfile")]
     # An explicit --build-arg wins, so overriding the base stays possible and
@@ -200,8 +267,11 @@ def run(engine, args):
         "-e", f"PM_ROOT={pm}",
         "-e", f"PM={pm_binary}",
     ]
+    mounts = [REPO, pm]
     if not pm_binary.is_relative_to(pm):
         command += ["-v", f"{pm_binary.parent}:{pm_binary.parent}"]
+        mounts.append(pm_binary.parent)
+    warn_if_unrunnable(pm_binary, pm, mounts)
     # The image-build fallback serves mirrored sources on the host loopback, so
     # that path can opt into host networking without changing the default runner.
     if os.environ.get("LOSOS_CONTAINER_HOST_NETWORK") == "1":
