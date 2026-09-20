@@ -265,6 +265,38 @@ rather than its binary — `fingerprint-lint.py --check-table` reads
 Both silently downgrade to a pass when they cannot find it, so a green check
 against a missing pm proves less than it looks like.
 
+**The repository is mounted at its *resolved* path, and the Justfile has to
+agree.** `tools/container` bind-mounts the checkout at the path
+`Path.resolve()` gives it, so on an ostree host -- Fedora Silverblue and
+friends, where `/home` is a symlink to `/var/home` -- the mount is under
+`/var/home` no matter which spelling the developer typed. The container recipes
+then run `just --justfile <repo>/Justfile` *inside* the container, and if that
+`<repo>` is the symlinked spelling it names a directory the container does not
+have:
+
+    error: Failed to read justfile at `/home/<user>/.../Justfile`:
+    No such file or directory (os error 2)
+
+which reads as a missing Justfile and is a missing mount. `repo :=
+canonicalize(justfile_directory())` is what keeps the two spellings from
+diverging, and `./do` resolves the same way before it hands just a path at all.
+
+**pm is mounted, not installed, so it has to be a binary this image can run.**
+The host builds it and the container executes that same file. A host whose
+toolchain lives in its own prefix -- Homebrew, Nix -- produces one whose ELF
+interpreter is a path inside that prefix, which nothing mounts, and the kernel
+blames the program rather than the loader:
+
+    .../pm: cannot execute: required file not found
+
+Build pm in the image, which is what CI does before it runs the gate:
+
+    ./do container-run -- cargo build --release --manifest-path ../pm/Cargo.toml
+
+`tools/container` reads the binary's `PT_INTERP` and warns when it names a
+loader the image cannot provide. A warning and not a refusal: the command above
+is itself a `container run`, and a hard failure would block the fix.
+
 ## What it is not
 
 It is not a base for the OS being built. Nothing from this image ends up in

@@ -14,7 +14,22 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 # such recipe drops one leading `--` before it forwards anything.
 set positional-arguments
 
-repo := justfile_directory()
+# `canonicalize` rather than the directory just was handed, because this path
+# is also a path *inside the container*. `tools/container` resolves the
+# repository with `Path.resolve()` and bind-mounts it at that resolved path, so
+# on any host where the checkout is reached through a symlink -- `/home` is one
+# on Fedora Silverblue and every other ostree system, pointing at `/var/home` --
+# the two disagree, and the recursive `just --justfile {{repo}}/Justfile` the
+# container recipes run asks for a path the container does not have:
+#
+#   error: Failed to read justfile at `/home/<user>/.../Justfile`:
+#   No such file or directory (os error 2)
+#
+# which reads as a missing Justfile and is a missing *mount*. `tools/configure`
+# already resolves the same way when it bakes absolute paths into the generated
+# recipes (C1), so canonicalising here is also what keeps those two agreeing.
+# Needs just >= 1.24 for the function; `docs/host-requirements.md` says so.
+repo := canonicalize(justfile_directory())
 pm := env_var_or_default("PM", repo + "/../pm/target/release/pm")
 pm_root := env_var_or_default("PM_ROOT", repo + "/../pm")
 mirror_port := env_var_or_default("LOSOS_MIRROR_PORT", "8730")
@@ -41,6 +56,7 @@ default:
     '  serve                      serve out/sources over loopback for pm' \
     '  plugins [crate]            build the pm plugin components into plugins/dist' \
     '                             (needs the wasm32 Rust target; not part of check)' \
+    '  packages [args...]         publish/pull signed .cpkg containers with pm-oci' \
     '  clean                      remove out/recipes, out/pkgs, out/tmp' \
     '  container pull             download or refresh the published build host' \
     '  container build            explicitly rebuild the image locally' \
@@ -103,9 +119,11 @@ lint:
   python3 "{{repo}}/tools/gates/fingerprint-lint.py" --check-table
   python3 "{{repo}}/tools/gates/fingerprint-lint.py"
   python3 "{{repo}}/tools/gates/test-image.py"
+  python3 "{{repo}}/tools/gates/test-swap.py"
   python3 "{{repo}}/tools/gates/test-media.py"
   python3 "{{repo}}/tools/gates/test-libvirt.py"
   python3 "{{repo}}/tools/gates/test-container.py"
+  python3 "{{repo}}/tools/gates/test-oci.py"
   python3 "{{repo}}/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "{{repo}}/tools/gates/plugins.py"
   python3 "{{repo}}/tools/gates/workflow.py" --self-test
@@ -273,6 +291,12 @@ fetch *args:
   if [ "${1:-}" = "--" ]; then shift; fi
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
   python3 "{{repo}}/tools/fetch-sources" "$@"
+
+packages *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
+  python3 "{{repo}}/tools/pm-oci" "$@"
 
 serve:
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
