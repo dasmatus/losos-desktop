@@ -33,7 +33,14 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --disable-doxygen-doc
+# The flags are this package's own response files, not the layer's shared
+# pair, and naming them is the entire mechanism: manifest/toolchain.yaml
+# gives tpm2-tss `drops: [visibility]`, tools/configure writes
+# cflags-tpm2-tss.rsp for it either way, and a recipe left spelling
+# @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
+# read by nothing. Without it libtss2-esys installs empty and every TPM2
+# feature above this layer is the first thing to say so.
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_TPM2_TSS@ LDFLAGS=@LDFLAGS_RSP_TPM2_TSS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doxygen-doc
 
 - stage: Build
   name: compile
@@ -56,3 +63,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libtss2-esys.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-esys.so Esys_Initialize Esys_Finalize Esys_Startup Esys_GetRandom

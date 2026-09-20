@@ -33,7 +33,14 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --disable-doc
+# The flags are this package's own response files, not the layer's shared
+# pair, and naming them is the entire mechanism: manifest/toolchain.yaml
+# gives linux-pam `drops: [visibility]`, tools/configure writes
+# cflags-linux-pam.rsp for it either way, and a recipe left spelling
+# @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
+# read by nothing. Without it libpam installs empty and systemd's own
+# PAM support is the first thing to say so.
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doc
 
 - stage: Build
   name: compile
@@ -56,3 +63,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libpam.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libpam.so pam_start pam_authenticate pam_open_session pam_end

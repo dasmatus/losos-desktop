@@ -69,5 +69,6 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libbpf.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libbpf.so bpf_object__open bpf_object__load bpf_object__close libbpf_strerror
   - test -e /dest/usr/include/bpf/libbpf.h
   - test -e /dest/usr/lib/pkgconfig/libbpf.pc

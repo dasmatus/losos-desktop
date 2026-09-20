@@ -162,6 +162,70 @@ covers only the libraries without one and saying so in
 `manifest/toolchain.yaml` instead of claiming the whole set. Nothing here
 picks one.
 
+## Ten libraries are built without hidden visibility
+
+`manifest/toolchain.yaml` sets `cfi.visibility: hidden`, and the argument for
+it is real: a default-visible symbol can be interposed at load time by
+something CFI never checked. Ten libraries are exempted from it by name, with
+`drops: [visibility]`, and the reason is the same for all ten -- none of them
+annotates its exports, so under the flag each ships a shared library with an
+empty dynamic symbol table.
+
+    libcap  openssl  json-c  tpm2-tss  linux-pam  p11-kit  libpwquality
+    harfbuzz  libpng  libjpeg-turbo
+
+They keep every CFI scheme and cross-DSO; `-fvisibility=default` satisfies
+clang, and only omitting `-fvisibility=` altogether does not. So what is lost
+is load-time interposition protection on those ten and nothing else. libxcrypt
+is an eleventh name on a wider exception -- `drops: [cfi, lto]` -- because
+ThinLTO cannot keep the local definitions its inline-asm `.symver` directives
+name, and CFI cannot be had without LTO.
+
+This is smaller than it looks in one direction and larger in another. Smaller,
+because default visibility is what every one of these ten has on every other
+distribution that ships them; this is the status quo elsewhere rather than a
+hole opened here. Larger, because the *shape* of the failure is what found
+them: a library in this class builds, installs and passes `test -e`, and the
+first thing to notice is whoever links it next, which can be four layers away
+and names the consumer rather than the cause. Five were found that way in a
+day. `share/check-exports.sh` in each library's `Test` step is what stops the
+sixth being found the same way.
+
+Two of the ten had a cheaper fix available and one took it. zlib is not on the
+list because `recipes/00-base/zlib` patches its `ZEXPORT` macro to the
+attribute instead, which costs nothing: hidden visibility stays on and all 88
+symbols are exported. json-c has a macro in the same shape and is on the list
+anyway, because the macro repeats behind `#ifndef` in five of its headers and
+nothing here can compile json-c against the musl sysroot to prove a patch
+covering all five. That is a patch worth writing when a build can check it.
+
+**sqlite is an eleventh candidate and is not on the list.** `SQLITE_API` is
+empty on everything that is not Windows, which is the same evidence as the
+other ten -- but the pinned tarball is on `sqlite.org`, which this network
+cannot reach, so the finding rests on the upstream header rather than on the
+bytes this tree actually builds. Every other entry was checked against the
+hash-pinned tarball. It is recorded here rather than guessed at in the
+manifest; `libsqlite3.so` will say which it is the first time the GNOME layer
+builds, because sqlite's `Test` step should get a `check-exports.sh` line at
+the same time.
+
+The rest of `losos-40-gnome` is unswept on this axis. The GLib-family
+libraries are very likely fine and for a reason worth writing down: a project
+that sets `gnu_symbol_visibility: 'hidden'` in its own build must annotate its
+exports, or it would ship an empty library to everyone rather than only to us.
+glib, graphene, libepoxy and libxkbcommon were each checked and clear on
+exactly that evidence. What has not been checked is everything that neither
+sets it nor annotates, which is how harfbuzz, libpng and libjpeg-turbo were
+found.
+
+Note that this is a different fault from the `__cfi_check` one above, and the
+two stack. A library on `drops: [visibility]` that also ships a version script
+ending `local: *;` gets its own API back and still has `__cfi_check` localised,
+so cross-DSO calls *into* it remain unchecked for the reason in that section.
+libcap is the only one of the ten whose `check-exports.sh` line names
+`__cfi_check`, and that is why: it ships no version script, so the assertion
+means something there and would fail for an unrelated reason anywhere else.
+
 ## The image has libzstd but no zstd command
 
 `/usr/bin/zstd` is not in the image, and neither are `unzstd`, `zstdcat` or
@@ -284,52 +348,6 @@ honest count after real build attempts should be expected to land well above the
 because this OS runs `systemd-networkd` rather than NetworkManager. That trade
 is deliberate — one network stack, already a systemd unit — but it is a trade.
 
-## Nothing in the image can authenticate anyone
-
-There is exactly one PAM service file in the whole tree, and it is not a login.
-`Linux-PAM-1.6.1.tar.xz` ships no `conf/pam.d` at all -- a man page for the
-format and nothing else -- so `make install` writes no service files. systemd
-installs one, `/usr/lib/pam.d/systemd-user`, which is the stack the *user
-manager* runs under. gdm would have been the only other source and it installs
-none: its `default-pam-config` resolves against the build container (see
-`recipes/30-gnome/gdm`), and no container this tree has used matches. Nothing
-under `overlay/` supplies any.
-
-So there is no `login`, no `gdm-password`, no `other`. `pam_systemd.so` and
-`pam_systemd_home.so` are both built, both in the systemd inventory, and both
-referenced by nothing.
-
-This is the largest single gap between "the session is wired" and "a person can
-use this machine", and it sits underneath several things that otherwise look
-finished. It is also not a stack that can be copied from another distribution,
-because the shape of a user here is not the usual one: **a user is a LUKS
-volume**, a `systemd-homed` record plus an encrypted home image rather than a
-line in `/etc/passwd`. Whatever stack this OS ships has to run
-`pam_systemd_home` in `auth`, `account`, `password` and `session`, or logging
-in succeeds and the user's home never opens. That is also what would make a
-hardware token unlock a lock screen; `docs/yubikey.md` has the rest of that
-thread.
-
-## There is no web browser
-
-`manifest/layers.yaml` names twenty-seven packages in `recipes/30-gnome` and
-none of them is a browser; neither is anything in the other six layers. A
-desktop with no way to open a web page is a strange thing to ship, and it is
-worth stating rather than leaving to be discovered by someone looking for
-Epiphany.
-
-It is not an oversight so much as an unpriced item. Both realistic candidates
-are very large builds with build systems that do not fit this tree's shape:
-Firefox wants its own rust toolchain, cbindgen, nasm, a Python environment and
-a vendored NSS; Chromium wants GN, its own clang pin and a source tree in the
-tens of gigabytes. Each also carries a second, deeper problem — both link a
-great deal of C++, and this tree's CFI and LTO settings have never been asked
-to survive a codebase that size.
-
-What follows from it here: the FIDO2 device access in `docs/yubikey.md` is
-complete and cannot be demonstrated, because demonstrating it means a browser
-doing WebAuthn and there is none to run.
-
 ## Nothing here has booted
 
 There is no VM in the development environment: no KVM, no EFI firmware, no loop
@@ -432,3 +450,49 @@ component of the graphics stack outside the CFI scheme.
 Open kernel modules cover Turing and later. Nothing older has one, and this
 tree has nothing to offer those cards beyond nouveau's reverse-engineered
 support.
+
+## Nothing in the image can authenticate anyone
+
+There is exactly one PAM service file in the whole tree, and it is not a login.
+`Linux-PAM-1.6.1.tar.xz` ships no `conf/pam.d` at all -- a man page for the
+format and nothing else -- so `make install` writes no service files. systemd
+installs one, `/usr/lib/pam.d/systemd-user`, which is the stack the *user
+manager* runs under. gdm would have been the only other source and it installs
+none: its `default-pam-config` resolves against the build container (see
+`recipes/30-gnome/gdm`), and no container this tree has used matches. Nothing
+under `overlay/` supplies any.
+
+So there is no `login`, no `gdm-password`, no `other`. `pam_systemd.so` and
+`pam_systemd_home.so` are both built, both in the systemd inventory, and both
+referenced by nothing.
+
+This is the largest single gap between "the session is wired" and "a person can
+use this machine", and it sits underneath several things that otherwise look
+finished. It is also not a stack that can be copied from another distribution,
+because the shape of a user here is not the usual one: **a user is a LUKS
+volume**, a `systemd-homed` record plus an encrypted home image rather than a
+line in `/etc/passwd`. Whatever stack this OS ships has to run
+`pam_systemd_home` in `auth`, `account`, `password` and `session`, or logging
+in succeeds and the user's home never opens. That is also what would make a
+hardware token unlock a lock screen; `docs/yubikey.md` has the rest of that
+thread.
+
+## There is no web browser
+
+`manifest/layers.yaml` names twenty-seven packages in `recipes/30-gnome` and
+none of them is a browser; neither is anything in the other six layers. A
+desktop with no way to open a web page is a strange thing to ship, and it is
+worth stating rather than leaving to be discovered by someone looking for
+Epiphany.
+
+It is not an oversight so much as an unpriced item. Both realistic candidates
+are very large builds with build systems that do not fit this tree's shape:
+Firefox wants its own rust toolchain, cbindgen, nasm, a Python environment and
+a vendored NSS; Chromium wants GN, its own clang pin and a source tree in the
+tens of gigabytes. Each also carries a second, deeper problem — both link a
+great deal of C++, and this tree's CFI and LTO settings have never been asked
+to survive a codebase that size.
+
+What follows from it here: the FIDO2 device access in `docs/yubikey.md` is
+complete and cannot be demonstrated, because demonstrating it means a browser
+doing WebAuthn and there is none to run.

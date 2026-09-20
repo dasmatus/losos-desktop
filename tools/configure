@@ -362,6 +362,20 @@ def main():
         # Emitted as its own file rather than by editing the shared one so a
         # package has to NAME its exemption to get it, and a reader of the
         # recipe sees @CFLAGS_RSP_MUSL@ and goes looking for why.
+        # A meson build has nowhere to put a response file. Every other build
+        # system in this tree takes flags as a VAR=value argument or a -D, so
+        # naming @CFLAGS_RSP_<PKG>@ is enough; meson takes them only from the
+        # native file, and the native file is per LAYER. So an exempt meson
+        # package gets a native file of its own, identical but for the two flag
+        # lists, and names it instead.
+        #
+        # This is not hypothetical. gjs carried a four-scheme CFI exemption for
+        # its SpiderMonkey JIT while still pointing at the shared native.ini,
+        # so cflags-gjs.rsp was written every run and read by nothing: gjs was
+        # built with the full scheme set and the manifest said otherwise.
+        # tools/gates/exceptions-live.py exists so that cannot happen quietly
+        # again.
+        native_template = (REPO / "share" / "native.ini.in").read_text()
         for package in toolchain.exceptions:
             token = package.upper().replace("-", "_")
             cflags = recipe_out / f"cflags-{package}.rsp"
@@ -370,6 +384,13 @@ def main():
             ldflags.write_text("\n".join(toolchain.ldflags(package)) + "\n")
             local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
             local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
+
+            native = recipe_out / f"native-{package}.ini"
+            native.write_text(
+                substitute(native_template,
+                           dict(local, **toolchain.meson_subs(package)))
+            )
+            local[f"@NATIVE_INI_{token}@"] = str(native)
 
         member_dirs = []
         members = []
