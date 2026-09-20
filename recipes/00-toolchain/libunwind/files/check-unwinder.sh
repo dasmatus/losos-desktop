@@ -47,12 +47,16 @@ accept_versions=false
 
 case "$LIB" in
   *.so|*.so.*)
-    nm_flags='--defined-only'
+    nm_flags='-D --defined-only'
     accept_versions=true
+    symbols='_Unwind_Backtrace _Unwind_GetIP'
+    ;;
+  *)
+    symbols='__unw_getcontext _Unwind_Backtrace _Unwind_GetIP'
     ;;
 esac
 
-for symbol in __unw_getcontext _Unwind_Backtrace _Unwind_GetIP; do
+for symbol in $symbols; do
   if [ "$accept_versions" = true ]; then
     symbol_pattern="[ 	]$symbol($|@)"
     grep_flags='-Eq'
