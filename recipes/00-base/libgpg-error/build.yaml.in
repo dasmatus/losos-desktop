@@ -28,11 +28,46 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+
+# CC_FOR_BUILD: the compiler for programs that run on the BUILD machine.
+#
+# Every configure in this tree is a cross build (--host, because everything
+# above losos-00-toolchain is musl and the host is glibc), and `cross_compiling
+# = yes` is what makes autoconf reach for a second compiler. Every upstream
+# spelling of that reach defaults to `gcc`, and the build container installs
+# clang, lld, llvm and compiler-rt and no gcc at all -- see the Containerfile.
+# So the default is a program that is not there.
+#
+# @CC@ is the right answer and the flags are deliberately absent. The musl
+# cross-ness of this tree lives entirely in CFLAGS, which is a clang response
+# file; @CC@ on its own is /usr/bin/clang, and clang with no flags produces a
+# glibc binary that runs on the build host, which is exactly what a build-time
+# helper is for. share/native.ini.in carries the same compiler and the same
+# deliberate absence of flags for the meson packages.
+#
+# libgpg-error is where the base layer found this, at member 22, and the error
+# named the wrong thing:
+#
+#     /bin/bash: line 2: gcc: command not found
+#     make[2]: *** [Makefile:1693: mkheader] Error 127
+#
+# which reads as a missing build dependency rather than as a cross-build
+# variable nobody set. mkheader is libgpg-error's own code generator: it is
+# compiled from src/mkheader.c and then RUN to produce gpg-error.h
+# (src/Makefile.am:274-276 and :310-313), so it has to be a build-machine
+# binary and cannot be the cross compiler's output.
+#
+# The reason this got as far as the compile step is worth knowing, because it
+# is the shape a probe fails in here. m4/ax_cc_for_build.m4 assigns
+# `CC_FOR_BUILD=gcc` without testing it, and the one place it does run the
+# compiler -- the EXEEXT_FOR_BUILD probe -- sends both streams to the log and
+# reads an empty result as "no suffix", which is the correct answer on Linux.
+# So configure printed nothing, succeeded, and wrote `gcc` into the Makefile.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libgpg-error /build/src/libgpg-error/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libgpg-error /build/src/libgpg-error/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ CC_FOR_BUILD=@CC@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile
