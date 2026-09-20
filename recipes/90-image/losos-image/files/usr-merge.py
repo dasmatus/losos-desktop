@@ -5,6 +5,7 @@ import argparse
 import os
 import shutil
 import sys
+from collections import deque
 from pathlib import Path
 
 LINKS = {
@@ -14,6 +15,9 @@ LINKS = {
     "lib32": "usr/lib32",
     "lib64": "usr/lib64",
 }
+# Match the symlink-resolution limit common kernels and libc implementations use,
+# so hostile chains terminate predictably without constraining legitimate trees.
+MAX_SYMLINK_HOPS = 40
 
 
 def fail(message):
@@ -36,31 +40,49 @@ def target_path(root, link):
 
 def resolve_source_path(root, relative):
     current = root
+    pending = deque(Path(relative).parts)
     seen = set()
+    hops = 0
 
-    for part in Path(relative).parts:
-        current = current / part
-        while current.is_symlink():
-            if current in seen:
-                return None
-            seen.add(current)
-            target = current.readlink()
-            if target.is_absolute():
-                current = target
-            else:
-                current = Path(os.path.normpath(str(current.parent / target)))
+    while pending:
+        part = pending.popleft()
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
             try:
                 current.relative_to(root)
             except ValueError:
                 return None
-        if not current.exists():
+            continue
+
+        current = current / part
+        while current.is_symlink():
+            state = (current, tuple(pending))
+            if state in seen or hops >= MAX_SYMLINK_HOPS:
+                return None
+            seen.add(state)
+            hops += 1
+            target = current.readlink()
+            if target.is_absolute():
+                current = root
+                pending.extendleft(reversed(Path(str(target).lstrip("/")).parts))
+            else:
+                current = current.parent
+                pending.extendleft(reversed(target.parts))
+
+        try:
+            current.relative_to(root)
+        except ValueError:
+            return None
+        if not current.exists() and not pending:
             return current
 
     return current
 
 
 def check_source_path(root, relative):
-    resolved = resolve_source_path(root.resolve(), relative)
+    resolved = resolve_source_path(root, relative)
     if resolved is None:
         return fail(f"/{relative} resolves outside the staged root")
     if not resolved.exists():

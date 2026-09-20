@@ -186,6 +186,49 @@ def test_usr_merge(work, failures):
         print("  usrmerge root compatibility paths now resolve through /usr")
 
 
+def test_usr_merge_accepts_absolute_os_release_target(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (root / "usr" / "lib" / "os-release.real").write_text("ID=losos-desktop\n")
+    (root / "usr" / "lib" / "os-release").symlink_to("/usr/lib/os-release.real")
+
+    subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=True, capture_output=True,
+    )
+
+    if not (root / "bin").is_symlink():
+        failures.append("usr-merge: valid absolute os-release target was rejected before rewriting compatibility paths")
+    elif (root / "etc" / "os-release").readlink() != Path("../usr/lib/os-release"):
+        failures.append("usr-merge: valid absolute os-release target did not preserve the /etc/os-release compatibility link")
+    elif not failures:
+        print("  usrmerge accepts in-root absolute os-release symlink targets")
+
+
+def test_usr_merge_accepts_revisited_symlink_with_new_suffix(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "usr" / "share").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (root / "usr" / "share" / "final").write_text("ID=losos-desktop\n")
+    (root / "usr" / "lib" / "x").symlink_to("../share")
+    (root / "usr" / "share" / "again").symlink_to("../lib/x/final")
+    (root / "usr" / "lib" / "os-release").symlink_to("x/again")
+
+    subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=True, capture_output=True,
+    )
+
+    if not (root / "bin").is_symlink():
+        failures.append("usr-merge: valid re-entry through a revisited symlink was rejected before rewriting compatibility paths")
+    elif not failures:
+        print("  usrmerge accepts revisiting a symlink when the remaining target path changes")
+
+
 def test_usr_merge_rejects_escape(work, failures):
     root = work / "root"
     root.mkdir()
@@ -303,13 +346,97 @@ def test_usr_merge_rejects_outside_os_release(work, failures):
     )
     if result.returncode == 0:
         failures.append("usr-merge: accepted /usr/lib/os-release outside the staged root")
-    elif "resolves outside the staged root" not in result.stderr:
+    elif (
+        "/usr/lib/os-release is missing" not in result.stderr and
+        "resolves outside the staged root" not in result.stderr
+    ):
         failures.append("usr-merge: outside os-release did not explain the invalid source path")
     elif (root / "bin").is_symlink():
         failures.append("usr-merge: outside os-release should fail before rewriting compatibility paths")
     elif not failures:
         print("  usrmerge rejects /usr/lib/os-release paths that escape the staged root")
- 
+
+
+def test_usr_merge_rejects_intermediate_symlink_escape(work, failures):
+    root = work / "root"
+    outside = work / "outside"
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (outside / "lib").mkdir(parents=True)
+    (outside / "lib" / "os-release").write_text("ID=host\n")
+    (root / "usr" / "lib" / "escape").symlink_to(outside / "lib")
+    (root / "usr" / "lib" / "os-release").symlink_to("escape/os-release")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append(
+            "usr-merge: accepted /usr/lib/os-release through an intermediate symlink escape"
+        )
+    elif (
+        "/usr/lib/os-release is missing" not in result.stderr and
+        "resolves outside the staged root" not in result.stderr
+    ):
+        failures.append("usr-merge: intermediate symlink escape did not explain the invalid source path")
+    elif (root / "bin").is_symlink():
+        failures.append(
+            "usr-merge: intermediate symlink escape should fail before rewriting compatibility paths"
+        )
+    elif not failures:
+        print("  usrmerge rejects /usr/lib/os-release with intermediate symlink escapes")
+
+
+def test_usr_merge_rejects_escape_and_return(work, failures):
+    root = work / "root"
+    outside = work / "outside"
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (outside / "lib").mkdir(parents=True)
+    (root / "usr" / "lib" / "real").write_text("ID=losos-desktop\n")
+    (outside / "lib" / "os-release").symlink_to("../../root/usr/lib/real")
+    (root / "usr" / "lib" / "escape").symlink_to("../../../outside/lib")
+    (root / "usr" / "lib" / "os-release").symlink_to("escape/os-release")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted an os-release path that escapes the root and returns through the host")
+    elif (
+        "/usr/lib/os-release is missing" not in result.stderr and
+        "resolves outside the staged root" not in result.stderr
+    ):
+        failures.append("usr-merge: escape-and-return path did not explain the invalid source path")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: escape-and-return path should fail before rewriting compatibility paths")
+    elif not failures:
+        print("  usrmerge rejects os-release paths that escape the root and return through the host")
+
+
+def test_usr_merge_rejects_os_release_loop(work, failures):
+    root = work / "root"
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (root / "usr" / "lib" / "os-release").symlink_to("loop-a")
+    (root / "usr" / "lib" / "loop-a").symlink_to("loop-b")
+    (root / "usr" / "lib" / "loop-b").symlink_to("loop-a")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted a looping os-release symlink chain")
+    elif "resolves outside the staged root" not in result.stderr:
+        failures.append("usr-merge: looping os-release chain did not explain the invalid source path")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: looping os-release chain should fail before rewriting compatibility paths")
+    elif not failures:
+        print("  usrmerge rejects looping os-release symlink chains before rewriting")
+
 
 def test_usr_merge_preflights_before_rewriting(work, failures):
     root = work / "root"
@@ -608,6 +735,12 @@ def main():
         usr_work = work / "usr-merge"
         usr_work.mkdir()
         test_usr_merge(usr_work, failures)
+        usr_absolute_source = work / "usr-merge-absolute-source"
+        usr_absolute_source.mkdir()
+        test_usr_merge_accepts_absolute_os_release_target(usr_absolute_source, failures)
+        usr_revisited = work / "usr-merge-revisited"
+        usr_revisited.mkdir()
+        test_usr_merge_accepts_revisited_symlink_with_new_suffix(usr_revisited, failures)
         usr_escape = work / "usr-merge-escape"
         usr_escape.mkdir()
         test_usr_merge_rejects_escape(usr_escape, failures)
@@ -626,6 +759,15 @@ def main():
         usr_outside = work / "usr-merge-outside"
         usr_outside.mkdir()
         test_usr_merge_rejects_outside_os_release(usr_outside, failures)
+        usr_intermediate = work / "usr-merge-intermediate"
+        usr_intermediate.mkdir()
+        test_usr_merge_rejects_intermediate_symlink_escape(usr_intermediate, failures)
+        usr_escape_return = work / "usr-merge-escape-return"
+        usr_escape_return.mkdir()
+        test_usr_merge_rejects_escape_and_return(usr_escape_return, failures)
+        usr_loop = work / "usr-merge-loop"
+        usr_loop.mkdir()
+        test_usr_merge_rejects_os_release_loop(usr_loop, failures)
         usr_unresolved = work / "usr-merge-unresolved"
         usr_unresolved.mkdir()
         test_usr_merge_rejects_unresolved_escape(usr_unresolved, failures)
