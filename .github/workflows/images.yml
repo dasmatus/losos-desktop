@@ -183,11 +183,10 @@ jobs:
         run: just toolchain-report -- --verify-cfi
 
   # The same gate, in the build host this repository describes rather than in
-  # whatever the runner image happens to have installed. It is slower -- the
-  # image is built from scratch on every run until it is published to a
-  # registry -- and it is the only job that can fail when the Containerfile is
-  # wrong, which the job above cannot, because that one installs its own
-  # dependencies directly with pacman.
+  # whatever the runner image happens to have installed. This deliberately
+  # rebuilds the Containerfile even though consumers pull the published host:
+  # otherwise a pull request changing it would only test yesterday's image.
+  # The job above cannot catch that because it installs packages directly.
   #
   # `just container` passes the seccomp and AppArmor options pm's user
   # namespace needs; GitHub's runners allow both.
