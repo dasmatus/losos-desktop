@@ -203,7 +203,10 @@ def test_usr_merge_rejects_symlinked_target_escape(work, failures):
         failures.append(
             "usr-merge: accepted a compatibility symlink through a symlinked /usr escape"
         )
-    elif "not usr/bin" not in result.stderr:
+    elif (
+        "not usr/bin" not in result.stderr and
+        "resolves outside the staged root" not in result.stderr
+    ):
         failures.append("usr-merge: symlinked target escape did not explain the invalid target")
     elif not failures:
         print("  usrmerge rejects compatibility symlinks whose target resolves outside the root")

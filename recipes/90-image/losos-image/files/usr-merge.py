@@ -34,20 +34,35 @@ def target_path(root, link):
     return candidate
 
 
-def check_source_path(root, relative):
-    path = root / relative
-    try:
-        resolved = path.resolve(strict=False)
-        if ".." in resolved.parts:
-            raise ValueError
-        resolved.relative_to(root.resolve())
-    except ValueError:
-        return fail(f"/{relative} resolves outside the staged root")
+def resolve_source_path(root, relative):
+    current = root
+    seen = set()
 
-    try:
-        path.lstat()
-    except FileNotFoundError:
-        return fail(f"/{relative} is missing")
+    for part in Path(relative).parts:
+        current = current / part
+        while current.is_symlink():
+            if current in seen:
+                return None
+            seen.add(current)
+            target = current.readlink()
+            if target.is_absolute():
+                current = target
+            else:
+                current = Path(os.path.normpath(str(current.parent / target)))
+            try:
+                current.relative_to(root)
+            except ValueError:
+                return None
+        if not current.exists():
+            return current
+
+    return current
+
+
+def check_source_path(root, relative):
+    resolved = resolve_source_path(root.resolve(), relative)
+    if resolved is None:
+        return fail(f"/{relative} resolves outside the staged root")
     if not resolved.exists():
         return fail(f"/{relative} is missing")
     return 0
