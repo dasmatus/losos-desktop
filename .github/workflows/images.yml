@@ -24,6 +24,24 @@ on:
 permissions:
   contents: read
 
+# One run per pull request branch, and only a pull request's run is cancelled.
+#
+# Every job here compiles the base layer from source, so an out-of-date run is
+# not a wasted minute but a wasted pair of build runners for as long as it
+# takes to reach the package that is actually being worked on. Pushing four
+# fixes in ten minutes -- which is what driving a broken layer forward looks
+# like -- left four pairs of runners compiling four versions of the same tree,
+# three of them for answers nobody would read.
+#
+# cancel-in-progress is an expression rather than `true` because the runs that
+# must never be cancelled are exactly the ones that publish: a workflow_dispatch
+# release build, a tag, a push to main, the nightly schedule. Those are in the
+# group too, so a later run of one of them queues behind rather than killing
+# what is already uploading.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # The pm commit every job here builds and runs, spelled once, the way
   # update-sources.yml already spells it.

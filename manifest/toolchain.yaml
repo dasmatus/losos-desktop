@@ -344,7 +344,7 @@ exceptions:
       The narrow `visibility` drop libcap uses is therefore not available
       here: it keeps the schemes, and the schemes need the LTO this package
       cannot have.
-  # The rest of losos-10-base, in member order. Six packages, one fault, and
+  # The rest of losos-10-base, in member order. Seven packages, one fault, and
   # one piece of evidence behind all of them: none declares a single
   # `visibility("default")` anywhere in its tree -- not in its sources, not in
   # its generated `configure`, under either spelling of the attribute -- so
@@ -357,10 +357,12 @@ exceptions:
   # node can claim it, so a `global:` list has nothing left to promote. Proved
   # on libfido2, which names 267 symbols in src/export.gnu and exported none.
   #
-  # Said plainly, because it is the weaker part of this entry: these six are
-  # not individually build-measured the way libcap and libxcrypt were. Nothing
-  # in this tree has built them yet. What is measured is the mechanism, on the
-  # same clang, and the absence of any annotation for it to spare. Each carries
+  # Said plainly, because it is the weaker part of this entry: six of the seven
+  # are not individually build-measured the way libcap and libxcrypt were.
+  # Nothing in this tree has built them yet. What is measured is the mechanism,
+  # on the same clang, and the absence of any annotation for it to spare.
+  # libunistring is the exception and is first below: the build reached it and
+  # it failed, which is what the rest of this paragraph is predicting. Each carries
   # a check-exports line naming symbols out of its own version script or
   # headers, so if one of them is somehow fine the exception costs it only
   # interposition protection, and if it is not the build says so at the package
@@ -369,6 +371,41 @@ exceptions:
   # `visibility` and not `cfi` throughout: at -fvisibility=default clang keeps
   # every scheme and cross-DSO, so none of these gives up indirect-call
   # checking. See libcap above for the measurement.
+  - package: libunistring
+    drops: [visibility]
+    why: >
+      The one in this group the build actually reached. losos-10-base stopped
+      here on both architectures with
+
+          mold: error: undefined symbol: setlocale_null
+          mold: error: undefined symbol: locale_charset
+
+      linking `test-localcharset`, which is a `noinst_PROGRAMS` target and so
+      is built by `make all` rather than only by `make check`. Both symbols
+      are defined in lib/ -- localcharset.c and setlocale_null.c -- and both
+      are in the library's own list of exports, so this is not a test reaching
+      for something private. It is the library exporting nothing.
+
+      The API is bare. `extern ucs4_t uc_toupper (ucs4_t uc) _UC_ATTRIBUTE_CONST;`
+      is the shape throughout, and _UC_ATTRIBUTE_CONST is
+      `__attribute__((__const__))` in lib/unitypes.in.h -- a purity attribute
+      that looks like a hook and is not one, exactly as PAM_NONNULL does for
+      linux-pam below.
+
+      What makes this entry unusually well evidenced is that upstream says the
+      quiet part in lib/Makefile.am. It generates libunistring.sym, 627
+      symbols extracted from the installed headers, in the format libtool's
+      -export-symbols wants -- and then declines to pass it: "we don't use
+      this option, because it would prevent us from building some of the
+      gnulib unit tests." Upstream refused to narrow its export set for that
+      reason. The layer's -fvisibility=hidden narrows it to nothing, and the
+      gnulib unit tests are precisely what stopped.
+
+      Read in 1.1 and 1.3 rather than in the pinned 1.2: ftp.gnu.org is not
+      reachable from where this was diagnosed and the Ubuntu archive carries
+      those two. The Makefile.am comment, the bare declarations and the
+      unused gl_VISIBILITY are in both neighbours, so 1.2 is bracketed rather
+      than read.
   - package: openssl
     drops: [visibility]
     why: >
@@ -416,8 +453,11 @@ exceptions:
       Bare declarations and libp11-kit.map. It is also the reason meson
       exemptions had to work at all: p11-kit is a meson build, it has no
       CFLAGS= argument to name a response file on, and so it names
-      @NATIVE_INI_P11_KIT@ instead. gnutls links it directly, which is where
-      an empty one would have surfaced.
+      @CROSS_INI_P11_KIT@ instead. The *cross* file and not the native one,
+      because share/native.ini.in carries no flags at all -- it describes the
+      build machine, whose compiler must stay at the host's defaults -- so a
+      per-package copy of it would have nothing in it to drop. gnutls links
+      p11-kit directly, which is where an empty one would have surfaced.
   - package: libpwquality
     drops: [visibility]
     why: >
@@ -498,7 +538,7 @@ exceptions:
       empty libharfbuzz would surface three packages later as a text-shaping
       failure with no obvious cause.
 
-      A meson build, so it names @NATIVE_INI_HARFBUZZ@ rather than a response
+      A meson build, so it names @CROSS_INI_HARFBUZZ@ rather than a response
       file -- see p11-kit for why that is the only way.
   - package: libpng
     drops: [visibility]
