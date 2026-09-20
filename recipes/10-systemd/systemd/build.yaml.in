@@ -14,6 +14,33 @@
 # through the layer's cross.ini, because pm resolves a step's first word on the
 # host and these live only in the jail (C3).
 #
+# systemd is NOT in the hidden-visibility class, and this is the record so the
+# next reader does not re-derive it. That class has stopped this tree's base
+# layer repeatedly -- libcap, libfido2, libqrencode, libunistring -- because the
+# layer's blanket -fvisibility=hidden leaves a package that never annotates its
+# exports with an empty dynamic symbol table. Checked at the pinned tag, v261:
+#
+#   - meson.build:504 puts '-fvisibility=hidden' in systemd's own
+#     possible_cc_flags. Upstream already compiles this way, so it has had to
+#     annotate, and the layer's flag tells it nothing new.
+#   - The annotation is _public_, defined at src/fundamental/macro.h:90 as
+#     __attribute__((__visibility__("default"))).
+#   - The two installed shared libraries do not even rely on it: libsystemd and
+#     libudev set '-fvisibility=default' per target
+#     (src/libsystemd/meson.build:154, src/libudev/meson.build:34), and meson
+#     emits a target's c_args after the project's, so for clang the last
+#     -fvisibility on the line wins.
+#   - The dlopened modules are the case that looks unsafe and is not. Neither
+#     nss_template nor pam_template (meson.build:1942, 1958) raises visibility;
+#     each module carries only a version script. A version script cannot rescue
+#     a hidden symbol -- that is what libfido2 proved, 267 names in a script and
+#     none exported -- but pam_sm_open_session and _nss_systemd_block are marked
+#     _public_ at the definition, so the script has something left to promote.
+#
+# linux and nvidia-open, the layer's other two members, never receive the flag
+# at all: neither recipe names @CFLAGS_RSP@, because a kernel build carries its
+# own KBUILD flags. So the whole of losos-20-systemd is clear of the class.
+#
 # Tombstone: this recipe used to carry a files/systemd/native.ini.in of its
 # own, and it is not coming back. It named the same helpers but its own flags,
 # `['-I/build/sysroot/usr/include', '-O2']` -- no --target, no --sysroot, no
