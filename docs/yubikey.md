@@ -6,15 +6,23 @@ why "unlock the system" is two different questions with two different answers.
 Read `docs/systemd-inventory.md` for the components named here and
 `docs/limits.md` for the ones that are absent.
 
-## The software was already here; the kernel was not
+## Two things were missing, one above the kernel and one below
 
-`libcbor` and `libfido2` are pinned in `losos-10-base`, and systemd is built
+`libcbor` and `libfido2` are pinned, and systemd is built
 `-Dlibfido2=enabled`, which is what gives `systemd-cryptenroll`,
 `systemd-cryptsetup` and `systemd-homed` their FIDO2 support. `fido_id` and
-`60-fido-id.rules` come out of the same build. Nothing about the userspace
-needed adding.
+`60-fido-id.rules` come out of the same build. No package needed adding.
 
-What was missing sat one layer down. libfido2 talks to a token through
+libfido2 did, however, need *moving*, and until it was moved it could not be
+built at all. It hard-requires libudev on Linux and the only libudev here
+comes from systemd, which sits above it -- so it now builds in
+`losos-20-systemd` after systemd, with a compiles-nothing `libfido2-headers`
+left in the base layer to satisfy systemd's own configure. That works because
+systemd never links libfido2; see the last section on this page.
+`recipes/00-base/libfido2-headers` has the full argument and the four
+alternatives that were rejected.
+
+The other missing piece sat one layer down. libfido2 talks to a token through
 `/dev/hidraw` and through nothing else, and `CONFIG_HIDRAW` defaults to `n`.
 `x86_64_defconfig` happens to set it; arm64's `defconfig` sets neither it nor
 `CONFIG_USB_HID`. So the feature worked on one of the two architectures this
@@ -146,8 +154,19 @@ machine, which is the reason not to.
 
 `manifest/toolchain.yaml` carries a `drops: [visibility]` exception for
 libfido2 and for libqrencode. Without it neither library exports a single
-symbol, and this page is undone: systemd is built `-Dlibfido2=enabled`, and it
-would link against an empty dynamic table.
+symbol, and this page is undone.
+
+**And nothing would tell you.** systemd does not link either library. It
+dlopens them -- `"libfido2.so.1"` with 48 symbols resolved by dlsym at
+`src/shared/libfido2-util.c:93`, `"libqrencode.so.4"` with two at
+`qrcode-util.c:40` -- so an empty one fails no link anywhere in this tree.
+systemd compiles, the image builds, the ISO ships, and the first symptom is a
+token that is never found or a home area that will not unlock. The
+`check-exports.sh` line in each recipe's Test step is the only thing standing
+between the layer's `-fvisibility=hidden` and that, which is why libfido2's
+names `fido_assert_set_hmac_salt` and `fido_assert_hmac_secret_ptr` -- the
+hmac-secret extension, which is what actually performs an unlock -- and not
+just the calls that enumerate a token.
 
 libfido2 looks like it should not need this, which is the interesting part. It
 ships a linker version script, `src/export.gnu`, naming 267 symbols -- exactly
