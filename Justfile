@@ -110,6 +110,11 @@ lint:
   python3 "{{repo}}/tools/gates/cross-configure.py"
   python3 "{{repo}}/tools/gates/exceptions-live.py"
   python3 "{{repo}}/tools/gates/versions.py" --self-test
+  # The gate itself needs the mirrored tarballs and so runs from `just build`.
+  # Its reader runs here, against recipes and archives made for the purpose,
+  # because a gate ./do check never exercises is one a refactor can quietly
+  # turn into a gate that agrees with everything.
+  python3 "{{repo}}/tools/gates/recipe-entrypoints.py" --self-test
   python3 "{{repo}}/tools/check-latest" --self-test >/dev/null
   "{{repo}}/tools/gates/explain-all"
 
@@ -239,6 +244,13 @@ build target="":
   fi
   just --justfile "{{repo}}/Justfile" --working-directory "{{repo}}" configure -- "${configure_args[@]+"${configure_args[@]}"}"
   python3 "{{repo}}/tools/gates/chain-pinned.py" "$target" || exit 1
+  # The one gate that needs the bytes, so it cannot be in `just check`: it asks
+  # whether each recipe's build system is actually in the tarball it pins. Here
+  # because the mirror is up by now and pm has not started; it costs seconds and
+  # it is the difference between reading every such mistake at once and finding
+  # them one hour-long build at a time. A source not mirrored is skipped and
+  # counted, so a partial mirror weakens the report without failing it.
+  python3 "{{repo}}/tools/gates/recipe-entrypoints.py" || exit 1
 
   if [ -z "${LOSOS_SKIP_IMAGE_HOST_FALLBACK:-}" ] && recipe_needs_image_host "$target" && ! image_build_prereqs_ready; then
     build_in_container "$target"
