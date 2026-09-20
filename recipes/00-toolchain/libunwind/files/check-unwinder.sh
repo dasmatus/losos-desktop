@@ -42,19 +42,25 @@ set -eu
 NM="${1:?usage: check-unwinder.sh <nm> <library>}"
 LIB="${2:?usage: check-unwinder.sh <nm> <library>}"
 
+nm_flags='--defined-only'
+accept_versions=false
+
 case "$LIB" in
   *.so|*.so.*)
-    nm_flags='-D --defined-only'
-    symbols='_Unwind_Backtrace _Unwind_GetIP'
-    ;;
-  *)
     nm_flags='--defined-only'
-    symbols='__unw_getcontext _Unwind_Backtrace _Unwind_GetIP'
+    accept_versions=true
     ;;
 esac
 
-for symbol in $symbols; do
-  if ! "$NM" $nm_flags "$LIB" | grep -q "[ 	]$symbol\$"; then
+for symbol in __unw_getcontext _Unwind_Backtrace _Unwind_GetIP; do
+  if [ "$accept_versions" = true ]; then
+    symbol_pattern="[ 	]$symbol($|@)"
+    grep_flags='-Eq'
+  else
+    symbol_pattern="[ 	]$symbol\$"
+    grep_flags='-q'
+  fi
+  if ! "$NM" $nm_flags "$LIB" | grep $grep_flags "$symbol_pattern"; then
     # stderr, not stdout. pm reports a failed step's stderr and discards its
     # stdout, so these three lines on stdout reached nobody: the CI summary
     # for this exact failure read `stderr: <no output>` and named only the
