@@ -43,7 +43,6 @@ def resolve_source_path(root, relative):
     pending = deque(Path(relative).parts)
     seen = set()
     hops = 0
-    followed_symlink = False
 
     while pending:
         part = pending.popleft()
@@ -64,7 +63,6 @@ def resolve_source_path(root, relative):
                 return None
             seen.add(state)
             hops += 1
-            followed_symlink = True
             target = current.readlink()
             if target.is_absolute():
                 current = root
@@ -78,8 +76,6 @@ def resolve_source_path(root, relative):
         except ValueError:
             return None
         if not current.exists() and not pending:
-            if followed_symlink:
-                return None
             return current
 
     return current
@@ -92,6 +88,8 @@ def check_source_path(root, relative):
     resolved = resolve_source_path(root, relative)
     if resolved is None:
         return fail(f"/{relative} resolves outside the staged root")
+    if not resolved.exists():
+        return fail(f"/{relative} is missing")
     return 0
 
 
