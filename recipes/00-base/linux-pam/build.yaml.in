@@ -29,6 +29,21 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+# --disable-doc is load-bearing beyond the documentation, and the reason is
+# not local to this recipe. linux-pam is the third spelling in this tree of
+# the build-machine-compiler problem that libgpg-error and nettle carry:
+# configure.ac:85-94 reaches for one when cross-compiling, and it reaches with
+# AC_CHECK_PROGS(CC_FOR_BUILD, gcc cc). The build container has neither, and
+# AC_CHECK_PROGS with no fallback leaves the variable EMPTY and does not fail
+# -- configure prints "checking for CC_FOR_BUILD... " with nothing after it
+# and carries on. The one place that spends it is doc/specs/Makefile.am:14,
+# `CC = @CC_FOR_BUILD@`, which would make CC itself empty for that directory.
+#
+# --disable-doc clears HAVE_DOC (configure.ac:222-225), which drops doc from
+# SUBDIRS (Makefile.am:10-12), so doc/specs is never entered and the empty
+# variable is never spent. Dropping the flag to get man pages would therefore
+# turn on a failure that has nothing to do with documentation; add
+# CC_FOR_BUILD=@CC@ at the same time, the way the other two recipes do.
 - stage: Build
   name: configure
   dl_urls: null

@@ -29,11 +29,34 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+
+# CC_FOR_BUILD: the compiler for programs that run on the BUILD machine.
+#
+# Every configure in this tree is a cross build (--host, because everything
+# above losos-00-toolchain is musl and the host is glibc), and `cross_compiling
+# = yes` is what makes autoconf reach for a second compiler. Every upstream
+# spelling of that reach defaults to `gcc`, and the build container installs
+# clang, lld, llvm and compiler-rt and no gcc at all -- see the Containerfile.
+# So the default is a program that is not there.
+#
+# @CC@ is the right answer and the flags are deliberately absent. The musl
+# cross-ness of this tree lives entirely in CFLAGS, which is a clang response
+# file; @CC@ on its own is /usr/bin/clang, and clang with no flags produces a
+# glibc binary that runs on the build host, which is exactly what a build-time
+# helper is for. share/native.ini.in carries the same compiler and the same
+# deliberate absence of flags for the meson packages.
+#
+# libgcrypt is here defensively rather than because it is broken today. It
+# calls the same AX_CC_FOR_BUILD as libgpg-error (configure.ac:195) and so
+# carries the same untested `gcc`, but the only rule that spends it is
+# tests/Makefile.am:101's testdrv-build, a check_PROGRAMS target `make all`
+# never reaches. That is one `make check` away from being a real failure, and
+# leaving one of the three unfixed is how a class comes back.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libgcrypt /build/src/libgcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libgcrypt /build/src/libgcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ CC_FOR_BUILD=@CC@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile
