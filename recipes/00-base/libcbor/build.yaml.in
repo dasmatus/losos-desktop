@@ -38,11 +38,37 @@ steps:
 # src/CMakeLists.txt runs generate_export_header(cbor), so every public symbol
 # carries an explicit visibility("default") and the examples link against the
 # same shared library the sysroot gets.
+#
+# CMAKE_POLICY_DEFAULT_CMP0056=NEW is a second, unrelated problem with the same
+# `project()` call, and it is the C compiler test rather than the C++ one.
+# CMP0056 is "try_compile() honours CMAKE_EXE_LINKER_FLAGS", added in CMake
+# 3.2, and a project gets the OLD behaviour when its own
+# cmake_minimum_required is older -- libcbor's CMakeLists.txt:1 asks for 3.0.
+# So the sanity check drops the LDFLAGS response file, which is the only place
+# --rtlib=compiler-rt, --unwindlib=libunwind and -fuse-ld=mold are written, and
+# links with clang's defaults against a sysroot that has neither the GCC
+# runtime nor its crt objects. libqrencode failed exactly that way at member 21
+# and the error named the wrong thing entirely:
+#
+#     -- Check for working C compiler: /usr/bin/clang - broken
+#     /usr/bin/ld: cannot find crtbeginS.o: No such file or directory
+#     /usr/bin/ld: cannot find -lgcc: No such file or directory
+#
+# libcbor is member 28 and is the only other package in this tree that declares
+# a minimum below 3.2 -- swept at the pinned versions rather than waiting for
+# the build to arrive: zstd and lz4 ask for 3.5, libfido2 for 3.7, and zlib
+# (2.4.4...3.15.0), json-c (3.9...3.12) and libjpeg-turbo (2.8.12...3.28) use
+# the <min>...<max> form, which sets every policy up to <max> to NEW. So this
+# is the last of them, not the second of many.
+#
+# The CXX skip above is NOT what fixes this and would not have: it suppresses a
+# test rather than correcting the flags one is run with, and the C test has no
+# equivalent here because the C compiler genuinely has to work.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
+  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile

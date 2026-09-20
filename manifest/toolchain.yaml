@@ -387,7 +387,7 @@ exceptions:
       The narrow `visibility` drop libcap uses is therefore not available
       here: it keeps the schemes, and the schemes need the LTO this package
       cannot have.
-  # The rest of losos-10-base, in member order. Nine packages, one fault, and
+  # The rest of losos-10-base, in member order. Eleven packages, one fault, and
   # one piece of evidence behind all of them: none declares a single
   # `visibility("default")` anywhere in its tree -- not in its sources, not in
   # its generated `configure`, under either spelling of the attribute -- so
@@ -395,7 +395,7 @@ exceptions:
   # dynamic symbol table. Checked against the hash-pinned tarball in
   # manifest/sources.lock, not against whatever upstream ships today.
   #
-  # Six of the nine pass a linker version script, and openssl's util/*.num
+  # Seven of the eleven pass a linker version script, and openssl's util/*.num
   # files are the same machinery under another name -- which is the trap
   # rather than the reassurance: the linker makes a hidden symbol local before
   # a version node can claim it, so a `global:` list has nothing left to
@@ -403,11 +403,13 @@ exceptions:
   # exported none.
   #
   # Said plainly, because it is the weaker part of this entry: eight of the
-  # nine are not individually build-measured the way libcap and libxcrypt were.
-  # Nothing in this tree has built them yet. What is measured is the mechanism,
-  # on the same clang, and the absence of any annotation for it to spare.
-  # libunistring is the exception and is first below: the build reached it and
-  # it failed, which is what the rest of this paragraph is predicting. Each carries
+  # eleven are not individually build-measured the way libcap and libxcrypt
+  # were. Nothing in this tree has built them yet. What is measured is the
+  # mechanism, on the same clang, and the absence of any annotation for it to
+  # spare. Three are exceptions: libqrencode and libfido2 were each built both
+  # ways and their entries carry the counts, and libunistring is first below
+  # because the build reached it and it failed, which is what the rest of this
+  # paragraph is predicting. Each carries
   # a check-exports line naming symbols out of its own version script or
   # headers, so if one of them is somehow fine the exception costs it only
   # interposition protection, and if it is not the build says so at the package
@@ -595,6 +597,50 @@ exceptions:
       Bare declarations, libpwquality.map, nothing else. The smallest of the
       group and the same shape as the rest; systemd-homed asks it whether a
       password is acceptable.
+  - package: libqrencode
+    drops: [visibility]
+    why: >
+      libqrencode annotates no export and ships no version script -- the only
+      `visibility` anywhere in its tarball is libtool's own probe in configure
+      and aclocal.m4, which defines nothing for the package. It has relied on
+      default visibility since before the attribute existed.
+
+      Measured on 4.1.1, the pinned release, built both ways: without hidden
+      visibility libqrencode.so defines 75 dynamic functions and exports
+      QRcode_encodeString; with it, zero and none. systemd is the consumer
+      (-Dqrencode=enabled, for the recovery-key QR that systemd-cryptenroll
+      prints) and would find nothing to link against.
+
+      The narrow drop rather than `cfi`, so the schemes stay.
+  - package: libfido2
+    drops: [visibility]
+    why: >
+      The same exemption, and worth its own entry because libfido2 looks like
+      it should not need one. It *does* ship a linker version script,
+      src/export.gnu, naming 267 symbols -- and that is exactly the trap: a
+      version script cannot re-export a symbol the compiler already marked
+      hidden. -fvisibility=hidden writes STV_HIDDEN into the object and
+      `global:` has nothing left to promote. There is not one visibility
+      attribute anywhere in its sources to make up for it, checked against the
+      pinned tarball rather than the public header alone.
+
+      Measured on 1.15.0, from bytes whose SHA-256 matches sources.lock:
+      267 dynamic functions defined at default visibility, 0 at hidden, with
+      fido_dev_open present in the first and absent in the second. A
+      libfido2.so that exports nothing is the feature gone -- systemd is built
+      -Dlibfido2=enabled for systemd-cryptenroll and homed.
+
+      `visibility` and not `cfi`, deliberately and with feeling: of everything
+      in this tree libfido2 is the last library to unharden, because its input
+      is CBOR arriving from a device the user just plugged in. What is given
+      up here is only the guarantee that no exported symbol is interposed at
+      load time; every scheme still checks. docs/yubikey.md carries the
+      reasoning and the measurement.
+
+      Not measured: this package under CFI and ThinLTO together, which no
+      build has reached yet. Its version script is a linker script rather than
+      libxcrypt's inline-asm .symver directives, so it has no reason to fail
+      the way that one does -- but that is an argument, not a result.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.
