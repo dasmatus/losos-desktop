@@ -262,8 +262,8 @@ class SwapWiringTests(unittest.TestCase):
         self.assertIn("- losos-swap", core.split("members:\n", 1)[1].splitlines())
         justfile = (REPO / "Justfile").read_text()
         lint = re.search(r"(?ms)^lint:\n(.*?)(?=^\S|\Z)", justfile)
-        self.assertIsNotNone(lint)
-        assert lint is not None
+        if lint is None:
+            self.fail("Justfile lint recipe block was not found")
         self.assertIn('python3 "{{repo}}/tools/gates/test-swap.py"',
                       [line.strip() for line in lint.group(1).splitlines()])
 

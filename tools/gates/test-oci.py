@@ -154,7 +154,8 @@ class OCITransportTests(unittest.TestCase):
                     second = archive.extractfile(members[1])
                     if second is None:
                         self.fail("tar member unexpectedly has no readable payload")
-                    self.assertEqual(second.read(), self.signature_payload)
+                    with second:
+                        self.assertEqual(second.read(), self.signature_payload)
                 self.pull(ref, arch)
                 self.assertEqual((self.output / self.archive.name).read_bytes(), self.payload)
                 self.assertEqual((self.output / self.signature.name).read_bytes(), self.signature_payload)
