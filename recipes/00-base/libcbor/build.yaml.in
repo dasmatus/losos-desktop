@@ -42,7 +42,24 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
+# CMAKE_POLICY_DEFAULT_CMP0056=NEW, for the reason written out at length in
+# recipes/00-base/libqrencode: CMP0056 is "try_compile() honours
+# CMAKE_EXE_LINKER_FLAGS", added in CMake 3.2, and a project whose own
+# cmake_minimum_required is older gets the OLD behaviour, so every try_compile
+# -- CMakeTestCCompiler included, which runs before anything else -- silently
+# drops the linker flags passed just above. libcbor's CMakeLists.txt:1 asks for
+# 3.0 and its only cmake_policy call is CMP0069 at :157, read across the whole
+# 185-line file at the v0.11.0 tag. Without this the failure is
+# `clang - broken` and a missing crtbeginS.o, which reads as a broken toolchain
+# and is a probe that was never given --rtlib=compiler-rt.
+#
+# libqrencode (member 21) and libcbor (28) are the only two cmake packages in
+# this tree that need it, and that is checked rather than assumed: zstd and lz4
+# ask 3.5 and libfido2 3.7, while zlib, json-c and libjpeg-turbo use the
+# `<min>...<max>` form, which sets every policy up to <max> to NEW. Left
+# per-recipe rather than defaulted tree-wide so that the two packages carrying
+# an old declaration are the two that say so.
+  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile
