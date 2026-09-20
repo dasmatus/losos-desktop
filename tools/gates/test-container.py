@@ -108,10 +108,13 @@ class ContainerTests(unittest.TestCase):
                     call.assert_called_once_with(["docker", "pull", container.IMAGE])
 
     def test_fallback_does_not_build_host(self):
+        import re
         justfile = (REPO / "Justfile").read_text()
-        fallback = justfile.split("  build_in_container() {", 1)[1].split("\n  }", 1)[0]
-        self.assertNotIn('tools/container" build', fallback)
-        self.assertIn('tools/container" run', fallback)
+        match = re.search(r"(?ms)^[ \t]*build_in_container\(\) \{\n(.*?)^[ \t]*\}[ \t]*$", justfile)
+        self.assertIsNotNone(match, "build_in_container() not found in Justfile")
+        fallback = match.group(1)
+        self.assertNotRegex(fallback, r"\btools/container\"\s+build\b")
+        self.assertRegex(fallback, r"\btools/container\"\s+run\b")
 
 
 class PublicationTests(unittest.TestCase):
