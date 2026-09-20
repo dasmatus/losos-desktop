@@ -40,7 +40,7 @@ steps:
 # @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
 # read by nothing. Without it libtss2-esys installs empty and every TPM2
 # feature above this layer is the first thing to say so.
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_TPM2_TSS@ LDFLAGS=@LDFLAGS_RSP_TPM2_TSS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --disable-doxygen-doc
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_TPM2_TSS@ LDFLAGS=@LDFLAGS_RSP_TPM2_TSS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doxygen-doc
 
 - stage: Build
   name: compile

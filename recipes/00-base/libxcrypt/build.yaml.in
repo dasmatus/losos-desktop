@@ -39,7 +39,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libxcrypt /build/src/libxcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LIBXCRYPT@ LDFLAGS=@LDFLAGS_RSP_LIBXCRYPT@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --enable-obsolete-api=no
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libxcrypt /build/src/libxcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LIBXCRYPT@ LDFLAGS=@LDFLAGS_RSP_LIBXCRYPT@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --enable-obsolete-api=no
 
 - stage: Build
   name: compile

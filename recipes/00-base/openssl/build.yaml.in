@@ -40,7 +40,7 @@ steps:
 # @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
 # read by nothing. Without it libcrypto and libssl install with empty dynamic
 # symbol tables and curl is the first thing to say so.
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_OPENSSL@ LDFLAGS=@LDFLAGS_RSP_OPENSSL@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_OPENSSL@ LDFLAGS=@LDFLAGS_RSP_OPENSSL@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig
 
 - stage: Build
   name: compile

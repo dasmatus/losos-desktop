@@ -31,7 +31,26 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --with-xz --with-zstd --with-zlib
+# PKG_CONFIG_PATH names /usr/share/pkgconfig as well as /usr/lib/pkgconfig,
+# and kmod is where that stopped being optional. zlib's CMakeLists sets
+# INSTALL_PKGCONFIG_DIR to ${CMAKE_INSTALL_PREFIX}/share/pkgconfig and this
+# tree does not override it, so zlib.pc installs there and nowhere else. With
+# only the lib directory on the path kmod's configure reports
+#
+#     configure: error: Package requirements (zlib) were not met:
+#     Package 'zlib', required by 'virtual:world', not found
+#
+# which reads as zlib not having been built -- it had, eleven packages
+# earlier, and libz.so was sitting in the sysroot the whole time.
+#
+# Both directories are standard and pkg-config's own compiled-in path has
+# both; this tree had simply never needed the second one, because kmod is the
+# first autotools package here to ask pkg-config for something built by an
+# earlier member. share/sysroot.sh and share/stage-sysroot.sh already rewrite
+# prefix= under share/pkgconfig, so the rest of the machinery was ready for
+# it. Every recipe in the tree names both now, and tools/new-recipe emits
+# both, because the next one to need it would fail the same way.
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --with-xz --with-zstd --with-zlib
 
 - stage: Build
   name: compile
