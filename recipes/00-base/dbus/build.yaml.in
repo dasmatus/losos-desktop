@@ -1,6 +1,6 @@
 # dbus 1.16.2
 #
-# The system and session bus. systemd's own API surface is D-Bus, and --enable-user-session is what gives each logind session its own bus.
+# The system and session bus. systemd's own API surface is D-Bus, and user_session is what gives each logind session its own bus.
 name: dbus
 version:
 - '1'
@@ -19,40 +19,65 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_DBUS@ --no-same-owner -C /build/src/dbus --strip-components=1
 
-# ./configure has no -C and there is no `cd` in a build step (C1), so the one
-# permitted wrapper puts it in the build directory. configure takes VAR=value
-# as positional arguments, which is how the toolchain and the sysroot are
-# reached without `env`.
+# dbus dropped autotools in 1.16 and this recipe drove it with `configure`
+# until now. The 1.16.2 tarball -- checked, and its SHA-256 is the one in
+# manifest/sources.lock -- contains meson.build and CMakeLists.txt and no
+# configure, no configure.ac and no Makefile.am at all. The same shape of
+# mistake as libcap, libbpf and openssl: a recipe naming a build system the
+# source does not have, which no gate here can see because no gate runs a
+# build.
 #
-# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
-# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
-# separate arguments and configure would reject the first it did not know.
-# The response file is one word, and clang expands it. Its contents come from
-# manifest/toolchain.yaml -- LTO and CFI included.
+# The option names are meson's and not translations of the old autotools ones.
+# Three groups of them, and the middle group is the one that matters:
+#
+# user_session and system_socket carry over what the old line asked for.
+# user_session is boolean and already defaults to true; it is named anyway
+# because the header comment above says it is the point of the package.
+#
+# Everything spelled `disabled` here is a `feature` option defaulting to
+# `auto`, and `auto` in this jail does not mean "off if absent". pm mirrors
+# the HOST's /usr read-only (C7), so meson probing for libselinux, libaudit,
+# libapparmor, libX11 or libsystemd finds the build host's headers and links
+# the build host's libraries into an image built against musl. Every one of
+# them is therefore said out loud. libsystemd is the sharpest of these:
+# systemd is built two layers above this one and cannot be found here
+# legitimately, so an `auto` that succeeds is proof something went wrong.
+#
+# systemd_system_unitdir and systemd_user_unitdir are set anyway, because
+# `-Dsystemd=disabled` turns off the libsystemd dependency and would otherwise
+# take dbus's own units with it. The units are wanted; the library is not.
+#
+# The doc builders and the test harness are off for the ordinary reasons: they
+# need tooling this tree does not carry, and modular_tests builds and RUNS
+# musl-dynamic helpers the jail cannot execute (C7).
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/dbus /build/src/dbus/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --enable-user-session --with-system-socket=/run/dbus/system_bus_socket
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/dbus /build/src/dbus --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --default-library=shared --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Duser_session=true -Dsystem_socket=/run/dbus/system_bus_socket -Dsystemd=disabled -Dsystemd_system_unitdir=/usr/lib/systemd/system -Dsystemd_user_unitdir=/usr/lib/systemd/user -Dselinux=disabled -Dapparmor=disabled -Dlibaudit=disabled -Dx11_autolaunch=disabled -Drelocation=disabled -Dmodular_tests=disabled -Dinstalled_tests=false -Dxml_docs=disabled -Dducktype_docs=disabled -Ddoxygen_docs=disabled -Dqt_help=disabled
 
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - make -C /build/b/dbus -j @JOBS@
+  - ninja -C /build/b/dbus -j @JOBS@
 
-# DESTDIR as a make argument, not the environment variable: pm already sets
-# DESTDIR=/dest, and the second install has to override it.
 - stage: Build
   name: install
   dl_urls: null
   run:
-  - make -C /build/b/dbus install DESTDIR=/dest
-  - make -C /build/b/dbus install DESTDIR=/build/sysroot
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/dbus --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/dbus --destdir /build/sysroot --no-rebuild
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# dbus is not in the hidden-visibility class and does not need an exception:
+# dbus-macros.h defines DBUS_EXPORT as the attribute for __GNUC__ >= 4, which
+# clang satisfies, and dbus's own meson turns -fvisibility=hidden on for
+# itself. The check is here anyway, because that is a property of the source
+# and the source moves at every bump.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libdbus-1.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libdbus-1.so dbus_bus_get dbus_connection_send dbus_message_new_method_call dbus_error_init

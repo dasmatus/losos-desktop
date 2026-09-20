@@ -28,11 +28,38 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+
+# CC_FOR_BUILD: the compiler for programs that run on the BUILD machine.
+#
+# Every configure in this tree is a cross build (--host, because everything
+# above losos-00-toolchain is musl and the host is glibc), and `cross_compiling
+# = yes` is what makes autoconf reach for a second compiler. Every upstream
+# spelling of that reach defaults to `gcc`, and the build container installs
+# clang, lld, llvm and compiler-rt and no gcc at all -- see the Containerfile.
+# So the default is a program that is not there.
+#
+# @CC@ is the right answer and the flags are deliberately absent. The musl
+# cross-ness of this tree lives entirely in CFLAGS, which is a clang response
+# file; @CC@ on its own is /usr/bin/clang, and clang with no flags produces a
+# glibc binary that runs on the build host, which is exactly what a build-time
+# helper is for. share/native.ini.in carries the same compiler and the same
+# deliberate absence of flags for the meson packages.
+#
+# nettle needs it for eccdata and desdata, which Makefile.in:336-337 compiles
+# with $(CC_FOR_BUILD) and :366-409 then RUNS to generate the ecc-*.h tables.
+#
+# It fails differently from libgpg-error and better: m4-utils' own
+# GMP_PROG_CC_FOR_BUILD (aclocal.m4:292-321) tries gcc, cc, c89 and c99 in
+# turn, compiling AND running a test program for each, and calls
+# AC_MSG_ERROR([Cannot find a build system compiler]) when none works. So this
+# stops at configure rather than several minutes into make. It also validates
+# what is passed here -- "Specified CC_FOR_BUILD doesn't seem to work" -- which
+# is a free check that the build host can still run what it compiles.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/nettle /build/src/nettle/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/nettle /build/src/nettle/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ CC_FOR_BUILD=@CC@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile

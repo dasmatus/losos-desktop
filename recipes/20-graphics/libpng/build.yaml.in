@@ -29,11 +29,18 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# libpng's own flags, because PNG_EXPORT resolves through PNG_IMPEXP and
+# pngconf.h defines that as empty on everything that is not Windows. Under
+# the layer's -fvisibility=hidden libpng16.so installs with an empty dynamic
+# symbol table and cairo is the first thing to say so. See
+# manifest/toolchain.yaml; naming the per-package files is what makes the
+# entry apply at all.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libpng /build/src/libpng/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libpng /build/src/libpng/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LIBPNG@ LDFLAGS=@LDFLAGS_RSP_LIBPNG@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile
@@ -56,3 +63,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libpng16.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libpng16.so png_create_read_struct png_create_write_struct png_read_image png_access_version_number

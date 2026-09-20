@@ -27,6 +27,14 @@ class Toolchain:
         self.exceptions = {
             entry["package"]: entry for entry in (self.doc.get("exceptions") or [])
         }
+        # The path of share/cfi-export.map as it was staged for the layer being
+        # generated. It is per-layer because only the bundle's own generated
+        # directory is mounted inside the jail (C7), so there is no one path
+        # every layer could share. tools/configure sets it once per layer,
+        # before any flag list is asked for, and every list -- the shared
+        # response file, an exempt package's own, and both meson cross files --
+        # picks up the same value from here rather than being told separately.
+        self.cfi_export_map = None
 
     @classmethod
     def load(cls, path):
@@ -91,11 +99,17 @@ class Toolchain:
         Dropping it emits `--unwindlib=none`, not nothing. Those are different
         instructions and the difference is the whole reason this line is
         written out rather than skipped: omitting the flag does not mean "no
-        unwinder", it means clang's build-time default, and the clang in the
-        Containerfile -- Ubuntu's 18.1.3 (1ubuntu1) -- defaults to libgcc even
-        under --rtlib=compiler-rt. Upstream clang returns UNW_None for
-        compiler-rt on linux-musl, so the reasoning in manifest/toolchain.yaml
-        holds against an unpatched compiler; Ubuntu's patch is what breaks it.
+        unwinder", it means clang's build-time default, and the clang this was
+        found on -- Debian trixie's LLVM 19, which the Containerfile carried
+        before the base became Arch -- defaults to libgcc even under
+        --rtlib=compiler-rt. Writing the flag out is what makes that
+        irrelevant, so the line stays correct on the Arch base whether or not
+        its clang carries the same patch. Upstream clang returns
+        UNW_None for compiler-rt on linux-musl, so the reasoning in
+        manifest/toolchain.yaml holds against an unpatched compiler; the
+        distribution patch is what breaks it. Debian's 19 and Ubuntu's 18.1.3
+        behave identically here, which is why this went unnoticed while the
+        comment named the wrong one.
 
         Measured by asking the driver to print its link command on that exact
         compiler: with the flag omitted, two "-lgcc_s"; with --unwindlib=none,
@@ -176,7 +190,55 @@ class Toolchain:
         kept = [s for s in (self.cfi.get("schemes") or []) if s not in drops]
         if not kept:
             return []
-        flags = [f"-fvisibility={self.cfi.get('visibility', 'hidden')}"]
+        # `visibility` is the narrow form of the same exemption, and it exists
+        # because the broad one costs too much. A package that annotates none
+        # of its exports comes out of -fvisibility=hidden with an empty dynamic
+        # symbol table -- it compiles, it installs, and the first consumer
+        # fails to link -- and `drops: [cfi]` fixes that only by taking the
+        # checks away from a library the whole system calls into.
+        #
+        # The flag stays on the line with its value changed rather than being
+        # removed, because clang rejects the scheme set outright when
+        # -fvisibility= is absent altogether:
+        #
+        #     invalid argument '-fsanitize=cfi-unrelated-cast' only allowed
+        #     with '-fvisibility='
+        #
+        # while accepting every scheme this tree enables, cross-DSO included,
+        # at -fvisibility=default. Measured on clang 18.1.3 and repeated on
+        # 19.1.1. Deliberately no machine: this comment named 18 as "the
+        # container's" for several commits before anyone checked, then 19, and
+        # the Arch base moved it to 22 within the hour. The measurement is the
+        # durable part. So hidden is a security
+        # choice here and not a compiler requirement: what CFI needs is for the
+        # value to be *stated*, and what it loses at `default` is the guarantee
+        # that no exported symbol is interposed at load time by something it
+        # never checked. That is a real loss, which is why this is per-package
+        # and why manifest/toolchain.yaml makes each entry say what it buys.
+        #
+        # One coupling the manifest does not record, because there is nowhere
+        # in it to say so: at -fvisibility=default the four C++ schemes are
+        # emitted only while cross_dso is on. Counting llvm.type.test for a
+        # virtual call through a base pointer under -flto=thin
+        # -fsanitize=cfi-vcall, clang 18.1.3 -- hidden/no-cross 3, hidden/cross
+        # 4, default/no-cross 0, default/cross 4. A default-visibility class
+        # gets public LTO visibility, and checks on those are emitted only with
+        # -fsanitize-cfi-cross-dso: no error, no warning, nothing missing from
+        # the line, which is the same quiet failure as the empty symbol table
+        # one level up. Nothing is lost today -- every taker is C, and
+        # cfi-icall is untouched by visibility (2, 4, 2, 4 in the same matrix)
+        # -- so this is a note for the first C++ package to take the exemption,
+        # or for whoever turns cross_dso off somewhere else entirely.
+        #
+        # This is also the knob the standing question turns on. If the default
+        # is ever inverted -- hidden opted into by the packages that annotate,
+        # rather than blanket with exceptions -- it is `cfi.visibility` that
+        # changes and this list that changes meaning with it. Nothing else here
+        # would move.
+        visibility = self.cfi.get("visibility", "hidden")
+        if "visibility" in drops:
+            visibility = "default"
+        flags = [f"-fvisibility={visibility}"]
         flags += [f"-fsanitize={scheme}" for scheme in kept]
         if self.cfi.get("cross_dso"):
             flags.append("-fsanitize-cfi-cross-dso")
@@ -202,7 +264,18 @@ class Toolchain:
             flags.append(f"-fuse-ld={linker}")
         if "lto" not in drops:
             flags += self.lto_flags()
-        flags += self._cfi_for(drops)
+        cfi = self._cfi_for(drops)
+        flags += cfi
+        # Cross-DSO CFI needs __cfi_check in the dynamic symbol table of every
+        # library, and an upstream version script ending `local: *;` takes it
+        # out -- silently, because the runtime that cannot find it marks the
+        # module unchecked rather than failing. share/cfi-export.map puts it
+        # back on every link; the file's own header is the measurement and the
+        # reasoning. Tied to cross_dso rather than to CFI in general because
+        # __cfi_check is emitted only in the cross-DSO mode, so anywhere else
+        # the flag would name a symbol that does not exist.
+        if cfi and self.cfi.get("cross_dso") and self.cfi_export_map:
+            flags.append(f"-Wl,--version-script={self.cfi_export_map}")
         if "hardening" not in drops:
             flags += list(self.hardening.get("ldflags") or [])
         return flags
@@ -259,10 +332,23 @@ class Toolchain:
             "@SYSROOT@": self.target.get("sysroot", "/build/sysroot"),
             "@RESOURCE_DIR_PREFIX@": self.resource_dir_prefix(),
         }
-        # meson native files want a TOML-ish list, not a shell string.
-        subs["@MESON_C_ARGS@"] = _ini_list(self.cflags())
-        subs["@MESON_LINK_ARGS@"] = _ini_list(self.ldflags())
+        subs.update(self.meson_subs())
         return subs
+
+    def meson_subs(self, package=None):
+        """The native file's two flag lists, for the layer or one exempt package.
+
+        meson native files want a TOML-ish list, not a shell string, which is
+        why these are not just @CFLAGS@ again. Taking `package` is what lets an
+        exempt meson build have a native file of its own: a meson recipe has no
+        CFLAGS= argument to name @CFLAGS_RSP_<PKG>@ on, so the only way its
+        exemption can reach the compiler is for the whole native file to be
+        generated for it.
+        """
+        return {
+            "@MESON_C_ARGS@": _ini_list(self.cflags(package)),
+            "@MESON_LINK_ARGS@": _ini_list(self.ldflags(package)),
+        }
 
 
 def _ini_list(flags):

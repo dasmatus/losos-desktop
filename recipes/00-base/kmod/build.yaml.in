@@ -27,17 +27,115 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# PKG_CONFIG_PATH names /usr/share/pkgconfig as well as /usr/lib/pkgconfig,
+# and kmod is where that stopped being optional. zlib's CMakeLists sets
+# INSTALL_PKGCONFIG_DIR to ${CMAKE_INSTALL_PREFIX}/share/pkgconfig and this
+# tree does not override it, so zlib.pc installs there and nowhere else. With
+# only the lib directory on the path kmod's configure reports
+#
+#     configure: error: Package requirements (zlib) were not met:
+#     Package 'zlib', required by 'virtual:world', not found
+#
+# which reads as zlib not having been built -- it had, eleven packages
+# earlier, and libz.so was sitting in the sysroot the whole time.
+#
+# --disable-manpages because kmod builds its manpages with scdoc, which is
+# neither a host requirement here nor in the Containerfile, and kmod does not
+# treat that as optional: configure stops with
+#
+#     configure: error: *** scdoc needed for building manpages. Either install
+#     it or pass --disable-manpages
+#
+# naming the option itself. Installing scdoc instead would be the wrong way
+# round -- no package in this tree ships documentation into the image, and
+# twenty-nine recipes already turn theirs off (openssl `no-docs`, dbus
+# `-Dxml_docs=disabled`, systemd `-Dman=false`). A desktop image carrying
+# modprobe's manpage and nothing else's would be an accident, not a decision.
+#
+# Both directories are standard and pkg-config's own compiled-in path has
+# both; this tree had simply never needed the second one, because kmod is the
+# first autotools package here to ask pkg-config for something built by an
+# earlier member. share/sysroot.sh and share/stage-sysroot.sh already rewrite
+# prefix= under share/pkgconfig, so the rest of the machinery was ready for
+# it. Every recipe in the tree names both now, and tools/new-recipe emits
+# both, because the next one to need it would fail the same way.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --with-xz --with-zstd --with-zlib
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-manpages --with-xz --with-zstd --with-zlib
 
+# OUR_LDFLAGS on the make line, not a configure option, because kmod has no
+# option for it. configure.ac:296 runs CC_CHECK_FLAGS_APPEND over
+# -Wl,--as-needed, -Wl,--no-undefined and -Wl,--gc-sections, keeps whichever
+# the linker accepts, and substitutes the result as OUR_LDFLAGS, which
+# Makefile.am:27 makes AM_LDFLAGS. --no-undefined is the one this toolchain
+# cannot survive: cross-DSO CFI in diagnose mode leaves __cfi_slowpath_diag
+# and __ubsan_handle_cfi_check_fail undefined in every shared object here, by
+# design, and libkmod.la fails on both. It is openssl's failure a second time,
+# from a package's own build rather than from ours.
+#
+# There is no --disable switch and no --with-ldflags, so the substituted
+# variable is overridden instead: a command-line make variable outranks the
+# Makefile's own assignment, and CLAUDE.md names `make VAR=value` as one of
+# the permitted ways to reach a build without `env`.
+#
+# Emptied rather than trimmed to the two harmless flags, deliberately. Empty
+# is exactly the value kmod has had on every green build this tree has ever
+# produced, because the probe answered no to all three on the old container,
+# so this override is a no-op on the legs that are green today and removes
+# only the problem flag on the ones that are not. Putting -Wl,--gc-sections
+# back would be the more faithful reading of what kmod wants -- it compiles
+# with -ffunction-sections and -fdata-sections, which are worth nothing
+# without it -- and it is a new flag on a package that currently builds, in a
+# tree where one CI cycle is twenty minutes and this is not the thing being
+# tested. It is worth doing once the layer is green; it is not worth doing
+# now. --as-needed needs no restoring at all: the layer's own ldflags.rsp
+# carries it and lands after AM_LDFLAGS on the link line.
+#
+# It must be on every make invocation, not just the compile one: libtool
+# relinks at install time, so a missing override there would put the flag back
+# for the library that actually gets installed.
+#
+# Why this was not found by the sweep that found openssl's and tpm2-tss's:
+# kmod had already compiled, and that looked like proof. It was proof about
+# the old build container, and the probe is worth reading to see why.
+#
+# m4/attributes.m4:12-24 is CC_CHECK_FLAG_APPEND, and the line that matters is
+# that it REPLACES the variable under test:
+#
+#     eval "AS_TR_SH([$2])='-Werror `echo "$3" | sed 's/^-Wno-/-W/'`'"
+#     AC_LINK_IFELSE([AC_LANG_SOURCE([int main(void) { return 0; } ])], ...)
+#
+# So a CFLAGS probe links with CFLAGS=`-Werror <flag>` and this tree's whole
+# LDFLAGS response file -- --target, --sysroot, -fuse-ld=mold,
+# --rtlib=compiler-rt, --unwindlib=libunwind -- still on the line. An LDFLAGS
+# probe links with all of that GONE, replaced by `-Werror <flag>`, and only
+# the CFLAGS response file left. That asymmetry is the whole of the log's
+# signature: fourteen CFLAGS probes answer yes and then all three LDFLAGS
+# probes answer no together, not because three unrelated linker flags became
+# unsupported but because the link they are tested with no longer has the
+# linker or the runtime this toolchain needs.
+#
+# On the old base that link failed and configure appended nothing, so kmod
+# built with none of the flags its own build system asked for -- by accident,
+# and looking exactly like a package that had been proven. The new base links
+# it, answers yes, and kmod asks for what cross-DSO CFI cannot give. What
+# differs between the two bases is not in kmod and is not yet established;
+# the container job now prints clang, llvm-config and mold versions, which is
+# where that answer will come from.
+#
+# kmod's own -fvisibility=hidden in OUR_CFLAGS is deliberately left alone. It
+# is the positive case: a package that compiles hidden must annotate, and kmod
+# does -- KMOD_EXPORT is __attribute__((visibility("default"))) in
+# shared/macro.h:38. Its libkmod.sym version script is therefore real rather
+# than the usual trap.
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - make -C /build/b/kmod -j @JOBS@
+  - make -C /build/b/kmod OUR_LDFLAGS= -j @JOBS@
 
 # DESTDIR as a make argument, not the environment variable: pm already sets
 # DESTDIR=/dest, and the second install has to override it.
@@ -45,12 +143,17 @@ steps:
   name: install
   dl_urls: null
   run:
-  - make -C /build/b/kmod install DESTDIR=/dest
-  - make -C /build/b/kmod install DESTDIR=/build/sysroot
+  - make -C /build/b/kmod install OUR_LDFLAGS= DESTDIR=/dest
+  - make -C /build/b/kmod install OUR_LDFLAGS= DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# kmod is not in the hidden-visibility class -- it annotates -- so this line
+# is here for the link flag above rather than for the exports: if the override
+# ever stops reaching a make invocation, the build fails at the link and never
+# gets here, and if libkmod.sym ever stops being applied these are what say so.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libkmod.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libkmod.so kmod_new kmod_unref kmod_module_new_from_name kmod_module_probe_insert_module kmod_module_get_initstate __cfi_check

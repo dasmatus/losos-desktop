@@ -32,7 +32,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-control-center /build/src/gnome-control-center --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Ddocumentation=false -Dtests=false -Dmalcontent=false -Dibus=false -Dsnap=false
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-control-center /build/src/gnome-control-center --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Ddocumentation=false -Dtests=false -Dmalcontent=false -Dibus=false -Dsnap=false
 
 - stage: Build
   name: compile
