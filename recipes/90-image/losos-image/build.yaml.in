@@ -53,9 +53,10 @@ steps:
   run:
   - mkdir -p /build/root /build/initrd /build/uki /dest/artifacts
   - /bin/sh @RECIPE@/sysroot.sh /dest/deps /build/root --no-pc-rewrite
-  # The dynamic loader path in PT_INTERP is absolute (/lib/ld-musl-*.so.1), so
-  # stage the link into the assembled tree before /lib is merged into /usr/lib.
-  - /bin/sh -eu -c 'install -d /build/root/lib; if [ ! -e /build/root/lib/ld-musl-@ARCH@.so.1 ] && [ ! -L /build/root/lib/ld-musl-@ARCH@.so.1 ]; then ln -s /usr/lib/libc.so /build/root/lib/ld-musl-@ARCH@.so.1; fi'
+  # The dynamic loader path in PT_INTERP is absolute (/lib/ld-musl-*.so.1), and
+  # sysroot.sh only stages /usr, so recreate musl's loader symlink before /lib
+  # is merged into /usr/lib.
+  - /bin/sh -eu -c 'install -d /build/root/lib; loader=/build/root/lib/ld-musl-@ARCH@.so.1; if [ ! -e "$loader" ] && [ ! -L "$loader" ]; then test -f /build/root/usr/lib/libc.so; ln -s /usr/lib/libc.so "$loader"; fi'
   - cp -a @RECIPE@/files/losos-image/overlay/. /build/root/
   # The shipped tree is /usr-merged: root-level compatibility paths are
   # symlinks, and musl's loader entry moves under /usr/lib before /lib does.
