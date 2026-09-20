@@ -145,6 +145,14 @@ RUN apt-get update --error-on=any \
       just \
       make pkgconf tar xz-utils zstd cpio patch \
       \
+      `# perl, because openssl's whole build system is perl: Configure is a` \
+      `# perl script, and the generated Makefile drives more of them to build` \
+      `# the assembly and the error tables. The base image carries perl-base,` \
+      `# which is Essential and not enough -- openssl reaches for core modules` \
+      `# Debian splits into perl-modules. Nothing on a command line here says` \
+      `# perl, so this looks removable and is not.` \
+      perl \
+      \
       `# bzip2 is the odd one here: no recipe names it and nothing spells it` \
       `# on a command line. tar reaches for it by itself for the seven` \
       `# .tar.bz2 sources in the lock -- and Debian's tar is built to try` \

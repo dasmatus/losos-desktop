@@ -18,21 +18,56 @@ steps:
   # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_OPENSSL@ --no-same-owner -C /build/src/openssl --strip-components=1
+  # openssl ships `Configure` and `config`, and no `configure` at all -- this
+  # recipe named one for as long as it has existed, which is a path that does
+  # not exist and a failure no gate here can see, because no gate runs a build.
+  #
+  # A COPY and not a symlink, and the difference is C3. pm canonicalises a
+  # step's first word on the host and canonicalising resolves symlinks, so a
+  # `configure` pointing at `Configure` arrives as `Configure` -- the same trap
+  # that makes rustup's cargo symlink unusable here, documented in CLAUDE.md.
+  # A copy has its own name and keeps it.
+  #
+  # Nothing inside Configure cares what it is called: it locates the source
+  # tree with `dirname($0)` and `FindBin::Bin`, both of which give the
+  # directory. Verified by running the copy out-of-tree against the pinned
+  # 3.3.2 source -- it configured, wrote configdata.pm and a Makefile, and the
+  # Makefile named the right source directory.
+  - cp /build/src/openssl/Configure /build/src/openssl/configure
 
-# ./configure has no -C and there is no `cd` in a build step (C1), so the one
-# permitted wrapper puts it in the build directory. configure takes VAR=value
-# as positional arguments, which is how the toolchain and the sysroot are
-# reached without `env`.
+# openssl's Configure is not autotools and shares almost nothing with it. It
+# has no -C, so the one permitted wrapper puts it in the build directory the
+# way it does for a real configure (C1), and it takes VAR=value positionally,
+# which is how the toolchain is reached without `env` -- but everything else
+# on this line is openssl's own vocabulary:
+#
+#   @ARCH_OPENSSL_TARGET@  Configure's first argument is a target NAME, not a
+#     triple, matched against Configurations/10-main.conf. It is not optional
+#     and not guessable from --host, which Configure does not accept; the
+#     script that guesses is `config`, whose name pm's fingerprint table does
+#     not know. manifest/architectures.yaml carries the literal.
+#   --libdir=lib           Relative, resolved under --prefix. Verified in the
+#     generated Makefile: INSTALLTOP=/usr, LIBDIR=lib.
+#   --openssldir=/etc/ssl  What --sysconfdir would have meant. There is no
+#     --sysconfdir or --localstatedir here and passing either is an error.
+#   no-tests               The test suite links and RUNS musl-dynamic binaries,
+#     which pm's jail cannot execute at all (C7).
+#   no-docs                Skips the pod2man pass, which is the only part of
+#     the build that needs perl modules outside perl-base.
+#   shared                 The default, said out loud, because this tree is
+#     shared-only and the install step below removes the archives openssl
+#     builds anyway.
+#
+# There is no PKG_CONFIG_PATH: openssl asks pkg-config for nothing.
 #
 # CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
 # command on whitespace, so a multi-word CFLAGS would arrive as a dozen
-# separate arguments and configure would reject the first it did not know.
-# The response file is one word, and clang expands it. Its contents come from
-# manifest/toolchain.yaml -- LTO and CFI included.
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
+# separate arguments. The response file is one word, and clang expands it.
+# Verified that it survives: the generated Makefile spells
+# `CFLAGS=@<path>/cflags-openssl.rsp` verbatim, and `LIB_CFLAGS=-fPIC
+# $(CNF_CFLAGS) $(CFLAGS)` puts it last, so this tree's -O2, hardening, LTO
+# and CFI win over openssl's own.
+#
 # The flags are this package's own response files, not the layer's shared
 # pair, and naming them is the entire mechanism: manifest/toolchain.yaml
 # gives openssl `drops: [visibility]`, tools/configure writes
@@ -40,7 +75,11 @@ steps:
 # @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
 # read by nothing. Without it libcrypto and libssl install with empty dynamic
 # symbol tables and curl is the first thing to say so.
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_OPENSSL@ LDFLAGS=@LDFLAGS_RSP_OPENSSL@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure @ARCH_OPENSSL_TARGET@ --prefix=/usr --libdir=lib --openssldir=/etc/ssl no-tests no-docs shared CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_OPENSSL@ LDFLAGS=@LDFLAGS_RSP_OPENSSL@
 
 - stage: Build
   name: compile
@@ -56,6 +95,12 @@ steps:
   run:
   - make -C /build/b/openssl install DESTDIR=/dest
   - make -C /build/b/openssl install DESTDIR=/build/sysroot
+  # openssl has no `no-static`: the generated Makefile spells
+  # `INSTALL_LIBS=libcrypto.a libssl.a` whatever it was configured with, so the
+  # archives are removed rather than not built. Every other library in this
+  # layer is shared-only, and a .a left in the sysroot is something a later
+  # link can quietly prefer -- the same reason libcap and libbpf end this way.
+  - rm -f /dest/usr/lib/libcrypto.a /dest/usr/lib/libssl.a /build/sysroot/usr/lib/libcrypto.a /build/sysroot/usr/lib/libssl.a
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
 - stage: Test
