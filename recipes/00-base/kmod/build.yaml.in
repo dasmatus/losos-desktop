@@ -66,11 +66,58 @@ steps:
   run:
   - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-manpages --with-xz --with-zstd --with-zlib
 
+# OUR_LDFLAGS on the make line, not a configure option, because kmod has no
+# option for it. configure.ac:296 runs CC_CHECK_FLAGS_APPEND over
+# -Wl,--as-needed, -Wl,--no-undefined and -Wl,--gc-sections, keeps whichever
+# the linker accepts, and substitutes the result as OUR_LDFLAGS, which
+# Makefile.am:27 makes AM_LDFLAGS. --no-undefined is the one this toolchain
+# cannot survive: cross-DSO CFI in diagnose mode leaves __cfi_slowpath_diag
+# and __ubsan_handle_cfi_check_fail undefined in every shared object here, by
+# design, and libkmod.la fails on both. It is openssl's failure a second time,
+# from a package's own build rather than from ours.
+#
+# There is no --disable switch and no --with-ldflags, so the substituted
+# variable is overridden instead: a command-line make variable outranks the
+# Makefile's own assignment, and CLAUDE.md names `make VAR=value` as one of
+# the permitted ways to reach a build without `env`.
+#
+# Emptied rather than trimmed to the two harmless flags, deliberately. Empty
+# is exactly the value kmod has had on every green build this tree has ever
+# produced, because the probe answered no to all three on the old container,
+# so this override is a no-op on the legs that are green today and removes
+# only the problem flag on the ones that are not. Putting -Wl,--gc-sections
+# back would be the more faithful reading of what kmod wants -- it compiles
+# with -ffunction-sections and -fdata-sections, which are worth nothing
+# without it -- and it is a new flag on a package that currently builds, in a
+# tree where one CI cycle is twenty minutes and this is not the thing being
+# tested. It is worth doing once the layer is green; it is not worth doing
+# now. --as-needed needs no restoring at all: the layer's own ldflags.rsp
+# carries it and lands after AM_LDFLAGS on the link line.
+#
+# It must be on every make invocation, not just the compile one: libtool
+# relinks at install time, so a missing override there would put the flag back
+# for the library that actually gets installed.
+#
+# Why this was not found by the sweep that found openssl's and tpm2-tss's:
+# kmod had already compiled, and that looked like proof. It was proof about
+# the old build container. The probe is a link of a trivial program with the
+# full response file, and on the Debian base it failed -- all three LDFLAGS
+# probes answered no together while the fourteen CFLAGS probes before them
+# answered yes, which is one link failing rather than three flags being
+# unsupported. kmod got its flags dropped for the wrong reason and built by
+# accident. The Arch base links the probe, answers yes, and asks for what it
+# cannot have.
+#
+# kmod's own -fvisibility=hidden in OUR_CFLAGS is deliberately left alone. It
+# is the positive case: a package that compiles hidden must annotate, and kmod
+# does -- KMOD_EXPORT is __attribute__((visibility("default"))) in
+# shared/macro.h:38. Its libkmod.sym version script is therefore real rather
+# than the usual trap.
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - make -C /build/b/kmod -j @JOBS@
+  - make -C /build/b/kmod OUR_LDFLAGS= -j @JOBS@
 
 # DESTDIR as a make argument, not the environment variable: pm already sets
 # DESTDIR=/dest, and the second install has to override it.
@@ -78,12 +125,17 @@ steps:
   name: install
   dl_urls: null
   run:
-  - make -C /build/b/kmod install DESTDIR=/dest
-  - make -C /build/b/kmod install DESTDIR=/build/sysroot
+  - make -C /build/b/kmod install OUR_LDFLAGS= DESTDIR=/dest
+  - make -C /build/b/kmod install OUR_LDFLAGS= DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# kmod is not in the hidden-visibility class -- it annotates -- so this line
+# is here for the link flag above rather than for the exports: if the override
+# ever stops reaching a make invocation, the build fails at the link and never
+# gets here, and if libkmod.sym ever stops being applied these are what say so.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libkmod.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libkmod.so kmod_new kmod_unref kmod_module_new_from_name kmod_module_probe_insert_module kmod_module_get_initstate __cfi_check
