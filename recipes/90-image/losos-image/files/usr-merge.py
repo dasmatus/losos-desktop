@@ -190,10 +190,15 @@ def check_os_release(root):
 
 def check_os_release_parent(root):
     parent = root / "etc"
+    resolved_root = root.resolve(strict=False)
     if parent.is_symlink():
         return fail("/etc exists and is a symlink")
     if parent.exists() and not parent.is_dir():
         return fail("/etc exists and is not a directory")
+    try:
+        parent.resolve(strict=False).relative_to(resolved_root)
+    except ValueError:
+        return fail("/etc resolves outside the staged root")
     return 0
 
 
