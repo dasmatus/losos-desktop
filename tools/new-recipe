@@ -97,11 +97,15 @@ steps:
 """
 
 MESON = """
+# --cross-file is not optional and not cosmetic: without it meson calls this a
+# native build, compiles a test program and tries to RUN it, and a musl-dynamic
+# binary has no interpreter in pm's jail (C7). --native-file is the
+# build-machine half of the same pair. tools/gates/cross-configure.py checks.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/{name} /build/src/{name} --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig{options}
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/{name} /build/src/{name} --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig{options}
 
 - stage: Build
   name: compile

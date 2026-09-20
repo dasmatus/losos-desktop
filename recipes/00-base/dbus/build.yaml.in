@@ -54,7 +54,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/dbus /build/src/dbus --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --default-library=shared --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Duser_session=true -Dsystem_socket=/run/dbus/system_bus_socket -Dsystemd=disabled -Dsystemd_system_unitdir=/usr/lib/systemd/system -Dsystemd_user_unitdir=/usr/lib/systemd/user -Dselinux=disabled -Dapparmor=disabled -Dlibaudit=disabled -Dx11_autolaunch=disabled -Drelocation=disabled -Dmodular_tests=disabled -Dinstalled_tests=false -Dxml_docs=disabled -Dducktype_docs=disabled -Ddoxygen_docs=disabled -Dqt_help=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/dbus /build/src/dbus --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --default-library=shared --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Duser_session=true -Dsystem_socket=/run/dbus/system_bus_socket -Dsystemd=disabled -Dsystemd_system_unitdir=/usr/lib/systemd/system -Dsystemd_user_unitdir=/usr/lib/systemd/user -Dselinux=disabled -Dapparmor=disabled -Dlibaudit=disabled -Dx11_autolaunch=disabled -Drelocation=disabled -Dmodular_tests=disabled -Dinstalled_tests=false -Dxml_docs=disabled -Dducktype_docs=disabled -Ddoxygen_docs=disabled -Dqt_help=disabled
 
 - stage: Build
   name: compile

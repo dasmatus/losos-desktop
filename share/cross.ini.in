@@ -1,0 +1,78 @@
+# meson cross file. Generated per layer by tools/configure.
+#
+# Three jobs, and the third is why this is a cross file and not a native one.
+#
+# [binaries] answers C3: pm canonicalises a step's first word on the HOST, so a
+# program that lives only in the jail can never be one -- but meson execs these
+# itself, from inside the jail, where the paths exist. That is the only way a
+# pm-built gperf or bpftool reaches a build.
+#
+# [built-in options] is where manifest/toolchain.yaml lands. No recipe spells a
+# compiler flag; tools/gates/toolchain-report.py fails the build if one tries.
+#
+# [host_machine] is what makes meson agree with the rest of this tree that
+# these are cross builds. The build host runs glibc and everything above
+# losos-00-toolchain is compiled against musl, so the binaries this toolchain
+# emits name /lib/ld-musl-<arch>.so.1 as their interpreter and pm's jail
+# mirrors the HOST's /lib read-only (C7). A native build's very first act is to
+# compile a test program AND RUN IT, and meson skips that run only when it
+# believes it is cross-compiling -- `is_cross and not has_exe_wrapper()` in
+# mesonbuild/compilers/compilers.py, and is_cross is true only when a cross
+# file supplied this section. Without it dbus, the first meson package this
+# tree ever compiled, died on its first line with
+#
+#     Build type: native build
+#     ERROR: Could not invoke sanity check executable: [Errno 2] No such file
+#     or directory: '.../meson-private/sanity_check_for_c.exe'
+#
+# which names the test binary rather than the loader that is actually missing,
+# and would have done the same for all forty-eight meson recipes in turn. It is
+# the same failure --host answers for autotools, in meson's spelling;
+# tools/gates/cross-configure.py enforces both.
+[binaries]
+c          = '@CC@'
+cpp        = '@CXX@'
+ar         = '@AR@'
+nm         = '@NM@'
+ranlib     = '@RANLIB@'
+strip      = '@STRIP@'
+objcopy    = '@OBJCOPY@'
+pkg-config = '@PKGCONFIG@'
+python3    = '@PYTHON@'
+# Built into the sysroot by an earlier layer. Absent until then, which is why
+# the systemd recipe asserts they exist before it configures.
+gperf      = '@SYSROOT@/usr/bin/gperf'
+msgfmt     = '@SYSROOT@/usr/bin/msgfmt'
+msgmerge   = '@SYSROOT@/usr/bin/msgmerge'
+xgettext   = '@SYSROOT@/usr/bin/xgettext'
+flex       = '@SYSROOT@/usr/bin/flex'
+bpftool    = '@SYSROOT@/usr/bin/bpftool'
+wayland-scanner = '@SYSROOT@/usr/bin/wayland-scanner'
+glib-compile-resources = '@SYSROOT@/usr/bin/glib-compile-resources'
+g-ir-scanner = '@SYSROOT@/usr/bin/g-ir-scanner'
+
+# Both architectures this tree targets are little-endian, so the value is
+# written rather than derived; a third one would have to say so here.
+[host_machine]
+system     = 'linux'
+kernel     = 'linux'
+subsystem  = 'linux'
+cpu_family = '@ARCH_MESON_CPU_FAMILY@'
+cpu        = '@ARCH_MESON_CPU@'
+endian     = 'little'
+
+[built-in options]
+prefix          = '/usr'
+libdir          = 'lib'
+sysconfdir      = '/etc'
+localstatedir   = '/var'
+pkg_config_path = '@SYSROOT@/usr/lib/pkgconfig:@SYSROOT@/usr/share/pkgconfig'
+c_args          = @MESON_C_ARGS@
+cpp_args        = @MESON_C_ARGS@
+c_link_args     = @MESON_LINK_ARGS@
+cpp_link_args   = @MESON_LINK_ARGS@
+# b_lto is deliberately NOT set here. meson's own LTO switch would add its idea
+# of -flto on top of the one already in c_args, and the two disagree about
+# ThinLTO's flags often enough to be worth avoiding.
+b_lto           = false
+b_pie           = true
