@@ -199,6 +199,16 @@ RUN pacman -Syu --noconfirm --needed \
       `# rather than inherited from a base image that is free to drop it.` \
       bzip2 \
       \
+      `# diffutils for the same reason, and it is the one Debian gave away` \
+      `# free: diff is Priority: required there, so it was in the base image` \
+      `# and no list had to name it. Arch's base metapackage does not carry` \
+      `# it. libcap's Makefile diffs generated output against the checked-in` \
+      `# copy to build capshdoc.c, and the failure arrives as a shell inside` \
+      `# the jail reporting diff as not found -- a program no recipe mentions,` \
+      `# several layers into a build, wearing the name of whichever package` \
+      `# reached for it first.` \
+      diffutils \
+      \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
       `# deliberately absent -- but ninja and cmake are invoked as first words.` \
       ninja cmake \
