@@ -40,6 +40,19 @@ steps:
 # which reads as zlib not having been built -- it had, eleven packages
 # earlier, and libz.so was sitting in the sysroot the whole time.
 #
+# --disable-manpages because kmod builds its manpages with scdoc, which is
+# neither a host requirement here nor in the Containerfile, and kmod does not
+# treat that as optional: configure stops with
+#
+#     configure: error: *** scdoc needed for building manpages. Either install
+#     it or pass --disable-manpages
+#
+# naming the option itself. Installing scdoc instead would be the wrong way
+# round -- no package in this tree ships documentation into the image, and
+# twenty-nine recipes already turn theirs off (openssl `no-docs`, dbus
+# `-Dxml_docs=disabled`, systemd `-Dman=false`). A desktop image carrying
+# modprobe's manpage and nothing else's would be an accident, not a decision.
+#
 # Both directories are standard and pkg-config's own compiled-in path has
 # both; this tree had simply never needed the second one, because kmod is the
 # first autotools package here to ask pkg-config for something built by an
@@ -47,28 +60,11 @@ steps:
 # prefix= under share/pkgconfig, so the rest of the machinery was ready for
 # it. Every recipe in the tree names both now, and tools/new-recipe emits
 # both, because the next one to need it would fail the same way.
-#
-# --disable-manpages, because kmod's manpages are written in scdoc and
-# building them shells out to the scdoc compiler. Nothing installs it: not the
-# Containerfile, not the runners, not any recipe. configure looks for it only
-# when manpages are enabled -- AC_ARG_ENABLE([manpages]) defaults to yes, and
-# with nothing found it stops the build with
-#
-#     configure: error: *** scdoc needed for building manpages.
-#     Either install it or pass --disable-manpages
-#
-# Disabling is the answer rather than installing scdoc, because this image
-# carries no manpages at all: systemd is built -Dman=disabled and gnutls,
-# libtasn1, linux-pam and a dozen meson recipes turn their documentation off
-# the same way. Installing a compiler to produce files the image then drops is
-# the expensive half of a trade nothing here wants. The option gates the whole
-# man/ subdirectory through AM_CONDITIONAL(BUILD_MANPAGES), and scdoc appears
-# nowhere else in the tree, so the library and the tools are untouched.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --with-xz --with-zstd --with-zlib --disable-manpages
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/kmod /build/src/kmod/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-manpages --with-xz --with-zstd --with-zlib
 
 - stage: Build
   name: compile
