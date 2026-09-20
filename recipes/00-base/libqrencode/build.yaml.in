@@ -76,5 +76,18 @@ steps:
   name: staged
   dl_urls: null
   run:
+  # These two are not a sample, they are the whole set: systemd dlopens
+  # "libqrencode.so.4" (falling back to .so.3) and asks dlsym for
+  # QRcode_encodeString and QRcode_free and nothing else
+  # (src/shared/qrcode-util.c:40, at the pinned v261 tag). Because it dlopens
+  # rather than links, an empty libqrencode fails no link here -- the recovery
+  # key would simply stop being displayed as a QR code on a running system.
+  # The .so.4 test is the name dlopen is given; a soname bump upstream would
+  # take the fallback to .so.3 with it and neither would be found. It is 4
+  # here because CMakeLists.txt:115 sets SOVERSION ${PROJECT_VERSION_MAJOR}
+  # against project(QRencode VERSION 4.1.1) on line 3 -- and that is the
+  # pinned bytes rather than a neighbouring release, because sources.lock
+  # pins this source as a tag archive, so the tag and the tarball are one tree.
   - test -e /dest/usr/lib/libqrencode.so
+  - test -e /dest/usr/lib/libqrencode.so.4
   - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libqrencode.so QRcode_encodeString QRcode_free __cfi_check

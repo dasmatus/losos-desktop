@@ -90,9 +90,39 @@ steps:
   # preferring it over drops: [cfi] on a library that parses CBOR off a USB
   # device. Neither symbol proves the other: __cfi_check is there at hidden
   # visibility too.
+  #
+  # The three fido_assert_* names are here because nothing else in this tree
+  # would miss them. systemd does not LINK against libfido2 -- it dlopens
+  # "libfido2.so.1" and resolves 48 symbols by dlsym
+  # (src/shared/libfido2-util.c:93, read at the pinned v261 tag, which for this
+  # source is the pinned bytes). So a libfido2 that exports nothing fails no
+  # link anywhere: systemd compiles, the image builds, everything ships, and
+  # the first symptom is a machine that will not unlock. This line is the only
+  # thing standing between the layer's -fvisibility=hidden and that.
+  #
+  # Given that, the names have to cover the unlock, not just the library.
+  # fido_dev_open and fido_dev_info_manifest are enumeration -- they are what
+  # finds a token. The hmac-secret extension is what actually unlocks a volume
+  # with one: systemd-cryptenroll sets a salt and reads the derived secret back
+  # through fido_assert_set_hmac_salt and fido_assert_hmac_secret_ptr, gated on
+  # fido_assert_set_extensions. A regression confined to those three would pass
+  # an enumeration-only check and break exactly the feature this package is in
+  # the image for.
+  #
+  # The `.so.1` test is the SONAME systemd asks dlopen for by name. It is
+  # normally the same file as the linker name through a symlink, so this looks
+  # redundant -- it is not. A soname bump upstream silently stops systemd
+  # finding the library at all, and by the argument above that is invisible
+  # until boot. It is 1 here because src/CMakeLists.txt:143 sets
+  # SOVERSION ${FIDO_MAJOR} and CMakeLists.txt:31 sets FIDO_MAJOR "1" -- read
+  # at the 1.15.0 git tag rather than in the pinned tarball, developers.yubico.com
+  # being unreachable from where this was checked. CMakeLists.txt is not a
+  # generated file, so the two agree, but the check is one step short of the
+  # bytes and says so.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libfido2.so
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libfido2.so fido_init fido_dev_open fido_dev_info_manifest __cfi_check
+  - test -e /dest/usr/lib/libfido2.so.1
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libfido2.so fido_init fido_dev_open fido_dev_info_manifest fido_assert_set_extensions fido_assert_set_hmac_salt fido_assert_hmac_secret_ptr __cfi_check
