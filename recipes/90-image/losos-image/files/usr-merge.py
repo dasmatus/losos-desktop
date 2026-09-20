@@ -188,12 +188,7 @@ def check_os_release_parent(root):
     return 0
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("root", help="assembled root filesystem to rewrite")
-    args = parser.parse_args()
-
-    root = Path(args.root)
+def preflight(root):
     for source_name, target_name in LINKS.items():
         status = check_merge_dir(root, source_name, target_name)
         if status:
@@ -201,7 +196,16 @@ def main():
     status = check_os_release(root)
     if status:
         return status
-    status = check_source_path(root, "usr/lib/os-release")
+    return check_source_path(root, "usr/lib/os-release")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("root", help="assembled root filesystem to rewrite")
+    args = parser.parse_args()
+
+    root = Path(args.root)
+    status = preflight(root)
     if status:
         return status
     for source_name, target_name in LINKS.items():
