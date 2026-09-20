@@ -64,6 +64,11 @@ BASE_IMAGES = {
     "aarch64": "docker.io/menci/archlinuxarm:base",
 }
 
+MACHINE_ALIASES = {
+    "amd64": "x86_64",
+    "arm64": "aarch64",
+}
+
 
 def runtime():
     """podman if it is here, else docker.
@@ -120,7 +125,8 @@ def base_image():
     programs in it have to run here. `tools/configure --arch` is the other
     question and is unrelated.
     """
-    machine = platform.machine()
+    raw_machine = platform.machine()
+    machine = MACHINE_ALIASES.get(raw_machine, raw_machine)
     try:
         return BASE_IMAGES[machine]
     except KeyError:
@@ -135,7 +141,7 @@ def build(engine, args):
     command = [engine, "build", "-t", IMAGE, "-f", str(REPO / "Containerfile")]
     # An explicit --build-arg wins, so overriding the base stays possible and
     # this does not quietly pass it twice with the caller's copy losing.
-    if not any(pin.startswith("BASE_IMAGE=") for pin in args.build_arg):
+    if not any(pin == "BASE_IMAGE" or pin.startswith("BASE_IMAGE=") for pin in args.build_arg):
         command += ["--build-arg", f"BASE_IMAGE={base_image()}"]
     for pin in args.build_arg:
         command += ["--build-arg", pin]

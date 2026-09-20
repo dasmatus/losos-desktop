@@ -217,6 +217,7 @@ RUN pacman -Syu --noconfirm --needed \
       `# reached for it first.` \
       diffutils \
       \
+      \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
       `# deliberately absent -- but ninja and cmake are invoked as first words.` \
       ninja cmake \

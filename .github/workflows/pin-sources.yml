@@ -22,25 +22,36 @@ on:
 permissions:
   contents: read
 
+# Ubuntu is the VM host, not this job's userspace; there is no hosted Arch label.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   pin:
     runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
     steps:
+      # A local action is unavailable before checkout. Install git first so
+      # checkout creates a repository rather than downloading a REST archive.
+      - name: Bootstrap Arch before checkout
+        run: |
+          if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf
+          elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          else
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          fi
+          pacman -Syu --needed --noconfirm git ca-certificates tar gzip zstd
       - uses: actions/checkout@v4
 
       - name: Install what the fetcher needs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends just python3-yaml
+        uses: ./.github/actions/arch-setup
 
-      # The mirror is written to out/sources, which for the full source set is
-      # several gigabytes -- more than the runner has spare alongside the
-      # preinstalled toolchains. Reclaiming them first is cheaper than a fetch
-      # that dies two thirds of the way through with ENOSPC.
-      - name: Make room for the mirror
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          df -h /
+      # The Arch container has none of Ubuntu's preinstalled SDKs to delete.
+      - name: Report the mirror's disk budget
+        run: df -h / "$GITHUB_WORKSPACE"
 
       # --update is what fills a TODO. Without it the tool reports an unpinned
       # entry as a failure and changes nothing, which is the right default

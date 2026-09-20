@@ -23,16 +23,32 @@ the layers below it, which need none of this, stay on the host where they are
 faster. `recipe_needs_image_host` and `build_in_container` in `do` are the two
 halves of that.
 
-The `gates` job in `images.yml` deliberately stays on an apt list of its own.
-It is the fast one, it runs on every event, and having one job that does not
-depend on this image being buildable is what tells a broken tree and a broken
-Containerfile apart. The `container` job is the one that runs the gate inside
-the image, so it is where a wrong Containerfile shows up as itself rather than
-as something else. It is not the only job it can take down: `build` routes the
-whole chain through the same image when the host has no pinned mkosi
-(`build_in_container`), so a Containerfile that does not build, or that is
-missing a tool a recipe reaches for, fails there too -- several layers in, with
-the failure wearing the name of whichever recipe hit it first.
+CI jobs run in Arch Linux containers, using Arch Linux ARM on the native
+arm64 runners. The `runs-on: ubuntu-24.04` and `ubuntu-24.04-arm` labels still
+select GitHub's underlying VMs; GitHub does not provide a hosted Arch runner
+label. Packages and job steps run in the Arch userspace, not on Ubuntu.
+
+The `gates` job in `images.yml` deliberately keeps its own pacman package list.
+It runs on every event without depending on this repository's image being
+buildable, which tells a broken tree and a broken Containerfile apart. The
+`container` job still builds and checks the full Containerfile on both
+architectures. `build` also uses that image when the outer job lacks the pinned
+mkosi, so both jobs need a nested container runtime.
+
+Only those two jobs run privileged, for nested Podman. Jobs that invoke pm
+directly instead unconfine seccomp, AppArmor and the masked system paths so
+its user namespace can mount procfs. VM verification jobs expose `/dev/kvm`
+when the host provides it, retaining the software-emulation fallback otherwise.
+These are container options, not attempts to change the Ubuntu host's sysctls
+from inside Arch. Shell steps explicitly use bash: GitHub otherwise defaults
+container jobs to `sh`, which cannot read the build pipeline's `PIPESTATUS`.
+
+Bootstrap installs git before checkout, preserving the real Git worktree
+needed by source proposals and release publishing. Rust is installed explicitly
+rather than inherited from the hosted runner, with its toolchain under `/usr`
+and real cargo/rustc/rustdoc links where pm's jail can reach them (C3, C7).
+The pm binary and encoder caches distinguish the Arch userspace from the old
+Ubuntu entries; the SHA-256-verified source mirror remains shared.
 
 ```sh
 just container build      # build the image
@@ -87,12 +103,11 @@ the two available trades -- the package list in the Containerfile is untouched
 by it, because Arch Linux ARM is Arch's package tree rebuilt rather than a
 distribution with names of its own.
 
-The `container` job builds both images for that reason, one runner each. It is
-the only thing in the workflow that builds either: the `build` job runs on the
-runner rather than in this image, so without the second leg the aarch64 base
-would never be pulled in CI at all, and an image maintainer who stopped
-publishing -- or a package that exists under one name on Arch and another on
-the rebuild -- would surface for the first time on somebody's arm64 laptop.
+The `container` job builds both images for that reason, one runner each,
+independently of whether the source pins allow the image build to run.
+Without the second leg, an image maintainer who stopped publishing -- or a
+package that exists under one name on Arch and another on the rebuild -- could
+escape that check and surface only when an aarch64 build reaches the fallback.
 What the second leg does not do is make the two toolchains match; that is the
 cost above, and it stays.
 

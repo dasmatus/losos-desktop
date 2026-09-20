@@ -24,6 +24,13 @@ on:
 permissions:
   contents: read
 
+# GitHub has no native Arch hosted-runner label: Ubuntu supplies only the VM
+# and kernel; every job's userspace and dependencies come from its Arch container.
+# Container jobs otherwise default to sh, which cannot read Bash's PIPESTATUS.
+defaults:
+  run:
+    shell: bash
+
 # One run per pull request branch, and only a pull request's run is cancelled.
 #
 # Every job here compiles the base layer from source, so an out-of-date run is
@@ -69,6 +76,7 @@ jobs:
   # path could not complete at all. One output, referenced everywhere.
   channel:
     runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
     outputs:
       name: ${{ steps.pick.outputs.name }}
     steps:
@@ -84,34 +92,37 @@ jobs:
   # KVM, no nix. If this is red nothing below is worth running.
   gates:
     runs-on: ubuntu-24.04
+    container:
+      image: docker.io/library/archlinux:base
+      # pm creates user/mount namespaces and a fresh procfs (C7); unmasking
+      # system paths matters independently of seccomp and AppArmor.
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
     steps:
+      # This cannot be a local action: checkout needs git and CA roots BEFORE
+      # the repository exists, or it silently falls back to a REST archive.
+      - &arch-bootstrap
+        name: Bootstrap Arch before checkout
+        run: |
+          # Match Containerfile's pacman 7/Landlock handling, including ARM's
+          # base image, which does not pre-disable the download sandbox.
+          if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf
+          elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          else
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          fi
+          pacman -Syu --needed --noconfirm git ca-certificates tar gzip zstd
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
 
       - name: Install the toolchain the gates need
-        run: |
-          sudo apt-get update
-          # libclang-rt-*-dev is not optional: without it clang errors out on
-          # -fsanitize=cfi with a missing ignorelist, and the toolchain report
-          # cannot tell whether CFI works.
-          #
-          # mold is the linker manifest/toolchain.yaml names, and
-          # llvm-18-linker-tools is what carries the LLVMgold.so it does LTO
-          # through -- nothing else here depends on that package, and every
-          # link the report makes is an LTO link. lld stays because the kernel
-          # takes ld.lld from LLVM=1. docs/host-requirements.md is the list
-          # this line is one copy of; the Containerfile is the other.
-          sudo apt-get install -y --no-install-recommends \
-            clang lld mold llvm llvm-18-linker-tools libclang-rt-18-dev \
-            just python3-yaml
-
-      # pm's jail is a user namespace, and Ubuntu 24.04 ships
-      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
-      # uid_map write hakoniwa needs. Without this every pm build fails with
-      # "Operation not permitted" from inside the sandbox -- which reads like a
-      # permissions problem with the workspace and is not.
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        uses: ./losos-desktop/.github/actions/arch-setup
+        with:
+          # compiler-rt provides CFI's ignorelist; llvm carries LLVMgold.so,
+          # which mold needs for LTO. lld remains for the kernel's LLVM=1.
+          packages: clang lld mold llvm compiler-rt just python-yaml
+          rust: "true"
 
       # Checks out the pinned pm and leaves a release binary at
       # pm/target/release/pm -- from this run, or from the cache an earlier run
@@ -132,7 +143,7 @@ jobs:
       # whose encoder wraps them, and the compiler. That last one is taken from
       # the action above rather than read again here -- this is a cargo build
       # like pm's, so it has pm's inputs, and a key that leaves the compiler out
-      # stays an exact hit across a runner-image Rust bump and goes on serving
+      # stays an exact hit across a Rust pin bump and goes on serving
       # components the installed compiler never produced.
       #
       # Nothing reads plugins/dist out of the tree -- tools/sign-all installs
@@ -142,7 +153,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: losos-desktop/plugins/dist
-          key: plugins-${{ runner.os }}-${{ runner.arch }}-${{ env.PM_REF }}-${{ steps.pm.outputs.rustc }}-${{ hashFiles('losos-desktop/plugins/**/*.rs', 'losos-desktop/plugins/**/Cargo.toml', 'losos-desktop/plugins/Cargo.lock', 'losos-desktop/plugins/wit/*.wit', 'losos-desktop/plugins/build.sh') }}
+          key: plugins-arch-${{ runner.arch }}-${{ env.PM_REF }}-${{ steps.pm.outputs.rustc }}-${{ hashFiles('losos-desktop/plugins/**/*.rs', 'losos-desktop/plugins/**/Cargo.toml', 'losos-desktop/plugins/Cargo.lock', 'losos-desktop/plugins/wit/*.wit', 'losos-desktop/plugins/build.sh') }}
 
       - name: Build the plugin components
         if: steps.components.outputs.cache-hit != 'true'
@@ -176,7 +187,7 @@ jobs:
   # image is built from scratch on every run until it is published to a
   # registry -- and it is the only job that can fail when the Containerfile is
   # wrong, which the job above cannot, because that one installs its own
-  # dependencies with apt.
+  # dependencies directly with pacman.
   #
   # `just container` passes the seccomp and AppArmor options pm's user
   # namespace needs; GitHub's runners allow both.
@@ -186,32 +197,37 @@ jobs:
     # platform.machine(): Arch's own image on x86_64, Arch Linux ARM on
     # aarch64, since Arch publishes no arm64 image. Two separate distributions
     # with separate package sets, so an image proved on one says nothing about
-    # the other -- and the build job below runs on the runner rather than in
-    # this image, so nothing else in the workflow would ever build the arm64
-    # one. See docs/container.md.
+    # the other. This job tests the complete Containerfile on both even when
+    # the image-build jobs are skipped for unresolved pins. See docs/container.md.
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        include:
+          - runner: ubuntu-24.04
+            image: docker.io/library/archlinux:base
+          - runner: ubuntu-24.04-arm
+            image: docker.io/menci/archlinuxarm:base
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      # Nested Podman builds and runs the Containerfile, not the VM's daemon.
+      options: --privileged
     steps:
+      - *arch-bootstrap
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
       # Checked out directly rather than through .github/actions/pm, and
       # deliberately. That action's whole output is a pm binary built on the
-      # runner; this job exists to build one INSIDE the image, with the image's
+      # job container; this job builds one INSIDE the nested image, with its
       # toolchain, and a host binary handed to it would make the job prove
       # nothing. Only the pin is shared.
       - uses: actions/checkout@v4
         with: { repository: dichhead/pm, path: pm, ref: "${{ env.PM_REF }}" }
 
-      - name: Install just
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends just
-
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install the nested container tools
+        uses: ./losos-desktop/.github/actions/arch-setup
+        with:
+          nested: "true"
 
       - name: Build the build host
         working-directory: losos-desktop
@@ -261,9 +277,11 @@ jobs:
   # turn every push red.
   pinned:
     runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
+      - *arch-bootstrap
       - uses: actions/checkout@v4
       - id: check
         run: |
@@ -284,40 +302,35 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
+            image: docker.io/library/archlinux:base
           # GitHub's arm64 runners, so aarch64 builds and boots natively
           # instead of under TCG. A cross-built image verified only under
           # emulation is a weaker claim and a much slower job.
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            image: docker.io/menci/archlinuxarm:base
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      # Justfile falls back to tools/container for the pinned mkosi host.
+      # Only jobs running nested containers receive full privilege.
+      options: --privileged
     steps:
+      - *arch-bootstrap
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
 
       - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          # python3-jinja2: fwupd's meson runs `python3 -c 'import jinja2'`
-          # and errors out without it, and a build step cannot set PYTHONPATH,
-          # so it has to be importable by the host's python3. See
-          # docs/host-requirements.md.
-          #
-          # mold and llvm-18-linker-tools travel together and are not optional
-          # here: this job runs the real build, every link in it is a ThinLTO
-          # link through -fuse-ld=mold, and mold does LTO through the
-          # LLVMgold.so only that package carries. lld is still here for the
-          # kernel's LLVM=1. See docs/host-requirements.md.
-          #
-          # bzip2 is not named by any recipe and appears on no command line.
-          # tar reaches for it on its own for the .tar.bz2 sources in the
-          # lock, and Debian's tar tries lbzip2 before it; the runner image
-          # has neither, so pcre2's fetch step dies with
-          # "tar (child): lbzip2: Cannot exec" -- a program this tree never
-          # mentions. xz-utils beside it is there for the same reason.
-          sudo apt-get install -y --no-install-recommends \
-            clang lld mold llvm llvm-18-linker-tools libclang-rt-18-dev \
-            just python3-yaml python3-jinja2 \
-            ninja-build cmake bison flex bc xz-utils bzip2 perl
+        uses: ./losos-desktop/.github/actions/arch-setup
+        with:
+          # Match the native build tools in Containerfile. Python modules and
+          # tar's decompressors are indirect dependencies recipes cannot set up.
+          packages: >-
+            clang lld mold llvm compiler-rt just python-yaml python-jinja
+            ninja cmake bison flex bc xz bzip2 perl make pkgconf cpio patch
+            diffutils gperf gettext rsync curl
+          rust: "true"
+          nested: "true"
 
       # losos-security is a cargo build and everything above the toolchain
       # layer is musl, so --target needs that target's std installed. Without
@@ -325,14 +338,6 @@ jobs:
       # into a build that has already run for minutes.
       - name: Add the Rust musl target
         run: rustup target add ${{ matrix.arch }}-unknown-linux-musl
-
-      # pm's jail is a user namespace, and Ubuntu 24.04 ships
-      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
-      # uid_map write hakoniwa needs. Without this every pm build fails with
-      # "Operation not permitted" from inside the sandbox -- which reads like a
-      # permissions problem with the workspace and is not.
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       # The same pm the gate approved, out of the same cache entry: a build
       # running against a different pm than the gate approved is verifying a
@@ -532,13 +537,14 @@ jobs:
         if: failure()
         run: |
           log="$GITHUB_WORKSPACE/build.log"
+          why="$GITHUB_WORKSPACE/build-failure.log"
           [ -f "$log" ] || { echo "the build step wrote no log"; exit 0; }
-          awk '/^Error:/{found = 1} found' "$log" | sed -e 's/^ *│ *//' -e '/^$/d' > /tmp/why
+          awk '/^Error:/{found = 1} found' "$log" | sed -e 's/^ *│ *//' -e '/^$/d' > "$why"
           # No block means it died somewhere pm does not report from -- a
           # killed process, a full disk -- and then the last lines are the
           # only evidence there is.
-          [ -s /tmp/why ] || tail -c 900 "$log" > /tmp/why
-          head -c 1400 /tmp/why
+          [ -s "$why" ] || tail -c 900 "$log" > "$why"
+          head -c 1400 "$why"
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
@@ -550,10 +556,21 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
+            image: docker.io/library/archlinux:base
+            vm-packages: qemu-system-x86 edk2-ovmf
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            image: docker.io/menci/archlinuxarm:base
+            vm-packages: qemu-system-aarch64 edk2-aarch64
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      # KVM is optional (especially on ARM hosts). A direct --device mapping
+      # aborts job creation when it is absent, preventing the TCG fallback.
+      # arch-setup creates a job-local KVM node only when discovery finds one.
+      options: --device-cgroup-rule="c 10:232 rwm" --volume /dev:/host-dev:ro
     steps:
+      - *arch-bootstrap
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
@@ -561,14 +578,10 @@ jobs:
           path: release
 
       - name: Install QEMU and UEFI firmware
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends just python3-yaml \
-            qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
-          # GitHub's Linux runners expose /dev/kvm, but the runner user is not
-          # in the kvm group by default. Without this the boot still works and
-          # takes twenty times as long, which reads as a hang.
-          sudo chmod 666 /dev/kvm || true
+        uses: ./.github/actions/arch-setup
+        with:
+          packages: just python-yaml qemu-img ${{ matrix.vm-packages }}
+          kvm: "true"
 
       - name: Boot the kernel image
         run: |
@@ -606,10 +619,18 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-24.04
+            image: docker.io/library/archlinux:base
+            vm-packages: qemu-system-x86 edk2-ovmf
           - arch: aarch64
             runner: ubuntu-24.04-arm
+            image: docker.io/menci/archlinuxarm:base
+            vm-packages: qemu-system-aarch64 edk2-aarch64
     runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      options: --device-cgroup-rule="c 10:232 rwm" --volume /dev:/host-dev:ro
     steps:
+      - *arch-bootstrap
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
@@ -617,11 +638,10 @@ jobs:
           path: release
 
       - name: Install QEMU and UEFI firmware
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends just python3-yaml \
-            qemu-system-x86 qemu-system-arm ovmf qemu-efi-aarch64
-          sudo chmod 666 /dev/kvm || true
+        uses: ./.github/actions/arch-setup
+        with:
+          packages: just python-yaml qemu-img ${{ matrix.vm-packages }}
+          kvm: "true"
 
       - name: Apply an update inside the VM
         run: |
@@ -659,11 +679,15 @@ jobs:
       (github.event_name == 'workflow_dispatch' ||
        (needs.verify.result == 'success' && needs.ota.result == 'success'))
     runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
     # The one job that writes, and it says so here rather than at the top of
     # the file where it would also apply to every pull request.
     permissions:
       contents: write
     steps:
+      - *arch-bootstrap
+      - name: Install publishing tools
+        run: pacman -Syu --needed --noconfirm github-cli git-lfs
       - uses: actions/download-artifact@v4
         with: { pattern: "losos-*", path: release, merge-multiple: true }
 
