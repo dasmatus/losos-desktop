@@ -44,6 +44,7 @@ LIB="${2:?usage: check-unwinder.sh <nm> <library>}"
 
 nm_flags='--defined-only'
 accept_versions=false
+symbols='__unw_getcontext _Unwind_Backtrace _Unwind_GetIP'
 
 case "$LIB" in
   *.so|*.so.*)
