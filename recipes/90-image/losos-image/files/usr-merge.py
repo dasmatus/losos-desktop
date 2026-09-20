@@ -155,6 +155,9 @@ def merge_dir(root, source_name, target_name):
 
 
 def os_release(root):
+    status = check_source_path(root, "usr/lib/os-release")
+    if status:
+        return status
     source = root / "usr/lib/os-release"
     target = root / "etc/os-release"
     status = check_os_release_parent(root)
