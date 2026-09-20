@@ -240,9 +240,15 @@ def resolve(wanted, tarball, strip):
             parts = member.name.split("/")
             if len(parts) <= strip:
                 continue
-            relative = "/".join(parts[strip:])
+            # rstrip("/") because tar names a directory member with a trailing
+            # slash, and one of the things a recipe copies IS a directory:
+            # meson's own `mesonbuild` package. Matching the prefix as well
+            # covers the archives that carry no directory entries at all, where
+            # `mesonbuild` exists only as the parent of its files.
+            relative = "/".join(parts[strip:]).rstrip("/")
             for names in list(outstanding):
-                if relative in names:
+                if any(relative == name or relative.startswith(name + "/")
+                       for name in names):
                     del outstanding[names]
             if not outstanding:
                 break
@@ -300,6 +306,18 @@ def self_test():
         ("tar's own -C must demand nothing",
          ["python3 meson.py setup /build/b/x /build/src/x"],
          ["meson.build"], 1, 0),
+        # meson's own recipe copies a DIRECTORY, mesonbuild, and an archive may
+        # name it with a trailing slash, or not name it at all and carry only
+        # the files under it. Both are the directory being there.
+        ("a copied directory, present as its own entry",
+         ["cp -a /build/src/x/mesonbuild /dest/usr/lib/meson/"],
+         ["mesonbuild/", "meson.py"], 1, 0),
+        ("a copied directory, present only as its contents",
+         ["cp -a /build/src/x/mesonbuild /dest/usr/lib/meson/"],
+         ["mesonbuild/__init__.py", "meson.py"], 1, 0),
+        ("a copied directory that is genuinely not there",
+         ["cp -a /build/src/x/mesonbuild /dest/usr/lib/meson/"],
+         ["meson.py"], 1, 1),
     ]
 
     failures = []
