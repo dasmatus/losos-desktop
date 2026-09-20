@@ -365,17 +365,17 @@ def main():
         # A meson build has nowhere to put a response file. Every other build
         # system in this tree takes flags as a VAR=value argument or a -D, so
         # naming @CFLAGS_RSP_<PKG>@ is enough; meson takes them only from the
-        # native file, and the native file is per LAYER. So an exempt meson
-        # package gets a native file of its own, identical but for the two flag
+        # cross file, and the cross file is per LAYER. So an exempt meson
+        # package gets a cross file of its own, identical but for the two flag
         # lists, and names it instead.
         #
         # This is not hypothetical. gjs carried a four-scheme CFI exemption for
-        # its SpiderMonkey JIT while still pointing at the shared native.ini,
-        # so cflags-gjs.rsp was written every run and read by nothing: gjs was
+        # its SpiderMonkey JIT while still pointing at the shared file, so
+        # cflags-gjs.rsp was written every run and read by nothing: gjs was
         # built with the full scheme set and the manifest said otherwise.
         # tools/gates/exceptions-live.py exists so that cannot happen quietly
         # again.
-        native_template = (REPO / "share" / "native.ini.in").read_text()
+        cross_template = (REPO / "share" / "cross.ini.in").read_text()
         for package in toolchain.exceptions:
             token = package.upper().replace("-", "_")
             cflags = recipe_out / f"cflags-{package}.rsp"
@@ -385,12 +385,15 @@ def main():
             local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
             local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
 
-            native = recipe_out / f"native-{package}.ini"
-            native.write_text(
-                substitute(native_template,
+            # Only the cross file varies per package: the native file below
+            # carries no flags at all, so there is nothing in it for an
+            # exception to drop.
+            cross = recipe_out / f"cross-{package}.ini"
+            cross.write_text(
+                substitute(cross_template,
                            dict(local, **toolchain.meson_subs(package)))
             )
-            local[f"@NATIVE_INI_{token}@"] = str(native)
+            local[f"@CROSS_INI_{token}@"] = str(cross)
 
         member_dirs = []
         members = []
@@ -410,8 +413,13 @@ def main():
         text = substitute(yaml_dump(bundle), local)
         (recipe_out / "build.yaml").write_text(text)
 
-        # One native file per layer, from share/native.ini.in. Every meson
-        # package in the layer points at it; nothing else carries flags.
+        # One pair per layer. Every meson package in the layer names both:
+        # cross.ini carries the toolchain and the [host_machine] section that
+        # stops meson running what it compiles (C7), native.ini carries the
+        # build-machine compiler a cross build also needs and deliberately no
+        # flags. Nothing else in the layer carries flags.
+        cross = (REPO / "share" / "cross.ini.in").read_text()
+        (recipe_out / "cross.ini").write_text(substitute(cross, local))
         native = (REPO / "share" / "native.ini.in").read_text()
         (recipe_out / "native.ini").write_text(substitute(native, local))
 

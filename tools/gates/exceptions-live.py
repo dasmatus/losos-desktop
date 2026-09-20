@@ -18,10 +18,10 @@ existed and nothing anywhere could have told you.
 
 meson is the reason that is easy to do by accident rather than careless. Every
 other build system here takes flags as a VAR=value argument or a -D, so the
-token has somewhere obvious to go; meson takes them only from a native file,
-and the native file is per LAYER. tools/configure now writes native-<pkg>.ini
-for an exempt package too, and @NATIVE_INI_<PKG>@ is the third way a recipe can
-name its exemption.
+token has somewhere obvious to go; meson takes them only from a cross file,
+and the cross file is per LAYER. tools/configure now writes cross-<pkg>.ini for
+an exempt package too, and @CROSS_INI_<PKG>@ is the third way a recipe can name
+its exemption.
 
 EXEMPT is for a package that takes none of this tree's flags in the first
 place, where there is no token to name because there is no flag line to name it
@@ -80,7 +80,7 @@ def main():
         names = (
             f"@CFLAGS_RSP_{token}@",
             f"@LDFLAGS_RSP_{token}@",
-            f"@NATIVE_INI_{token}@",
+            f"@CROSS_INI_{token}@",
         )
 
         for template in templates:
@@ -95,7 +95,7 @@ def main():
                 f"    The recipe spells the shared flags, so the exemption is "
                 f"written to disk every run and read by nothing.\n"
                 f"    Name {names[0]} and {names[1]} where the recipe passes "
-                f"CFLAGS and LDFLAGS, or {names[2]} as its --native-file if it "
+                f"CFLAGS and LDFLAGS, or {names[2]} as its --cross-file if it "
                 f"is a meson build."
             )
 

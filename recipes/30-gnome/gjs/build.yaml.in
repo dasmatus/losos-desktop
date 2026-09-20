@@ -23,15 +23,15 @@ steps:
   name: configure
   dl_urls: null
   run:
-  # --native-file is @NATIVE_INI_GJS@ rather than the layer's shared
-  # native.ini, and that is the whole of how gjs's exemption reaches the
+  # --cross-file is @CROSS_INI_GJS@ rather than the layer's shared
+  # cross.ini, and that is the whole of how gjs's exemption reaches the
   # compiler. A meson build has no CFLAGS= argument to name
   # @CFLAGS_RSP_GJS@ on, so pointing at the shared file leaves the
   # manifest entry inert -- which is what it did until now: gjs was built
   # with all five CFI schemes while manifest/toolchain.yaml said four
   # were off for SpiderMonkey's JIT. tools/gates/exceptions-live.py is
   # what stops that being possible again.
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gjs /build/src/gjs --native-file @NATIVE_INI_GJS@ --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dinstalled_tests=false -Dskip_gtk_tests=true
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gjs /build/src/gjs --cross-file @CROSS_INI_GJS@ --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dinstalled_tests=false -Dskip_gtk_tests=true
 
 - stage: Build
   name: compile
