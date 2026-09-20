@@ -22,8 +22,7 @@
 #
 # __cfi_check earns a word, because it is easy to assert for the wrong reason.
 # It is present whenever CFI is on, at hidden and default visibility alike --
-# measured on clang 19.1.1 and on 18.1.3, neither of which is the Arch base's
-# 22.1.8 -- so on its
+# measured on clang 19.1.1 and on 18.1.3 -- so on its
 # own it proves nothing about visibility.
 # What it does prove is that a `drops: [visibility]` exception kept the checks
 # instead of quietly losing them, which is the thing `drops: [cfi]` gives up.

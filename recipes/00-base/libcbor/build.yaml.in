@@ -66,7 +66,9 @@ steps:
 # error rather than a deprecation warning, where Debian trixie's CMake 3.31
 # still accepted it. The sweep above covers it unchanged -- 3.5 is above 3.2,
 # so the two packages under the CMP0056 floor are exactly the two under this
-# one. libqrencode carries the error text and the reasoning.
+# one. libqrencode carries the error text and the reasoning -- including why
+# the two policy flags on this line are not redundant, and why dropping
+# either one breaks one of the two bases.
 #
 # The CXX skip above is NOT what fixes this and would not have: it suppresses a
 # test rather than correcting the flags one is run with, and the C test has no

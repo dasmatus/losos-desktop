@@ -78,9 +78,24 @@ steps:
 #
 # Debian trixie's CMake 3.31 still accepted it, which is why this tree carried
 # the recipe for months without noticing. The variable is CMake's own suggested
-# remedy and was added in 3.31, so it is understood by the last base as well as
-# this one; an older CMake would report it as a manually-specified variable it
-# did not use, not as an error.
+# remedy and its documentation gives it as `versionadded:: 4.0`, so on a CMake
+# 3.x it is an unused cache variable, reported as such and otherwise ignored.
+# That report is the same "Manually-specified variables were not used by the
+# project" warning this recipe avoids two paragraphs up by not passing CXX
+# variables -- accepted here rather than avoided, because the alternative is a
+# recipe that only configures on one of the two bases.
+#
+# THE TWO POLICY FLAGS ON THIS LINE ARE NOT REDUNDANT, and dropping either
+# breaks one of the two bases. CMAKE_POLICY_VERSION_MINIMUM sets a minimum
+# *policy version*, and a policy version of 3.5 makes every policy introduced
+# at or below it NEW -- CMP0056 arrived in 3.2, so on CMake 4 the floor flag
+# already covers it and CMAKE_POLICY_DEFAULT_CMP0056 changes nothing. On a
+# CMake 3.x it is the reverse: the floor flag does not exist yet and is
+# ignored, and CMAKE_POLICY_DEFAULT_CMP0056 is the only thing making
+# try_compile keep the linker flags. Each flag is load-bearing on exactly the
+# base the other is inert on. Stated from CMake's documented behaviour of
+# cmake_minimum_required rather than from watching a --trace-expand, which is
+# worth doing if anyone wants to tidy this.
 #
 # The same two recipes need it as need CMP0056, and for once that is not a
 # coincidence: 3.5 is above 3.2, so anything already below the CMP0056 floor is

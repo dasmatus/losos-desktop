@@ -206,11 +206,10 @@ class Toolchain:
         #
         # while accepting every scheme this tree enables, cross-DSO included,
         # at -fvisibility=default. Measured on clang 18.1.3 and repeated on
-        # 19.1.1. Neither is the Containerfile's any more: the Arch base pins
-        # no LLVM version and reported 22.1.8 when it landed. This comment
-        # named 18 as the container's for several commits before anyone
-        # checked, which is the reason it now says what was measured rather
-        # than what the container has. So hidden is a security
+        # 19.1.1. Deliberately no machine: this comment named 18 as "the
+        # container's" for several commits before anyone checked, then 19, and
+        # the Arch base moved it to 22 within the hour. The measurement is the
+        # durable part. So hidden is a security
         # choice here and not a compiler requirement: what CFI needs is for the
         # value to be *stated*, and what it loses at `default` is the guarantee
         # that no exported symbol is interposed at load time by something it

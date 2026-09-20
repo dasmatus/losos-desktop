@@ -361,8 +361,7 @@ exceptions:
       capability text to, and it does not have to. clang accepts this tree's
       whole scheme set with -fsanitize-cfi-cross-dso at -fvisibility=default;
       what it refuses is -fvisibility= missing altogether. Checked on 19.1.1
-      and on 18.1.3; the Arch base's clang is 22.1.8 and was not among them.
-      So libcap keeps indirect-call checking and loses only the
+      and on 18.1.3. So libcap keeps indirect-call checking and loses only the
       guarantee that nothing interposes its exports at load time, which for a
       library that has been default-visible since 1999 is the status quo
       everywhere else rather than a new hole.
