@@ -463,6 +463,45 @@ exceptions:
       something that does not link, and -D_FORTIFY_SOURCE fights the kernel's
       own string routines. The kernel's config fragment turns on the kernel's
       equivalents instead.
+  # losos-30-graphics. The same class as the base layer's six, found by
+  # sweeping ahead of the build rather than waiting for it: none of the three
+  # carries a single `visibility("default")` anywhere in its tree, and none
+  # sets `gnu_symbol_visibility` in its own build either. That second half
+  # matters as evidence. A project that hides its own symbols has to annotate
+  # its exports or it would ship an empty library for everyone, not just for
+  # us -- glib, graphene, libepoxy and libxkbcommon all do exactly that and are
+  # why they are not on this list. These three instead assume the default is
+  # `default`, which is true everywhere except here.
+  #
+  # Checked against the hash-pinned tarballs. sqlite is a fourth candidate on
+  # the same evidence from its headers, and is not here because sqlite.org
+  # could not be reached to verify the pinned bytes; it is written up in
+  # docs/limits.md instead of guessed at.
+  - package: harfbuzz
+    drops: [visibility]
+    why: >
+      HB_EXTERN is `extern` and nothing more: hb-common.h defines it that way
+      behind `#ifndef`, and the only place hb.hh redefines it is the MSVC
+      branch. The `-DHB_EXTERN=` in src/meson.build is for g-ir-scanner and
+      does not reach the library. pango, cairo and gtk4 all link it, so an
+      empty libharfbuzz would surface three packages later as a text-shaping
+      failure with no obvious cause.
+
+      A meson build, so it names @NATIVE_INI_HARFBUZZ@ rather than a response
+      file -- see p11-kit for why that is the only way.
+  - package: libpng
+    drops: [visibility]
+    why: >
+      PNG_EXPORT resolves through PNG_IMPEXP, which pngconf.h defines as empty
+      on everything that is not Windows. libpng's symbol versioning does not
+      help for the usual reason. cairo, gdk-pixbuf and gtk4 all link it.
+  - package: libjpeg-turbo
+    drops: [visibility]
+    why: >
+      jmorecfg.h spells its two declaration macros `#define GLOBAL(type) type`
+      and `#define EXTERN(type) extern type`, which is the libjpeg API as it
+      has been since 1991. Both libjpeg and libturbojpeg are affected, so both
+      are checked; gdk-pixbuf is the consumer.
   - package: gjs
     drops: [cfi-vcall, cfi-nvcall, cfi-derived-cast, cfi-unrelated-cast]
     why: >

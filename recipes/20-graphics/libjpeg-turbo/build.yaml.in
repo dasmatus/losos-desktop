@@ -23,7 +23,12 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libjpeg-turbo -B /build/b/libjpeg-turbo -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DENABLE_STATIC=OFF -DWITH_JPEG8=ON
+# libjpeg-turbo's own flags. jmorecfg.h spells its declaration macros
+# `#define GLOBAL(type) type` and `#define EXTERN(type) extern type`, which
+# is the libjpeg API as it has been since 1991 and carries no visibility
+# attribute; under -fvisibility=hidden both libjpeg and libturbojpeg install
+# empty. gdk-pixbuf is the consumer. See manifest/toolchain.yaml.
+  - cmake -S /build/src/libjpeg-turbo -B /build/b/libjpeg-turbo -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBJPEG_TURBO@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP_LIBJPEG_TURBO@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBJPEG_TURBO@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBJPEG_TURBO@ -DENABLE_STATIC=OFF -DWITH_JPEG8=ON
 
 - stage: Build
   name: compile
@@ -50,3 +55,5 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libjpeg.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libjpeg.so jpeg_std_error jpeg_CreateDecompress jpeg_read_header jpeg_start_decompress
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libturbojpeg.so tj3Init tj3Compress8 tj3Decompress8
