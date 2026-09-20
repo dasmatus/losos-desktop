@@ -15,6 +15,14 @@ REPO = Path(__file__).resolve().parents[2]
 PACKAGE = REPO / "recipes/10-core/losos-swap"
 SOURCE = PACKAGE / "files/src/losos-swap.c"
 CONFIG = "25-swap.conf"
+INITRD_REPART_SEARCH = (
+    "/sysroot/etc/repart.d",
+    "/sysroot/run/repart.d",
+    "/usr/local/lib/repart.d",
+    "/usr/lib/repart.d",
+    "/sysusr/usr/local/lib/repart.d",
+    "/sysusr/usr/lib/repart.d",
+)
 
 # Link-time wrappers leave the production binary free of test-only environment
 # overrides. Short writes and delayed errors exercise atomic publication too.
@@ -281,6 +289,11 @@ class SwapWiringTests(unittest.TestCase):
                 self.assertEqual(config["Service"]["ExecStartPre"],
                                  f"/usr/lib/losos/losos-swap {output}")
                 if service == "systemd-repart":
+                    # In the initrd systemd-repart searches the target root beneath
+                    # /sysroot while still reading the shipped layer definitions from
+                    # the initrd's own /usr and /sysusr trees. The generated swap
+                    # definition has to land inside that effective search set.
+                    self.assertIn(output, INITRD_REPART_SEARCH)
                     self.assertNotIn("ExecStart", config["Service"])
                     lines = self.active_lines(
                         f"overlay/usr/lib/systemd/system/{service}.service.d/{dropin}")
