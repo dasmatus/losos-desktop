@@ -1,6 +1,8 @@
 # util-linux 2.40.2
 #
-# libmount, libblkid, libuuid and libfdisk. systemd's mount handling, gpt-auto-generator and repart all rest on these; the programs are off because systemd supplies its own.
+# libmount, libblkid, libuuid and libfdisk underpin systemd's disk handling.
+# Only the swap tools are enabled: repart invokes mkswap and generated .swap
+# units invoke swapon/swapoff. libsmartcols is required by swapon.
 name: util-linux
 version:
 - '2'
@@ -19,6 +21,15 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_UTIL_LINUX@ --no-same-owner -C /build/src/util-linux --strip-components=1
 
+# Unlike swapon, this version has no --enable-mkswap switch: disabling all
+# programs unconditionally disables mkswap too. Patch the shipped configure
+# rather than adding an autotools bootstrap to the host requirements.
+- stage: Build
+  name: patch
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/util-linux/patches /build/src/util-linux
+
 # ./configure has no -C and there is no `cd` in a build step (C1), so the one
 # permitted wrapper puts it in the build directory. configure takes VAR=value
 # as positional arguments, which is how the toolchain and the sysroot are
@@ -33,7 +44,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/util-linux /build/src/util-linux/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-all-programs --enable-libmount --enable-libblkid --enable-libuuid --enable-libfdisk
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/util-linux /build/src/util-linux/configure --host=@ARCH_TRIPLE@ --prefix=/usr --sbindir=/usr/sbin --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-all-programs --enable-libmount --enable-libblkid --enable-libuuid --enable-libfdisk --enable-libsmartcols --enable-swapon
 
 - stage: Build
   name: compile
@@ -56,3 +67,6 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libmount.so
+  - test -x /dest/usr/sbin/mkswap
+  - test -x /dest/usr/sbin/swapon
+  - test -x /dest/usr/sbin/swapoff

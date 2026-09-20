@@ -53,6 +53,12 @@ steps:
   # catches exactly that, and caught exactly this.
   - /bin/sh @RECIPE@/in-dir.sh /build/b/linux /bin/sh /build/src/linux/scripts/kconfig/merge_config.sh -m -O /build/b/linux /build/b/linux/.config @RECIPE@/files/linux/losos.config
   - make -C /build/src/linux O=/build/b/linux ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 olddefconfig
+  # A fragment is only a request: fail before compiling if Kconfig discarded
+  # the compressor or its boot default instead of silently shipping no zswap.
+  - grep -qx CONFIG_ZSWAP=y /build/b/linux/.config
+  - grep -qx CONFIG_ZSWAP_DEFAULT_ON=y /build/b/linux/.config
+  - grep -qx CONFIG_ZSWAP_COMPRESSOR_DEFAULT_842=y /build/b/linux/.config
+  - grep -qx CONFIG_CRYPTO_842=y /build/b/linux/.config
 
 - stage: Build
   name: compile

@@ -101,6 +101,7 @@ lint:
   python3 "{{repo}}/tools/gates/fingerprint-lint.py" --check-table
   python3 "{{repo}}/tools/gates/fingerprint-lint.py"
   python3 "{{repo}}/tools/gates/test-image.py"
+  python3 "{{repo}}/tools/gates/test-swap.py"
   python3 "{{repo}}/tools/gates/test-media.py"
   python3 "{{repo}}/tools/gates/test-libvirt.py"
   python3 "{{repo}}/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
