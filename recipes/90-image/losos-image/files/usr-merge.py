@@ -157,6 +157,9 @@ def merge_dir(root, source_name, target_name):
 def os_release(root):
     source = root / "usr/lib/os-release"
     target = root / "etc/os-release"
+    status = check_os_release_parent(root)
+    if status:
+        return status
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_symlink():
         if target_path(root, target) != source:
@@ -170,6 +173,9 @@ def os_release(root):
 
 
 def check_os_release(root):
+    status = check_os_release_parent(root)
+    if status:
+        return status
     source = root / "usr/lib/os-release"
     target = root / "etc/os-release"
     if target.is_symlink():
@@ -178,6 +184,15 @@ def check_os_release(root):
         return 0
     if target.exists():
         return fail("/etc/os-release exists and is not a symlink")
+    return 0
+
+
+def check_os_release_parent(root):
+    parent = root / "etc"
+    if parent.is_symlink():
+        return fail("/etc exists and is a symlink")
+    if parent.exists() and not parent.is_dir():
+        return fail("/etc exists and is not a directory")
     return 0
 
 

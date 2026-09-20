@@ -151,16 +151,36 @@ def test_usr_merge(work, failures):
                 f"usr-merge: {relative} resolves to {actual!r}, expected {expected!r}"
             )
 
-    if (root / "usr" / "bin" / "losos-release").read_text() != "#!/bin/sh\n":
-        failures.append("usr-merge: /bin contents were not moved into /usr/bin")
-    if (root / "usr" / "bin" / "helpers" / "moved").read_text() != "moved\n":
-        failures.append("usr-merge: nested /bin directories were not merged into /usr/bin")
-    if (root / "usr" / "bin" / "helpers" / "kept").read_text() != "kept\n":
-        failures.append("usr-merge: existing /usr/bin entries were not preserved")
-    if not (root / "usr" / "lib" / "ld-musl-test.so.1").is_symlink():
-        failures.append("usr-merge: musl loader entry was not moved into /usr/lib")
-    if (root / "lib").exists() and not (root / "lib").is_symlink():
-        failures.append("usr-merge: /lib still exists as a directory")
+    text_checks = [
+        ("usr/bin/losos-release", "#!/bin/sh\n", "usr-merge: /bin contents were not moved into /usr/bin"),
+        (
+            "usr/bin/helpers/moved",
+            "moved\n",
+            "usr-merge: nested /bin directories were not merged into /usr/bin",
+        ),
+        (
+            "usr/bin/helpers/kept",
+            "kept\n",
+            "usr-merge: existing /usr/bin entries were not preserved",
+        ),
+    ]
+    for relative, expected, message in text_checks:
+        if (root / relative).read_text() != expected:
+            failures.append(message)
+
+    bool_checks = [
+        (
+            (root / "usr" / "lib" / "ld-musl-test.so.1").is_symlink(),
+            "usr-merge: musl loader entry was not moved into /usr/lib",
+        ),
+        (
+            not (root / "lib").exists() or (root / "lib").is_symlink(),
+            "usr-merge: /lib still exists as a directory",
+        ),
+    ]
+    for condition, message in bool_checks:
+        if not condition:
+            failures.append(message)
 
     if not failures:
         print("  usrmerge root compatibility paths now resolve through /usr")
@@ -280,6 +300,30 @@ def test_usr_merge_preflights_before_rewriting(work, failures):
         failures.append("usr-merge: /etc/os-release failure should not move /bin contents")
     elif not failures:
         print("  usrmerge preflights /etc/os-release before rewriting compatibility paths")
+
+
+def test_usr_merge_rejects_symlinked_etc(work, failures):
+    root = work / "root"
+    outside = work / "outside"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    outside.mkdir()
+    (root / "etc").symlink_to(outside)
+    (root / "usr" / "lib" / "os-release").write_text("ID=losos-desktop\n")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted a symlinked /etc directory")
+    elif "/etc exists and is a symlink" not in result.stderr:
+        failures.append("usr-merge: symlinked /etc did not explain the invalid parent path")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: symlinked /etc should fail before rewriting compatibility paths")
+    elif not failures:
+        print("  usrmerge rejects symlinked /etc before rewriting compatibility paths")
 
 
 def test_usr_merge_rejects_unresolved_escape(work, failures):
@@ -500,6 +544,9 @@ def main():
         usr_partial = work / "usr-merge-partial"
         usr_partial.mkdir()
         test_usr_merge_preflights_before_rewriting(usr_partial, failures)
+        usr_etc_link = work / "usr-merge-etc-link"
+        usr_etc_link.mkdir()
+        test_usr_merge_rejects_symlinked_etc(usr_etc_link, failures)
         test_uki(work, failures)
 
     if failures:
