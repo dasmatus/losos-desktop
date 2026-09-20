@@ -50,8 +50,25 @@ steps:
   - make -C /build/b/popt install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# An assertion and deliberately not an exception in manifest/toolchain.yaml,
+# because the evidence stops one release short. popt 1.18 -- the closest
+# version reachable from here, since ftp.osuosl.org is blocked and the Ubuntu
+# archive carries 1.16 and 1.18 but not the pinned 1.19 -- is squarely in the
+# hidden-visibility class: nothing in its configure.ac or src/Makefile.am
+# mentions visibility in either direction, popt.h declares bare
+# (`int poptGetNextOpt(poptContext con);`), and src/libpopt.vers reaches the
+# linker as -Wl,--version-script, which is the shape that cannot rescue a
+# symbol already made STV_HIDDEN.
+#
+# That is one version short of the pin and one-sided -- a predecessor, not a
+# bracket -- so it is not enough to claim the exception. cryptsetup's entry
+# rests on the pinned release's own contents in a repacked tarball, which is
+# a different and stronger thing. Here the check costs nothing if 1.19
+# annotates after all, and if it does not the build says so at popt with the
+# diagnosis in check-exports.sh rather than at whatever links it next.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libpopt.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libpopt.so poptGetContext poptGetNextOpt poptFreeContext poptBadOption
