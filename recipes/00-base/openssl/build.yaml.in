@@ -57,6 +57,46 @@ steps:
 #   shared                 The default, said out loud, because this tree is
 #     shared-only and the install step below removes the archives openssl
 #     builds anyway.
+#   no-module              The one option here that is not about what this
+#     distribution wants, but about what the toolchain forces. openssl links
+#     its loadable modules -- engines/afalg.so, engines/capi.so,
+#     providers/legacy.so -- with -Wl,-z,defs, and cross-DSO CFI in diagnose
+#     mode leaves __cfi_slowpath_diag and __ubsan_handle_cfi_check_fail
+#     undefined in every shared object. Those two are irreconcilable, and the
+#     build stopped there:
+#
+#         mold: error: undefined symbol: __ubsan_handle_cfi_check_fail
+#         >>> referenced by e_capi.c
+#
+#     openssl already knows about this case and has an escape hatch for it.
+#     Configurations/shared-info.pl:33-40 sets dso_ldflags to '' rather than
+#     '-Wl,-z,defs' when it greps -fsanitize out of CFLAGS. It cannot see
+#     ours: CFLAGS here is the single token @<path>/cflags-openssl.rsp,
+#     because pm splits a command on whitespace and a flag list cannot
+#     survive as one argument (C1). Every sanitizer flag this tree sets is
+#     inside the response file, where openssl's grep cannot reach.
+#
+#     The hatch cannot be opened from the outside either. Passing a bare
+#     -fsanitize=cfi-icall alongside CFLAGS= is refused -- "Mixing make
+#     variables and additional compiler/linker flags as configure command
+#     line option is not permitted", Configure:1158-1175 -- and the %20
+#     escape that would smuggle a space into one argument is applied only to
+#     bare flags, not to make variables, which Configure:816 stores raw.
+#
+#     So the DSO links go instead of the flag. no-module cascades to
+#     no-dynamic-engine (Configure:639, and INSTALL.md says so), which makes
+#     engines/build.info compile the engines into libcrypto, and
+#     providers/build.info:135 does the same for the legacy provider. Nothing
+#     is dropped: padlock, afalg, capi, devcrypto and legacy are all still
+#     built, as part of libcrypto rather than as files something would have
+#     to dlopen. This image is sealed and verity-protected and loads no
+#     third-party engine, so what is given up is a capability it does not
+#     have. It also disables FIPS, which is off by default and not enabled
+#     here.
+#
+#     libcrypto.so.3 and libssl.so.3 are unaffected: they link through
+#     shared_ldflag, which carries no -z,defs, and both linked cleanly in the
+#     run that failed on the modules.
 #
 # There is no PKG_CONFIG_PATH: openssl asks pkg-config for nothing.
 #
@@ -79,7 +119,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure @ARCH_OPENSSL_TARGET@ --prefix=/usr --libdir=lib --openssldir=/etc/ssl no-tests no-docs shared CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_OPENSSL@ LDFLAGS=@LDFLAGS_RSP_OPENSSL@
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure @ARCH_OPENSSL_TARGET@ --prefix=/usr --libdir=lib --openssldir=/etc/ssl no-tests no-docs no-module shared CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_OPENSSL@ LDFLAGS=@LDFLAGS_RSP_OPENSSL@
 
 - stage: Build
   name: compile
