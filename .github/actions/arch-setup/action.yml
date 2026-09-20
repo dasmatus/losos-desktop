@@ -75,6 +75,7 @@ runs:
         cp /etc/containers/storage.conf "$HOME/.config/containers/storage.conf"
         printf '%s\n' "CONTAINERS_STORAGE_CONF=$HOME/.config/containers/storage.conf" \
           'STORAGE_DRIVER=vfs' >> "$GITHUB_ENV"
+        export CONTAINERS_STORAGE_CONF="$HOME/.config/containers/storage.conf" STORAGE_DRIVER=vfs
         # There is no systemd manager inside a job container.
         printf '%s\n' '[engine]' 'cgroup_manager = "cgroupfs"' \
           'events_logger = "file"' '[containers]' 'cgroups = "disabled"' \
