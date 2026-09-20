@@ -18,11 +18,13 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_GNOME_SETTINGS_DAEMON@ --no-same-owner -C /build/src/gnome-settings-daemon --strip-components=1
 
+# -Dtests is not an option in gnome-settings-daemon 47.1. Its fourteen are
+# listed in meson_options.txt and the test suite is not among them.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-settings-daemon /build/src/gnome-settings-daemon --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=false -Dudev_dir=/usr/lib/udev
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-settings-daemon /build/src/gnome-settings-daemon --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dudev_dir=/usr/lib/udev
 
 - stage: Build
   name: compile

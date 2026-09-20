@@ -38,11 +38,38 @@ steps:
   - test -x /build/sysroot/usr/bin/msgfmt
   - test -x /build/sysroot/usr/bin/bpftool
 
+# Twelve of these options were wrong against the pinned v261, and nothing in
+# this tree could have said so: no gate reads a recipe's -D names against the
+# source it downloads, and the build has never reached this layer. Checked by
+# parsing v261's own meson_options.txt -- 269 options -- and comparing every
+# name and value kind on this line against it.
+#
+# Four were gone or renamed, and each of those is a hard error that stops
+# `meson setup` on its first line:
+#
+#   -Ddefault-hierarchy=unified   removed; systemd has been unified-only for
+#     several releases and the option went with the choice.
+#   -Dnscd=false                  removed with nscd support itself.
+#   -Dstatus-unit-format          now status-unit-format-default. Still a combo
+#     and `combined` is still one of its choices.
+#   -Dsysv-compat                 now compat-sysv-interfaces, a boolean
+#     defaulting true. `false` is what the old spelling asked for.
+#
+# The other eight were `true` where v261 wants a feature triplet. Seven of them
+# carry `deprecated : { 'true' : 'enabled' }`, so meson maps them and warns --
+# but -Dnspawn has no such mapping and is an error today, and a build that
+# depends on seven deprecation shims is a build that breaks at the next bump
+# for reasons that will read as unrelated. They say `enabled` now, which is
+# what they meant.
+#
+# -Dmachined=true is NOT one of them and stays boolean: v261 still declares it
+# that way, next to seven neighbours that changed. That is the shape of this
+# whole class -- nothing about the line looks wrong.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/systemd /build/src/systemd --native-file @RECIPE@/files/systemd/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dmode=release -Dtests=false -Dinstall-tests=false -Dslow-tests=false -Dman=disabled -Dhtml=disabled -Dtranslations=true -Dsplit-bin=true -Ddefault-hierarchy=unified -Dstatus-unit-format=combined -Dfallback-hostname=losos -Ddefault-locale=C.UTF-8 -Ddefault-keymap=us -Dutmp=false -Dhibernate=true -Dldconfig=true -Dinitrd=true -Dcreate-log-dirs=true -Dxdg-autostart=true -Denvironment-d=true -Dbinfmt=true -Dvconsole=true -Dquotacheck=true -Dtmpfiles=true -Dsysusers=true -Dfirstboot=true -Drandomseed=true -Dbacklight=true -Drfkill=true -Dhwdb=true -Dkernel-install=true -Danalyze=true -Dlink-udev-shared=true -Dlink-systemctl-shared=true -Dlogind=true -Dhostnamed=true -Dlocaled=true -Dtimedated=true -Dtimesyncd=true -Dnetworkd=true -Dresolve=true -Dnspawn=true -Dmachined=true -Dportabled=true -Dimportd=true -Dvmspawn=true -Duserdb=true -Dhomed=enabled -Doomd=true -Dcoredump=true -Dpstore=true -Drepart=true -Dsysupdate=enabled -Dsysinstall=true -Dsysext=true -Dstoragetm=true -Dnss-systemd=true -Dnss-myhostname=true -Dnss-mymachines=true -Dnss-resolve=true -Dnscd=false -Dremote=enabled -Dbootloader=true -Dukify=enabled -Dpolkit=true -Dsysv-compat=false -Dtpm=true -Dtpm2=enabled -Dopenssl=enabled -Dgcrypt=enabled -Dgnutls=enabled -Dp11kit=enabled -Dlibfido2=enabled -Dlibcryptsetup=enabled -Dlibcryptsetup-plugins=enabled -Ddefault-dnssec=no -Ddns-over-tls=openssl -Ddefault-dns-over-tls=opportunistic -Ddefault-mdns=yes -Ddefault-llmnr=yes -Dseccomp=enabled -Dselinux=disabled -Dapparmor=disabled -Dsmack=false -Daudit=enabled -Dblkid=enabled -Dfdisk=enabled -Dacl=enabled -Dkmod=enabled -Dpam=enabled -Dpwquality=enabled -Dlibcurl=enabled -Dlibidn2=enabled -Dlibidn=disabled -Dmicrohttpd=enabled -Dqrencode=enabled -Dlibarchive=enabled -Delfutils=enabled -Dzlib=enabled -Dbzip2=enabled -Dlz4=enabled -Dxz=enabled -Dzstd=enabled -Dxkbcommon=enabled -Dpcre2=enabled -Dglib=enabled -Ddbus=enabled -Dbpf-framework=enabled -Dbpf-compiler=clang -Dlibiptc=disabled -Dadm-group=true -Dwheel-group=true -Dnobody-user=nobody -Dnobody-group=nobody -Dsystem-uid-max=999 -Dsystem-gid-max=999
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/systemd /build/src/systemd --native-file @RECIPE@/files/systemd/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dmode=release -Dtests=false -Dinstall-tests=false -Dslow-tests=false -Dman=disabled -Dhtml=disabled -Dtranslations=true -Dsplit-bin=true -Dstatus-unit-format-default=combined -Dfallback-hostname=losos -Ddefault-locale=C.UTF-8 -Ddefault-keymap=us -Dutmp=false -Dhibernate=true -Dldconfig=true -Dinitrd=true -Dcreate-log-dirs=true -Dxdg-autostart=true -Denvironment-d=true -Dbinfmt=true -Dvconsole=true -Dquotacheck=true -Dtmpfiles=true -Dsysusers=true -Dfirstboot=true -Drandomseed=true -Dbacklight=true -Drfkill=true -Dhwdb=true -Dkernel-install=true -Danalyze=true -Dlink-udev-shared=true -Dlink-systemctl-shared=true -Dlogind=true -Dhostnamed=true -Dlocaled=true -Dtimedated=true -Dtimesyncd=true -Dnetworkd=true -Dresolve=true -Dnspawn=enabled -Dmachined=true -Dportabled=true -Dimportd=enabled -Dvmspawn=enabled -Duserdb=true -Dhomed=enabled -Doomd=true -Dcoredump=true -Dpstore=true -Drepart=enabled -Dsysupdate=enabled -Dsysinstall=true -Dsysext=true -Dstoragetm=true -Dnss-systemd=true -Dnss-myhostname=true -Dnss-mymachines=enabled -Dnss-resolve=enabled -Dremote=enabled -Dbootloader=enabled -Dukify=enabled -Dpolkit=enabled -Dcompat-sysv-interfaces=false -Dtpm=true -Dtpm2=enabled -Dopenssl=enabled -Dgcrypt=enabled -Dgnutls=enabled -Dp11kit=enabled -Dlibfido2=enabled -Dlibcryptsetup=enabled -Dlibcryptsetup-plugins=enabled -Ddefault-dnssec=no -Ddns-over-tls=openssl -Ddefault-dns-over-tls=opportunistic -Ddefault-mdns=yes -Ddefault-llmnr=yes -Dseccomp=enabled -Dselinux=disabled -Dapparmor=disabled -Dsmack=false -Daudit=enabled -Dblkid=enabled -Dfdisk=enabled -Dacl=enabled -Dkmod=enabled -Dpam=enabled -Dpwquality=enabled -Dlibcurl=enabled -Dlibidn2=enabled -Dlibidn=disabled -Dmicrohttpd=enabled -Dqrencode=enabled -Dlibarchive=enabled -Delfutils=enabled -Dzlib=enabled -Dbzip2=enabled -Dlz4=enabled -Dxz=enabled -Dzstd=enabled -Dxkbcommon=enabled -Dpcre2=enabled -Dglib=enabled -Ddbus=enabled -Dbpf-framework=enabled -Dbpf-compiler=clang -Dlibiptc=disabled -Dadm-group=true -Dwheel-group=true -Dnobody-user=nobody -Dnobody-group=nobody -Dsystem-uid-max=999 -Dsystem-gid-max=999
 
 - stage: Build
   name: compile

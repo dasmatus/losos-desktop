@@ -226,6 +226,46 @@ def created_by_patches(recipe_dir):
     return made
 
 
+# Recipes whose entry point is wrong, where the answer is a package this tree
+# does not have yet rather than a line in the recipe. These are REPORTED on
+# every run, in full, and do not fail the build -- which is the distinction
+# this list exists to draw. A gate that blocks every build on a problem four
+# layers above where the build currently stops is not finding things earlier;
+# it is stopping the work that would reach them. A gate that goes quiet about
+# them is the gjs failure again.
+#
+# An entry earns its place by naming what is actually missing. Neither of these
+# is a recipe someone can fix by reading it: both are recipes written against a
+# different upstream release than manifest/sources.lock pins, and the pin is
+# the constrained end. docs/limits.md carries the reasoning.
+DEFERRED = {
+    "gnome-keyring": (
+        "The recipe is meson and 46.2 is autotools -- and rewriting it "
+        "backwards does not help, because 46.2 wants gcr-3, gck-1 and "
+        "gcr-base-3 while this tree pins gcr 4.4.1, which ships gcr-4 and "
+        "gck-2. The recipe was written for gnome-keyring 48, which is meson "
+        "and wants gcr-4. Waiting on that bump, whose bytes have to be "
+        "hashed rather than guessed."
+    ),
+    "xdg-desktop-portal": (
+        "The recipe is autotools and 1.18.4 is meson, but the option set is "
+        "the smaller half. Its meson.build takes fuse3 and libpipewire-0.3 "
+        "as unconditional dependencies and needs bwrap at configure time for "
+        "sandboxed image validation, and losos-40-gnome builds none of the "
+        "three. Waiting on those packages; a probe that succeeded without "
+        "them would have found the build host's, through pm's /usr mirror."
+    ),
+}
+
+# What a build system looks like from the outside, for the "it has this
+# instead" half of a failure. Only the root is reported: a meson.build three
+# directories down is a subproject, not the answer to what to run.
+MARKERS = (
+    "configure", "Configure", "configure.ac", "autogen.sh",
+    "meson.build", "CMakeLists.txt", "Makefile", "GNUmakefile", "Makefile.am",
+)
+
+
 def resolve(wanted, tarball, strip):
     """Stream the tarball, ticking off what was wanted; return what was not.
 
@@ -233,20 +273,38 @@ def resolve(wanted, tarball, strip):
     every entry point found in the first handful of members, and the kernel's
     tarball is a gigabyte of xz that nothing here needs decompressed in full.
     Only a real miss pays for the whole listing, which is the right way round.
+
+    A miss also collects the build systems the archive DOES have at its root.
+    Saying only what is absent leaves the reader to go and find the tarball,
+    which is the work this gate exists to save -- and the two findings that
+    first came out of it were a meson recipe over an autotools source and an
+    autotools recipe over a meson one, where the answer was in the listing
+    already read.
     """
     outstanding = dict(wanted)
+    found = set()
     with tarfile.open(tarball) as archive:
         for member in archive:
             parts = member.name.split("/")
             if len(parts) <= strip:
                 continue
-            relative = "/".join(parts[strip:])
+            if len(parts) == strip + 1 and parts[-1] in MARKERS:
+                found.add(parts[-1])
+            # rstrip("/") because tar names a directory member with a trailing
+            # slash, and one of the things a recipe copies IS a directory:
+            # meson's own `mesonbuild` package. Matching the prefix as well
+            # covers the archives that carry no directory entries at all, where
+            # `mesonbuild` exists only as the parent of its files.
+            relative = "/".join(parts[strip:]).rstrip("/")
             for names in list(outstanding):
-                if relative in names:
+                if any(relative == name or relative.startswith(name + "/")
+                       for name in names):
                     del outstanding[names]
+            # No early exit once something is missing: the rest of the
+            # listing is where the "instead" comes from.
             if not outstanding:
                 break
-    return outstanding
+    return outstanding, sorted(found)
 
 
 def self_test():
@@ -300,9 +358,28 @@ def self_test():
         ("tar's own -C must demand nothing",
          ["python3 meson.py setup /build/b/x /build/src/x"],
          ["meson.build"], 1, 0),
+        # meson's own recipe copies a DIRECTORY, mesonbuild, and an archive may
+        # name it with a trailing slash, or not name it at all and carry only
+        # the files under it. Both are the directory being there.
+        ("a copied directory, present as its own entry",
+         ["cp -a /build/src/x/mesonbuild /dest/usr/lib/meson/"],
+         ["mesonbuild/", "meson.py"], 1, 0),
+        ("a copied directory, present only as its contents",
+         ["cp -a /build/src/x/mesonbuild /dest/usr/lib/meson/"],
+         ["mesonbuild/__init__.py", "meson.py"], 1, 0),
+        ("a copied directory that is genuinely not there",
+         ["cp -a /build/src/x/mesonbuild /dest/usr/lib/meson/"],
+         ["meson.py"], 1, 1),
     ]
 
     failures = []
+    for name in sorted(DEFERRED):
+        if not list(REPO.glob(f"recipes/*/{name}/build.yaml.in")):
+            failures.append(
+                f"DEFERRED names {name}, which has no recipe -- it was renamed "
+                f"or removed and the entry was left behind"
+            )
+
     with tempfile.TemporaryDirectory() as tmp:
         for label, runs, members, expect_wanted, expect_missing in cases:
             text = recipe("X", "/build/src/x", *runs)
@@ -331,7 +408,7 @@ def self_test():
                 )
                 continue
 
-            missing = resolve(wanted, tarball, 1)
+            missing, _ = resolve(wanted, tarball, 1)
             if len(missing) != expect_missing:
                 failures.append(
                     f"{label}: {len(missing)} missing, expected "
@@ -362,7 +439,11 @@ def main():
     lock = yaml.safe_load((REPO / "manifest" / "sources.lock").read_text()) or {}
     mirror = Path(args.mirror)
 
-    failures, missing_bytes, checked = [], [], 0
+    failures, deferred, missing_bytes, checked = [], [], [], 0
+    # Which deferred recipes were actually looked at, and which still failed.
+    # An entry that stops failing has to say so: a deferred finding nobody
+    # removes is indistinguishable from a gate that was quietly switched off.
+    seen_deferred, still_failing = set(), set()
 
     for template in sorted(REPO.glob("recipes/*/*/build.yaml.in")):
         text = template.read_text()
@@ -393,6 +474,9 @@ def main():
                 missing_bytes.append(f"{name} ({key})")
                 continue
 
+            if name in DEFERRED:
+                seen_deferred.add(name)
+
             wanted = wanted_from(text, dest)
             if not wanted:
                 continue
@@ -406,16 +490,48 @@ def main():
                 continue
 
             checked += len(wanted)
-            for names, (verb, why) in resolve(wanted, tarball, strip).items():
+            missing, found = resolve(wanted, tarball, strip)
+            for names, (verb, why) in missing.items():
                 spelling = " or ".join(names)
-                failures.append(
+                instead = (
+                    f"    It does ship, at its root: {', '.join(found)}\n"
+                    if found else
+                    "    It ships no build system this gate recognises at its "
+                    "root, so read the listing yourself.\n"
+                )
+                report = (
                     f"{template.relative_to(REPO)}: the recipe {verb} `{why}`, "
                     f"and the pinned tarball has no {spelling}.\n"
                     f"    {entry['url']}\n"
-                    f"    Either the source moved to another build system or "
-                    f"it never had this one. Read what the tarball does ship "
-                    f"before translating the options."
+                    + instead
                 )
+                if name in DEFERRED:
+                    still_failing.add(name)
+                    deferred.append(report + f"    {DEFERRED[name]}")
+                else:
+                    failures.append(
+                        report +
+                        f"    Either the source moved to another build system "
+                        f"or it never had this one. Translate the options "
+                        f"rather than transcribing them."
+                    )
+
+    # Printed before the verdict either way, so a deferred finding is read
+    # rather than scrolled past on a green run.
+    if deferred:
+        print("recipe-entrypoints: deferred, waiting on a package this tree "
+              "does not build yet:")
+        for item in deferred:
+            print("  " + item)
+
+    for name in sorted(seen_deferred - still_failing):
+        failures.append(
+            f"{name}: deferred in tools/gates/recipe-entrypoints.py, and its "
+            f"entry point is now present.\n"
+            f"    Whatever it was waiting for has landed. Delete the DEFERRED "
+            f"entry and the paragraph in docs/limits.md that goes with it -- a "
+            f"hole this tree no longer has is one it must stop claiming."
+        )
 
     if failures:
         print("recipe-entrypoints: FAILED", file=sys.stderr)
@@ -430,7 +546,9 @@ def main():
         # about. Counting them out loud is what keeps a green line from
         # reading as more coverage than it is.
         note = f", {len(missing_bytes)} source(s) not mirrored and not checked"
-    print(f"recipe-entrypoints: {checked} build-system entry point(s) present{note}")
+    held = f", {len(deferred)} deferred" if deferred else ""
+    print(f"recipe-entrypoints: {checked} build-system entry point(s) "
+          f"present{held}{note}")
     return 0
 
 

@@ -18,6 +18,14 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_GDM@ --no-same-owner -C /build/src/gdm --strip-components=1
 
+# -Dwayland-support is gone from gdm 51: Wayland is unconditional now and the
+# option went with the choice. -Dx11-support replaces the half of it that is
+# still a decision, and it defaults TRUE -- so leaving it unsaid is not
+# neutral. Nothing in this tree builds an X server or its client libraries, so
+# a default-on X11 session would either fail to find them or find the build
+# host's through pm's read-only /usr mirror (C7). Said out loud, like every
+# other probe in this tree.
+#
 # -Ddefault-pam-config=none is the one option here that is not about what this
 # OS wants, but about refusing to let the BUILD HOST decide it.
 #
@@ -43,7 +51,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gdm /build/src/gdm --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dsystemd-journal=true -Dsystemdsystemunitdir=/usr/lib/systemd/system -Dsystemduserunitdir=/usr/lib/systemd/user -Dwayland-support=true -Dplymouth=disabled -Dselinux=disabled -Ddefault-pam-config=none
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gdm /build/src/gdm --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dsystemd-journal=true -Dsystemdsystemunitdir=/usr/lib/systemd/system -Dsystemduserunitdir=/usr/lib/systemd/user -Dplymouth=disabled -Dx11-support=false -Dselinux=disabled -Ddefault-pam-config=none
 
 - stage: Build
   name: compile
