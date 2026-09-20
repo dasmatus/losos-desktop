@@ -322,6 +322,13 @@ be careful with — its key has to cover every input to that layer and everythin
 below it in the chain, and a key that is subtly wrong ships an image built from
 stale binaries with CI green over it.
 
+The CI package-to-image handoff is narrower: `--prebuilt-packages` stages the
+final package closure into the image's `/dest/deps` and removes that image's
+build-file dependency. The archive comes from the matching architecture in the
+same workflow run, not an earlier run or a content cache. Every run still
+compiles the complete package chain; assembly simply does not compile it a
+second time. See [`images.md`](images.md#ci-handoff-and-automerge).
+
 ## Archive duplication
 
 Each layer's archive contains the one below it, whole. With seven layers that is

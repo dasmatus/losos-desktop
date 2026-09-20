@@ -117,6 +117,75 @@ def check_pm_pin(path, doc):
     return failures
 
 
+def check_package_handoff(doc):
+    """Assembly must wait for compilation, then consume its same-run closure."""
+    jobs = doc.get("jobs") or {}
+    failures = []
+    packages = jobs.get("packages") or {}
+    build = jobs.get("build") or {}
+    if "packages" not in (build.get("needs") or []):
+        failures.append("images.yml: build must need the packages matrix")
+    for name, job in (("packages", packages), ("build", build)):
+        matrix = (job.get("strategy") or {}).get("matrix") or {}
+        arches = {entry.get("arch") for entry in matrix.get("include", [])}
+        if arches != {"x86_64", "aarch64"}:
+            failures.append(f"images.yml: {name} must cover both native architectures")
+
+    layers = yaml.safe_load((REPO / "manifest/layers.yaml").read_text())
+    archive = f"{layers[-2]['name']}-0.1.0.cpkg"
+    uploads = [
+        step.get("with") or {} for step in packages.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    downloads = [
+        step.get("with") or {} for step in build.get("steps", [])
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    ]
+    handoff = "packages-${{ matrix.arch }}"
+    if not any(upload.get("name") == handoff
+               and str(upload.get("path", "")).endswith(archive)
+               and upload.get("if-no-files-found") == "error" for upload in uploads):
+        failures.append("images.yml: packages must upload the final closure and fail if missing")
+    if not any(download.get("name") == handoff and "run-id" not in download
+               and "github-token" not in download for download in downloads):
+        failures.append("images.yml: build must download packages from this run")
+    commands = "\n".join(str(step.get("run", "")) for step in build.get("steps", []))
+    if "--prebuilt-packages" not in commands or archive not in commands:
+        failures.append("images.yml: image configuration must consume the package closure")
+
+    ci = jobs.get("ci") or {}
+    required = {"gates", "container", "pinned", "packages", "build", "verify", "ota"}
+    if set(ci.get("needs") or []) != required or "always()" not in str(ci.get("if", "")):
+        failures.append("images.yml: ci must report even when a required job fails or skips")
+    return failures
+
+
+def check_automerge(doc):
+    """The completion handler gets write access, never pull-request code."""
+    failures = []
+    # PyYAML's YAML 1.1 reader treats the Actions key `on` as a boolean.
+    events = doc.get("on", doc.get(True, {}))
+    trigger = events.get("workflow_run") or {}
+    if trigger.get("workflows") != ["images"] or trigger.get("types") != ["completed"]:
+        failures.append("automerge.yml: only completed images runs may trigger merging")
+    merge = (doc.get("jobs") or {}).get("merge") or {}
+    condition = str(merge.get("if", ""))
+    for required in ("conclusion == 'success'", "event == 'pull_request'"):
+        if required not in condition:
+            failures.append(f"automerge.yml: merge must require {required}")
+    permissions = merge.get("permissions") or {}
+    if permissions.get("actions") != "read":
+        failures.append("automerge.yml: merge needs actions: read to inspect its triggering run")
+    steps = merge.get("steps") or []
+    if any(step.get("uses") for step in steps):
+        failures.append("automerge.yml: the privileged handler must not check out or download code")
+    commands = "\n".join(str(step.get("run", "")) for step in steps)
+    for required in ("--auto", "--squash", "--match-head-commit", ".head.sha == $sha"):
+        if required not in commands:
+            failures.append(f"automerge.yml: missing native current-head merge guard {required}")
+    return failures
+
+
 def main():
     if not WORKFLOW.exists():
         print(f"workflow: {WORKFLOW.relative_to(REPO)} absent; nothing to check")
@@ -125,7 +194,7 @@ def main():
     text = WORKFLOW.read_text()
     doc = yaml.safe_load(text)
     jobs = doc.get("jobs") or {}
-    failures = []
+    failures = check_package_handoff(doc)
 
     uploads, downloads = [], []
     for job, spec in jobs.items():
@@ -173,6 +242,8 @@ def main():
     for path in sorted(WORKFLOWS.glob("*.yml")):
         spec = yaml.safe_load(path.read_text()) or {}
         failures.extend(check_pm_pin(path, spec))
+        if path.name == "automerge.yml":
+            failures.extend(check_automerge(spec))
 
         top = spec.get("permissions")
         if isinstance(top, dict) and top.get("contents") == "write":

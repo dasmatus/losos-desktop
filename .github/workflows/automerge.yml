@@ -1,0 +1,57 @@
+# workflow_run uses the default branch's workflow, never pull-request code.
+# No checkout or artifacts belong in this privileged job.
+name: automerge
+
+on:
+  workflow_run:
+    workflows: [images]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.path == '.github/workflows/images.yml'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Enable auto-merge for the verified head only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # A successful run from before the aggregate check existed is not
+          # proof that packages, assembly and boot verification all succeeded.
+          ci=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | select(.name == "ci") | .conclusion')
+          if [ "$ci" != success ]; then
+            echo "The triggering run has no successful aggregate ci check; skipping."
+            exit 0
+          fi
+          # Read associations from GitHub, not from an artifact or branch file.
+          numbers=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '.pull_requests[].number')
+          while IFS= read -r number; do
+            [ -n "$number" ] || continue
+            [[ "$number" =~ ^[0-9]+$ ]] || exit 1
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+            if ! jq -e --arg sha "$HEAD_SHA" \
+              '.state == "open" and .draft == false and
+               .base.ref == "main" and .head.sha == $sha' <<< "$pr" >/dev/null; then
+              echo "PR #$number is not an eligible current head; skipping."
+              continue
+            fi
+            # Native auto-merge obeys required checks and reviews. The match
+            # also closes the race if a new commit lands after the API read.
+            gh pr merge "$number" --repo "$GITHUB_REPOSITORY" \
+              --auto --squash --match-head-commit "$HEAD_SHA"
+          done <<< "$numbers"

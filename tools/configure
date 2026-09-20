@@ -256,10 +256,28 @@ def main():
     parser.add_argument("--mirror", metavar="URL",
                         help="fetch sources from a local mirror instead of "
                              "upstream, keeping the same SHA-256 pins")
+    parser.add_argument("--prebuilt-packages", type=Path, metavar="ARCHIVE",
+                        help="assemble the image from a trusted package closure "
+                             "built for this architecture, without rebuilding it")
     args = parser.parse_args()
 
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     recipes_out = out / "recipes"
+    layers_file = REPO / "manifest" / "layers.yaml"
+    layers = yaml.safe_load(layers_file.read_text()) if layers_file.exists() else []
+    layers = layers or []
+    prebuilt = None
+    if args.prebuilt_packages:
+        prebuilt = args.prebuilt_packages.resolve()
+        # The generated tree is deleted on every configure, including the one
+        # `just build` runs. Its input must survive that deletion (C10).
+        if prebuilt.is_relative_to(recipes_out):
+            parser.error("--prebuilt-packages must be outside the generated recipes")
+        if (len(layers) < 2 or layers[-1]["dir"] != "90-image"
+                or prebuilt.name != f"{layers[-2]['name']}-0.1.0.cpkg"):
+            parser.error("--prebuilt-packages must name the final package layer archive")
+        if not prebuilt.is_file() or prebuilt.stat().st_size == 0:
+            parser.error("--prebuilt-packages must be a non-empty archive")
     if recipes_out.exists():
         shutil.rmtree(recipes_out)
     recipes_out.mkdir(parents=True)
@@ -337,10 +355,6 @@ def main():
     subs["@PKGCONFIG@"] = tool_path("pkgconf", "pkg-config")
     subs["@PYTHON@"] = tool_path("python3")
     subs["@JOBS@"] = str(max(1, (__import__("os").cpu_count() or 2)))
-
-    layers_file = REPO / "manifest" / "layers.yaml"
-    layers = yaml.safe_load(layers_file.read_text()) if layers_file.exists() else []
-    layers = layers or []
 
     previous = None
     for layer in layers:
@@ -428,6 +442,18 @@ def main():
         bundle = compose_lib.compose(
             name, members, f"../recipes/{previous}/build.yaml" if previous else None
         )
+        if prebuilt and layer == layers[-1]:
+            # pm cannot consume an existing archive as a graph dependency (C6).
+            # Put the same closure where pm would have copied that dependency,
+            # before either sysroot unpack runs. Only the image loses its edge;
+            # ordinary builds keep the authored chain unchanged.
+            staged = recipe_out / prebuilt.name
+            shutil.copy2(prebuilt, staged)
+            bundle["dependencies"] = []
+            bundle["steps"][0]["run"][0:0] = [
+                "mkdir -p /dest/deps",
+                f"cp @RECIPE@/{prebuilt.name} /dest/deps/{prebuilt.name}",
+            ]
         # The composer emits @RECIPE@ in its own shared steps; members were
         # already rendered above.
         text = substitute(yaml_dump(bundle), local)
@@ -492,6 +518,8 @@ def main():
         remembered.append("--allow-unresolved")
     if args.mirror:
         remembered.append(f"--mirror={args.mirror}")
+    if prebuilt:
+        remembered.append(f"--prebuilt-packages={prebuilt}")
     (out / "configure.args").write_text("\n".join(remembered) + "\n")
 
     print(f"configure: generated {len(layers)} layer bundle(s) into {recipes_out}")
