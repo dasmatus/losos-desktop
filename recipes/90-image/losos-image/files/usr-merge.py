@@ -34,6 +34,23 @@ def target_path(root, link):
     return candidate
 
 
+def check_source_path(root, relative):
+    path = root / relative
+    try:
+        resolved = path.resolve(strict=False)
+        resolved.relative_to(root.resolve())
+    except ValueError:
+        return fail(f"/{relative} resolves outside the staged root")
+
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return fail(f"/{relative} is missing")
+    if not resolved.exists():
+        return fail(f"/{relative} is missing")
+    return 0
+
+
 def move_entry(source, destination):
     if source.is_dir() and not source.is_symlink():
         if destination.exists():
@@ -129,8 +146,9 @@ def main():
     args = parser.parse_args()
 
     root = Path(args.root)
-    if not (root / "usr/lib/os-release").exists():
-        return fail("/usr/lib/os-release is missing")
+    status = check_source_path(root, "usr/lib/os-release")
+    if status:
+        return status
     for source_name, target_name in LINKS.items():
         status = merge_dir(root, source_name, target_name)
         if status:
