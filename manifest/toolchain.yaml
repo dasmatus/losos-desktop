@@ -344,7 +344,7 @@ exceptions:
       The narrow `visibility` drop libcap uses is therefore not available
       here: it keeps the schemes, and the schemes need the LTO this package
       cannot have.
-  # The rest of losos-10-base, in member order. Seven packages, one fault, and
+  # The rest of losos-10-base, in member order. Eight packages, one fault, and
   # one piece of evidence behind all of them: none declares a single
   # `visibility("default")` anywhere in its tree -- not in its sources, not in
   # its generated `configure`, under either spelling of the attribute -- so
@@ -357,8 +357,8 @@ exceptions:
   # node can claim it, so a `global:` list has nothing left to promote. Proved
   # on libfido2, which names 267 symbols in src/export.gnu and exported none.
   #
-  # Said plainly, because it is the weaker part of this entry: six of the seven
-  # are not individually build-measured the way libcap and libxcrypt were.
+  # Said plainly, because it is the weaker part of this entry: seven of the
+  # eight are not individually build-measured the way libcap and libxcrypt were.
   # Nothing in this tree has built them yet. What is measured is the mechanism,
   # on the same clang, and the absence of any annotation for it to spare.
   # libunistring is the exception and is first below: the build reached it and
@@ -401,11 +401,18 @@ exceptions:
       reason. The layer's -fvisibility=hidden narrows it to nothing, and the
       gnulib unit tests are precisely what stopped.
 
-      Read in 1.1 and 1.3 rather than in the pinned 1.2: ftp.gnu.org is not
-      reachable from where this was diagnosed and the Ubuntu archive carries
-      those two. The Makefile.am comment, the bare declarations and the
-      unused gl_VISIBILITY are in both neighbours, so 1.2 is bracketed rather
-      than read.
+      The reasoning above was read in 1.1 and 1.3 rather than in the pinned
+      1.2: ftp.gnu.org is not reachable from where this was diagnosed and the
+      Ubuntu archive carries those two. The Makefile.am comment, the bare
+      declarations and the unused gl_VISIBILITY are in both neighbours, so the
+      mechanism is bracketed rather than read.
+
+      The fault itself needs no bracket. The pinned 1.2 bytes are what failed,
+      on the symbol this entry names, on two branches independently -- #62 and
+      #61 stopped at this member with the same two undefined symbols on both
+      architectures before either had the fix. So a later reader who finds
+      ftp.gnu.org unreachable and doubts the bracket can stop there: what is
+      inferred is why libunistring exports nothing, not that it does.
   - package: openssl
     drops: [visibility]
     why: >
@@ -432,6 +439,41 @@ exceptions:
       verify it; asserting it now, with nothing able to compile json-c against
       the musl sysroot, would be a guess in a file whose whole convention is
       that nothing is guessed. If the patch lands, this entry comes out.
+  - package: cryptsetup
+    drops: [visibility]
+    why: >
+      Bare declarations throughout libcryptsetup.h -- `int crypt_init(struct
+      crypt_device **cd, const char *device);` -- with no export macro, and
+      the only __attribute__ in the public header is `deprecated`. Nothing in
+      configure.ac or the Makefile.am asks for visibility either way: the one
+      thing configure probes for near this is __symver__, which is symbol
+      versioning and a different mechanism.
+
+      It ships lib/libcryptsetup.sym, a `CRYPTSETUP_2.0 { global: ... }`
+      version script, which is the reassuring-looking case that is not.
+      Same shape as libfido2, which names 267 symbols in its own script and
+      exported none.
+
+      What an empty one costs is the reason this is not left to be discovered
+      later, and the cost is worse than "a library exports nothing" sounds.
+      systemd does not LINK against libcryptsetup. It dlopens it:
+      dlopen_many_sym_or_warn(&cryptsetup_dl, "libcryptsetup.so.12", ...) at
+      src/shared/cryptsetup-util.c:286, resolving 51 symbols by name. Read at
+      v261, which for systemd is the pinned bytes -- sources.lock pins a tag
+      archive there, so the tag and the tarball are the same tree.
+
+      So an empty libcryptsetup fails no link anywhere in this tree. systemd
+      builds, the image builds, everything ships, and the first symptom is a
+      root volume that will not unlock. The check-exports line in the recipe
+      is not a nicety on this package; it is the only thing standing between
+      -fvisibility=hidden and a machine that does not start.
+
+      Read in the Debian orig tarball for 2.7.5 rather than the pinned bytes
+      -- Debian repacks it, so the hash does not match sources.lock and that
+      is expected rather than a mirror problem. The contents are upstream
+      2.7.5; the declaration style and the .sym file are not the kind of
+      thing a repack changes, but it is a weaker read than libunistring's
+      and says so here.
   - package: tpm2-tss
     drops: [visibility]
     why: >

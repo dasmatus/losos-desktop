@@ -85,8 +85,8 @@ b_lto           = false
 # check nothing.
 #
 # So every shared library in this tree legitimately leaves those two symbols
-# undefined, and has since the first CFI link. meson is just the only build
-# system here that asks the linker to refuse it -- --no-undefined is
+# undefined, and has since the first CFI link. meson is the only build system
+# here that asks the linker to refuse it *by default* -- --no-undefined is
 # b_lundef's default, autotools and cmake do not pass it, and dbus was the
 # first meson package to reach a link at all:
 #
@@ -98,10 +98,21 @@ b_lto           = false
 # without -fsanitize-link-runtime, and an executable link gets it and
 # --export-dynamic together.
 #
-# meson being the only objector is a claim about everything else, so it was
-# checked as one rather than inferred from dbus linking: there is no
+# meson being the only objector by default is a claim about everything else,
+# so it was checked as one rather than inferred from dbus linking: there is no
 # -Wl,-z,defs and no --no-undefined anywhere in tools/lib/toolchain.py,
-# manifest/toolchain.yaml or this directory. The shared ldflags do carry
+# manifest/toolchain.yaml or this directory.
+#
+# That check was too narrow and openssl proved it two members later. A
+# PACKAGE's own build system can ask for the same refusal, and openssl's does:
+# it links engines/afalg.so, engines/capi.so and providers/legacy.so with
+# -Wl,-z,defs and stopped the base layer on the same two symbols. Grepping
+# this tree's own flags says nothing about that, so this comment claims only
+# what it checked. openssl's fix is in its recipe, not here, because it is
+# openssl's flag and not one of ours -- and openssl already drops that flag
+# for sanitizer builds, which the response file is what hides from it.
+#
+# The shared ldflags do carry
 # -Wl,-z,now, which is the opposite kind of switch -- it moves resolution
 # from first call to load -- and that is the one that decides whether the
 # design holds. Built as a pair on glibc and run: a .so with those two
