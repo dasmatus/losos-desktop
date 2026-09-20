@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""Carry opaque pm archives and detached signatures in OCI images.
+
+This is a host-side extension, not a pm WASM component: the component API has
+no fetch operation. Skopeo owns registry transport. Nothing here executes an
+image or unpacks a cpkg. Pull preserves signatures without importing keys or
+re-signing: pm authenticates the archive under the user's trusted keys.
+"""
+
+import argparse
+import contextlib
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import urllib.parse
+import uuid
+
+REPO = Path(__file__).resolve().parent.parent
+ARCHES = {"x86_64": "amd64", "aarch64": "arm64"}
+MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+CONFIG = "application/vnd.oci.image.config.v1+json"
+LAYER = "application/vnd.oci.image.layer.v1.tar"
+INDEX = "application/vnd.oci.image.index.v1+json"
+LABEL = "org.losos.pm."
+SOURCE_LABEL = "org.opencontainers.image.source"
+CHUNK = 1024 * 1024
+COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+class OCIError(Exception):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise OCIError(message)
+
+
+def repository(value):
+    require(isinstance(value, str) and len(value) <= 255,
+            "invalid registry repository")
+    host, separator, path = value.partition("/")
+    require(separator and re.fullmatch(
+        r"(?:localhost|[a-z0-9]+(?:[.-][a-z0-9]+)*)(?::[0-9]{1,5})?", host)
+        and (host == "localhost" or "." in host or ":" in host)
+        and all(re.fullmatch(COMPONENT, part) for part in path.split("/")),
+        "repository must be a lowercase registry host/path without a scheme or tag")
+    if ":" in host:
+        require(0 < int(host.rsplit(":", 1)[1]) <= 65535, "invalid registry port")
+    return value
+
+
+def reference(value):
+    repo, separator, digest = value.partition("@")
+    require(separator and DIGEST.fullmatch(digest),
+            "pull requires a registry repository@sha256:<64 lowercase hex digits>")
+    return repository(repo), digest
+
+
+def package_name(value):
+    require(isinstance(value, str) and len(value) <= 251
+            and value.endswith(".cpkg")
+            and re.fullmatch(COMPONENT, value[:-5]),
+            "package filename must be a simple lowercase OCI-compatible name ending in .cpkg")
+    return value
+
+
+def source_url(value):
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        valid = (parsed.scheme in ("http", "https") and parsed.hostname
+                 and not parsed.username and not parsed.password
+                 and not parsed.query and not parsed.fragment)
+    except ValueError:
+        valid = False
+    require(valid and len(value) <= 2048 and not any(c.isspace() or ord(c) < 32 for c in value),
+            "source URL must be an HTTP(S) repository URL without credentials, query, or fragment")
+    return value
+
+
+@contextlib.contextmanager
+def workspace(parent):
+    # Keep large intermediates on the archive filesystem, never a tmpfs /tmp.
+    parent.mkdir(parents=True, exist_ok=True)
+    path = parent / (".pm-oci-" + uuid.uuid4().hex)
+    path.mkdir(mode=0o700)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
+def regular_open(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        require(stat.S_ISREG(os.fstat(fd).st_mode), f"not a regular file: {path}")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def hash_file(path):
+    digest = hashlib.sha256()
+    size = 0
+    with regular_open(path) as stream:
+        while block := stream.read(CHUNK):
+            digest.update(block)
+            size += len(block)
+    return "sha256:" + digest.hexdigest(), size
+
+
+def json_bytes(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def read_json(path):
+    with regular_open(path) as stream:
+        raw = stream.read(CHUNK + 1)
+    require(len(raw) <= CHUNK, "OCI metadata is too large")
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(raw, object_pairs_hook=unique)
+    except (ValueError, UnicodeError) as error:
+        raise OCIError(f"invalid OCI JSON: {error}") from error
+
+
+def descriptor(media, digest, size):
+    return {"mediaType": media, "digest": digest, "size": size}
+
+
+def put_json(layout, media, value):
+    raw = json_bytes(value)
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    (layout / "blobs/sha256" / digest[7:]).write_bytes(raw)
+    return descriptor(media, digest, len(raw))
+
+
+def package_header(name, size):
+    # A canonical POSIX pax header also handles archives beyond ustar's 8 GiB
+    # limit. Pull compares the complete header rather than trusting tar paths,
+    # pax overrides, link targets, or a parser that silently skips extensions.
+    member = tarfile.TarInfo("packages/" + name)
+    member.size = size
+    member.mode = 0o644
+    member.mtime = 0
+    return member.tobuf(format=tarfile.PAX_FORMAT)
+
+
+def make_layout(archive, layout, arch, source_repository=None):
+    name = package_name(archive.name)
+    (layout / "blobs/sha256").mkdir(parents=True)
+    layer_path = layout / "layer"
+    layer_hash = hashlib.sha256()
+    layer_size = 0
+    files = []
+    with layer_path.open("xb") as target:
+        def write(block):
+            nonlocal layer_size
+            target.write(block)
+            layer_hash.update(block)
+            layer_size += len(block)
+
+        for filename in (name, name + ".sig"):
+            path = archive.parent / filename
+            file_hash = hashlib.sha256()
+            with regular_open(path) as source:
+                size = os.fstat(source.fileno()).st_size
+                write(package_header(filename, size))
+                remaining = size
+                while remaining:
+                    block = source.read(min(CHUNK, remaining))
+                    require(block, f"file changed while reading: {path}")
+                    file_hash.update(block)
+                    write(block)
+                    remaining -= len(block)
+                require(not source.read(1), f"file changed while reading: {path}")
+                write(b"\0" * (-size % 512))
+            files.append((file_hash.hexdigest(), str(size)))
+        write(b"\0" * 1024)
+    layer_digest = "sha256:" + layer_hash.hexdigest()
+    layer_path.rename(layout / "blobs/sha256" / layer_digest[7:])
+    config = {
+        "architecture": ARCHES[arch],
+        "os": "linux",
+        "config": {"Labels": {
+            LABEL + "format": "cpkg-v1",
+            LABEL + "filename": name,
+            LABEL + "sha256": files[0][0],
+            LABEL + "size": files[0][1],
+            LABEL + "signature-sha256": files[1][0],
+            LABEL + "signature-size": files[1][1],
+        }},
+        "rootfs": {"type": "layers", "diff_ids": [layer_digest]},
+    }
+    if source_repository is not None:
+        config["config"]["Labels"][SOURCE_LABEL] = source_url(source_repository)
+    config_desc = put_json(layout, CONFIG, config)
+    manifest_desc = put_json(layout, MANIFEST, {
+        "schemaVersion": 2,
+        "mediaType": MANIFEST,
+        "config": config_desc,
+        "layers": [descriptor(LAYER, layer_digest, layer_size)],
+    })
+    (layout / "oci-layout").write_bytes(json_bytes({"imageLayoutVersion": "1.0.0"}))
+    (layout / "index.json").write_bytes(json_bytes({
+        "schemaVersion": 2,
+        "mediaType": INDEX,
+        "manifests": [{**manifest_desc, "annotations": {
+            "org.opencontainers.image.ref.name": "package"}}],
+    }))
+    return manifest_desc["digest"]
+
+
+def skopeo(arguments, arch):
+    try:
+        subprocess.run(["skopeo", "--override-arch", ARCHES[arch], "copy",
+                        "--preserve-digests", *arguments],
+                       check=True, stdout=sys.stderr)
+    except FileNotFoundError as error:
+        raise OCIError("skopeo is required; install it on the host") from error
+    except subprocess.CalledProcessError as error:
+        raise OCIError(f"skopeo copy failed (exit {error.returncode})") from error
+
+
+def publish(args):
+    repo = repository(args.repository)
+    if args.source_url is not None:
+        source_url(args.source_url)
+    require(re.fullmatch(r"[\w][\w.-]{0,127}", args.tag, flags=re.ASCII),
+            "invalid OCI tag")
+    require(args.source.is_dir(), f"source is not a directory: {args.source}")
+    archives = sorted(args.source.glob("*.cpkg"))
+    require(archives, f"no .cpkg archives in {args.source}")
+    for archive in archives:
+        package_name(archive.name)
+        repository(repo + "/" + archive.stem)
+        require(archive.is_file() and not archive.is_symlink(),
+                f"not a regular archive: {archive}")
+        signature = archive.with_name(archive.name + ".sig")
+        require(signature.is_file() and not signature.is_symlink(),
+                f"missing or non-regular detached signature: {signature}")
+    for archive in archives:
+        destination = repo + "/" + archive.stem
+        with workspace(args.source) as work:
+            layout = work / "image"
+            digest = make_layout(archive, layout, args.arch, args.source_url)
+            digest_file = work / "digest"
+            skopeo(["--digestfile", str(digest_file),
+                    f"oci:{layout}:package", f"docker://{destination}:{args.tag}"],
+                   args.arch)
+            with regular_open(digest_file) as stream:
+                copied = stream.read(128).decode("ascii").strip()
+            require(copied == digest, "registry copy did not preserve the manifest digest")
+            print(destination + "@" + digest, flush=True)
+
+
+def checked_blob(layout, desc, media):
+    require(isinstance(desc, dict) and desc.get("mediaType") == media,
+            f"expected descriptor media type {media}")
+    digest = desc.get("digest")
+    size = desc.get("size")
+    require(isinstance(digest, str) and DIGEST.fullmatch(digest)
+            and type(size) is int and size >= 0,
+            "invalid OCI blob descriptor")
+    require(not any(key in desc for key in ("urls", "data")),
+            "external or embedded OCI blobs are unsupported")
+    path = layout / "blobs/sha256" / digest[7:]
+    require(hash_file(path) == (digest, size), "OCI blob digest or size mismatch")
+    return path
+
+
+def restore(layout, digest, arch, work, output):
+    require(read_json(layout / "oci-layout") == {"imageLayoutVersion": "1.0.0"},
+            "unsupported OCI layout")
+    index = read_json(layout / "index.json")
+    require(isinstance(index, dict) and index.get("schemaVersion") == 2
+            and index.get("mediaType", INDEX) == INDEX
+            and isinstance(index.get("manifests"), list)
+            and len(index["manifests"]) == 1,
+            "expected a single OCI image")
+    manifest_desc = index["manifests"][0]
+    require(isinstance(manifest_desc, dict) and manifest_desc.get("digest") == digest,
+            "manifest does not match the requested digest")
+    manifest = read_json(checked_blob(layout, manifest_desc, MANIFEST))
+    require(isinstance(manifest, dict)
+            and set(manifest) == {"schemaVersion", "mediaType", "config", "layers"}
+            and manifest["schemaVersion"] == 2 and manifest["mediaType"] == MANIFEST
+            and isinstance(manifest["layers"], list) and len(manifest["layers"]) == 1,
+            "expected a single-layer pm OCI manifest")
+    config = read_json(checked_blob(layout, manifest["config"], CONFIG))
+    layer = checked_blob(layout, manifest["layers"][0], LAYER)
+    require(isinstance(config, dict)
+            and set(config) == {"architecture", "os", "config", "rootfs"}
+            and config["architecture"] == ARCHES[arch] and config["os"] == "linux",
+            "unsupported package config or wrong architecture")
+    require(config["rootfs"] == {
+        "type": "layers", "diff_ids": [manifest["layers"][0]["digest"]]},
+        "invalid rootfs diff_ids")
+    settings = config["config"]
+    require(isinstance(settings, dict) and set(settings) == {"Labels"},
+            "package config must contain only Labels, never an executable")
+    labels = settings["Labels"]
+    required_labels = {
+        LABEL + field for field in (
+            "format", "filename", "sha256", "size", "signature-sha256", "signature-size")}
+    require(isinstance(labels, dict)
+        and set(labels) in (required_labels, required_labels | {SOURCE_LABEL})
+        and all(isinstance(value, str) for value in labels.values())
+        and labels[LABEL + "format"] == "cpkg-v1",
+        "unknown package label format")
+    if SOURCE_LABEL in labels:
+        source_url(labels[SOURCE_LABEL])
+    name = package_name(labels[LABEL + "filename"])
+    files = []
+    total_size = 1024
+    for filename, prefix in ((name, ""), (name + ".sig", "signature-")):
+        expected_hash = labels[LABEL + prefix + "sha256"]
+        require(re.fullmatch(r"[0-9a-f]{64}", expected_hash),
+                f"invalid SHA-256 label for {filename}")
+        size_text = labels[LABEL + prefix + "size"]
+        require(re.fullmatch(r"0|[1-9][0-9]{0,19}", size_text),
+                f"invalid size label for {filename}")
+        size = int(size_text)
+        header = package_header(filename, size)
+        total_size += len(header) + size + (-size % 512)
+        candidate, target = work / filename, output / filename
+        require(not os.path.lexists(target), f"refusing to overwrite {target}")
+        files.append((header, size, expected_hash, candidate, target))
+    require(manifest["layers"][0]["size"] == total_size,
+            "layer must contain exactly the package and its detached signature")
+    with regular_open(layer) as source:
+        for header, size, expected_hash, candidate, target in files:
+            file_hash = hashlib.sha256()
+            with candidate.open("xb") as dest:
+                require(source.read(len(header)) == header,
+                        "unsupported tar header: expected matching regular package/signature files")
+                remaining = size
+                while remaining:
+                    block = source.read(min(CHUNK, remaining))
+                    require(block, "truncated package layer")
+                    file_hash.update(block)
+                    dest.write(block)
+                    remaining -= len(block)
+                padding = -size % 512
+                require(source.read(padding) == b"\0" * padding, "invalid tar member padding")
+                require(file_hash.hexdigest() == expected_hash,
+                        f"SHA-256 mismatch for {target.name}")
+                dest.flush()
+                os.fsync(dest.fileno())
+        require(source.read(1024) == b"\0" * 1024 and not source.read(1),
+                "invalid tar trailer or extra members")
+    # Publish the signature first: pm must never see our cpkg without its sig.
+    # Hard links refuse replacement even if a concurrent pull wins the race.
+    signature_candidate, signature_target = files[1][-2:]
+    package_candidate, package_target = files[0][-2:]
+    try:
+        os.link(signature_candidate, signature_target, follow_symlinks=False)
+    except FileExistsError as error:
+        raise OCIError(f"refusing to overwrite {signature_target}") from error
+    try:
+        os.link(package_candidate, package_target, follow_symlinks=False)
+    except BaseException as error:
+        # Do not remove a concurrent writer's replacement while rolling back
+        # the signature link that belongs to this attempt.
+        try:
+            if os.path.samestat(os.stat(signature_target, follow_symlinks=False),
+                                os.stat(signature_candidate)):
+                signature_target.unlink()
+        except FileNotFoundError:
+            pass
+        if isinstance(error, FileExistsError):
+            raise OCIError(f"refusing to overwrite {package_target}") from error
+        raise
+    return package_target
+
+
+def pull(args):
+    _, digest = reference(args.reference)
+    with workspace(args.output) as work:
+        layout = work / "image"
+        skopeo([f"docker://{args.reference}", f"oci:{layout}:package"], args.arch)
+        target = restore(layout, digest, args.arch, work, args.output)
+    print(target)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    push = commands.add_parser("publish", help="publish each opaque .cpkg as an OCI image")
+    push.add_argument("--repository", required=True)
+    push.add_argument("--tag", required=True)
+    push.add_argument("--arch", required=True, choices=ARCHES)
+    push.add_argument("--source", type=Path, default=REPO / "out/pkgs")
+    push.add_argument("--source-url", help="repository URL for the OCI source label (e.g. GHCR association)")
+    fetch = commands.add_parser("pull", help="retrieve a digest-pinned opaque .cpkg")
+    fetch.add_argument("reference")
+    fetch.add_argument("--arch", required=True, choices=ARCHES)
+    fetch.add_argument("--output", type=Path, default=REPO / "out/pkgs")
+    args = parser.parse_args(argv)
+    try:
+        (publish if args.command == "publish" else pull)(args)
+    except (OCIError, OSError, UnicodeError, tarfile.TarError) as error:
+        print(f"pm-oci: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
