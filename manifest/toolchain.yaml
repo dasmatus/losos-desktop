@@ -154,8 +154,8 @@ cfi:
   #
   # That export is not free, and keeping it is share/cfi-export.map's job. The
   # runtime finds a callee's __cfi_check by NAME in that library's dynamic
-  # symbol table (compiler-rt/lib/cfi/cfi.cpp:216 at llvmorg-18.1.3, which is
-  # the clang the Containerfile carries), and when it is not there :299 marks
+  # symbol table (compiler-rt/lib/cfi/cfi.cpp:216, the same line at both
+  # llvmorg-18.1.3 and llvmorg-19.1.7), and when it is not there :299 marks
   # the whole module kUncheckedShadow -- every indirect call into the library
   # passes with no check, no error and no warning. An upstream version script
   # ending `local: *;` does exactly that, because __cfi_check is nobody's
@@ -173,7 +173,9 @@ cfi:
   # configure-time probe for its global symbol pipe. The probe generates a C
   # file declaring every symbol it saw and taking its address, and compiling
   # `extern char __cfi_check;` with -fsanitize-cfi-cross-dso crashes clang
-  # 18.1.3 in CodeGenFunction::EmitCfiCheckStub(). libtool treats that as the
+  # 18.1.3 AND 19.1.1 in CodeGenFunction::EmitCfiCheckStub() -- reproduced on
+  # both, because the container's is 19 and for a while this said 18. libtool
+  # treats that as the
   # pipe not working, sets it empty and carries on, so EVERY autotools package
   # in this tree has an empty symbol pipe and only the ones that ask libtool
   # to compute an export list ever find out. Three packages here can:
@@ -351,10 +353,10 @@ exceptions:
       commit. Both get the symbols back, because -fvisibility= is only on the
       line as CFI's precondition and falls off with it -- but `cfi` also
       takes the checks away from a library every unit in the system feeds
-      capability text to, and it does not have to. clang 18.1.3 accepts this
-      tree's whole scheme set with -fsanitize-cfi-cross-dso at
-      -fvisibility=default; what it refuses is -fvisibility= missing
-      altogether. So libcap keeps indirect-call checking and loses only the
+      capability text to, and it does not have to. clang accepts this tree's
+      whole scheme set with -fsanitize-cfi-cross-dso at -fvisibility=default;
+      what it refuses is -fvisibility= missing altogether. Checked on 19.1.1,
+      which is the Containerfile's, as well as on 18.1.3, which is not. So libcap keeps indirect-call checking and loses only the
       guarantee that nothing interposes its exports at load time, which for a
       library that has been default-visible since 1999 is the status quo
       everywhere else rather than a new hole.

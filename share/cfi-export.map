@@ -17,7 +17,10 @@
 #
 # Upstream version scripts end `local: *;` as a matter of course, and
 # __cfi_check is not part of anybody's public API, so it is exactly what
-# `local: *;` is for. Measured on clang 18.1.3 with mold and with lld: a
+# `local: *;` is for. Measured on clang 19.1.1 -- the Containerfile's LLVM is
+# 19 (Containerfile:61) and every measurement here was repeated on it after an
+# earlier round was made only on a developer box's 18.1.3 -- and on 18.1.3,
+# with mold and with lld in both cases: a
 # library built with cross-DSO CFI and linked with a `global: api_*; local: *;`
 # script exports no __cfi_check at all. That is most of the version scripts in
 # this tree -- tpm2-tss ships one per library, and cryptsetup, linux-pam,
