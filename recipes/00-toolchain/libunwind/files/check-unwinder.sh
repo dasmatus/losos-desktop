@@ -32,11 +32,14 @@ case "$LIB" in
 esac
 
 for symbol in __unw_getcontext _Unwind_Backtrace _Unwind_GetIP; do
-  symbol_pattern="[ 	]$symbol\$"
   if [ "$accept_versions" = true ]; then
-    symbol_pattern="[ 	]$symbol\$\|[ 	]$symbol@"
+    symbol_pattern="[ 	]$symbol($|@)"
+    grep_flags='-Eq'
+  else
+    symbol_pattern="[ 	]$symbol\$"
+    grep_flags='-q'
   fi
-  if ! "$NM" $nm_flags "$LIB" | grep -q "$symbol_pattern"; then
+  if ! "$NM" $nm_flags "$LIB" | grep $grep_flags "$symbol_pattern"; then
     echo "check-unwinder: $LIB does not define $symbol"
     echo "check-unwinder: if it is __unw_getcontext, cmake dropped the"
     echo "check-unwinder: assembly sources -- see files/patches."
