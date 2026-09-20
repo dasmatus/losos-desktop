@@ -37,11 +37,39 @@ steps:
 # @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
 # read by nothing. Without it libtss2-esys installs empty and every TPM2
 # feature above this layer is the first thing to say so.
+#
+# --disable-defaultflags turns off the block at configure.ac:613-638, and it is
+# here for one line inside it: ADD_LINK_FLAG([-Wl,--no-undefined]) at :634.
+# EXTRA_LDFLAGS is AM_LDFLAGS (Makefile.am:13) and every libtss2-*.la link
+# names it, so that flag reaches libtss2-sys, -esys and -fapi alike -- and
+# cross-DSO CFI in diagnose mode leaves __cfi_slowpath_diag and
+# __ubsan_handle_cfi_check_fail undefined in every shared object this tree
+# builds, by design. It is openssl's failure again, from a package's own build
+# system rather than from ours, and the flag has no switch narrower than the
+# block.
+#
+# Nothing is lost by turning the block off, because this tree already sets
+# everything in it and sets most of it harder. Checked against the generated
+# response files rather than assumed: -O2, -fPIC and all three of
+# -Wl,-z,{relro,now,noexecstack} are already there verbatim;
+# -fstack-protector-all is answered by -fstack-protector-strong with
+# -fstack-clash-protection beside it, and AX_ADD_FORTIFY_SOURCE's
+# _FORTIFY_SOURCE=2 by _FORTIFY_SOURCE=3. What is genuinely dropped is the
+# warning set (-Wall, -Wextra, -Wformat-security, -Wstrict-overflow=5) and
+# -std=c99, none of which changes the artifact -- and clang's default gnu17 is
+# a superset of c99, so code that compiled under the stricter one compiles
+# under it.
+#
+# The probe cannot be made to answer no from outside. AX_CHECK_LINK_FLAG links
+# a trivial EXECUTABLE, and an executable link is exactly where clang does put
+# libclang_rt.cfi_diag, so -Wl,--no-undefined succeeds there and is added --
+# then fails on the first library. A flag that only breaks what the probe does
+# not build is a flag the probe cannot reject.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_TPM2_TSS@ LDFLAGS=@LDFLAGS_RSP_TPM2_TSS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doxygen-doc
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_TPM2_TSS@ LDFLAGS=@LDFLAGS_RSP_TPM2_TSS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doxygen-doc --disable-defaultflags
 
 - stage: Build
   name: compile

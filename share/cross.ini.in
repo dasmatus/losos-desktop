@@ -112,6 +112,22 @@ b_lto           = false
 # openssl's flag and not one of ours -- and openssl already drops that flag
 # for sanitizer builds, which the response file is what hides from it.
 #
+# So the rest of the base layer was swept for it rather than waited on, and
+# there is one more: tpm2-tss adds -Wl,--no-undefined itself, at
+# configure.ac:634, into the AM_LDFLAGS every libtss2-*.so link names. Its
+# recipe turns the block off. Everything else in the layer is clear --
+# curl, libmicrohttpd, libqrencode, libgpg-error, libgcrypt, json-c, popt,
+# cryptsetup, libcbor, libfido2, nettle, libtasn1, libarchive and libbpf, read
+# at the pinned version.
+#
+# linux-pam and libarchive look like the class and are not, which is the part
+# worth writing down: both pass libtool's -no-undefined, on every PAM module
+# and on libarchive itself. That is a declaration and not a flag. ltmain.sh
+# turns it into allow_undefined_flag=$no_undefined_flag, and configure sets
+# no_undefined_flag only under solaris*, aix and sysv -- on linux-gnu it is
+# empty, so the whole thing expands to nothing. Grepping for the string finds
+# them; only reading what libtool does with it says they are safe.
+#
 # The shared ldflags do carry
 # -Wl,-z,now, which is the opposite kind of switch -- it moves resolution
 # from first call to load -- and that is the one that decides whether the
