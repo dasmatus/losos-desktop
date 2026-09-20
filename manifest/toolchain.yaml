@@ -399,11 +399,18 @@ exceptions:
       reason. The layer's -fvisibility=hidden narrows it to nothing, and the
       gnulib unit tests are precisely what stopped.
 
-      Read in 1.1 and 1.3 rather than in the pinned 1.2: ftp.gnu.org is not
-      reachable from where this was diagnosed and the Ubuntu archive carries
-      those two. The Makefile.am comment, the bare declarations and the
-      unused gl_VISIBILITY are in both neighbours, so 1.2 is bracketed rather
-      than read.
+      The reasoning above was read in 1.1 and 1.3 rather than in the pinned
+      1.2: ftp.gnu.org is not reachable from where this was diagnosed and the
+      Ubuntu archive carries those two. The Makefile.am comment, the bare
+      declarations and the unused gl_VISIBILITY are in both neighbours, so the
+      mechanism is bracketed rather than read.
+
+      The fault itself needs no bracket. The pinned 1.2 bytes are what failed,
+      on the symbol this entry names, on two branches independently -- #62 and
+      #61 stopped at this member with the same two undefined symbols on both
+      architectures before either had the fix. So a later reader who finds
+      ftp.gnu.org unreachable and doubts the bracket can stop there: what is
+      inferred is why libunistring exports nothing, not that it does.
   - package: openssl
     drops: [visibility]
     why: >
