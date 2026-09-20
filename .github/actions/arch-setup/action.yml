@@ -35,7 +35,7 @@ runs:
 
     - name: Install BasedPyright
       shell: bash
-      run: python3 -m pip install basedpyright==1.40.1
+      run: python3 -m pip install --no-deps basedpyright==1.40.1 nodejs-wheel-binaries==24.19.0
 
     - name: Install the pinned Rust toolchain
       if: inputs.rust == 'true'
