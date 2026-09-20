@@ -52,11 +52,50 @@ steps:
 # tests/Makefile.am:101's testdrv-build, a check_PROGRAMS target `make all`
 # never reaches. That is one `make check` away from being a real failure, and
 # leaving one of the three unfixed is how a class comes back.
+
+# GPGRT_CONFIG: where libgpg-error is, spelled the one way this macro reads.
+#
+# AM_PATH_GPG_ERROR (m4/gpg-error.m4, vendored in the tarball) never consults
+# PKG_CONFIG_PATH. It locates libgpg-error by finding a script and running it,
+# and the three ways it looks are all closed here:
+#
+#   * AC_PATH_PROG(GPGRT_CONFIG, gpgrt-config, no, [$prefix/bin:$PATH]) --
+#     $prefix is /usr, which in pm's jail is the host's read-only mirror, and
+#     $PATH is pm's fixed CONTAINER_PATH, which nothing can add to. The script
+#     is installed at /build/sysroot/usr/bin/gpgrt-config, on neither.
+#   * ${SYSROOT}/bin/gpg-error-config -- a variable this tree does not set, and
+#     a file libgpg-error 1.50 does not install: src/Makefile.am:82-85 puts
+#     gpg-error-config in bin_SCRIPTS only under INSTALL_GPG_ERROR_CONFIG,
+#     which is off by default. gpgrt-config is on both branches. That is also
+#     why --with-libgpg-error-prefix is the wrong lever: it would name the file
+#     that is missing rather than the one that is there.
+#   * gpg-error-config on $PATH -- same file, same absence.
+#
+# With all three answering `no`, gpg_error_config_version is the literal "0.0"
+# and configure stops with `libgpg-error is needed`, naming an ftp URL rather
+# than the sysroot it was standing next to.
+#
+# Setting the variable to an absolute path skips the search entirely:
+# AC_PATH_PROG takes a value matching [\/]* verbatim, as the user's override.
+# The macro then derives the libdir from the script's own location --
+# gpgrt_prefix=${GPGRT_CONFIG%/*/*} is /build/sysroot/usr -- and appends
+# --libdir=/build/sysroot/usr/lib, which is where `make install
+# DESTDIR=/build/sysroot` put gpg-error.pc (src/Makefile.am:91-92). That
+# candidate is tested BEFORE the one derived from `clang -print-search-dirs`,
+# so a libgpg-error installed on the build host cannot win -- the C7 hazard
+# this would otherwise be, answered by the macro's own ordering rather than by
+# us. gpgrt-config is a /bin/sh script, so the jail can run it; a compiled
+# musl helper here would not have run at all.
+#
+# libgcrypt is the only package in this tree found this way. Everything else
+# that consumes it uses pkg-config: libgcrypt ships libgcrypt.pc
+# (src/Makefile.am:23-24) and systemd v261's meson.build asks for it with
+# dependency('libgcrypt'), with no *-config script anywhere in it.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libgcrypt /build/src/libgcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ CC_FOR_BUILD=@CC@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/libgcrypt /build/src/libgcrypt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ CC_FOR_BUILD=@CC@ GPGRT_CONFIG=/build/sysroot/usr/bin/gpgrt-config PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 # o_flag_munging is overridden rather than left to upstream. libgcrypt builds
 # its jitter-entropy object by echoing its own compile line through that make
