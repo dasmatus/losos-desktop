@@ -20,7 +20,7 @@ xorriso, qemu-img or a `%{losos-mkosi:...}` symbol -- and whether this host
 actually has the pinned one, and builds in the container when it does not.
 So the image layer gets the right mkosi whether or not anyone remembered, and
 the layers below it, which need none of this, stay on the host where they are
-faster. `recipe_needs_image_host` and `build_in_container` in `do` are the two
+faster. `recipe_needs_image_host` and `build_in_container` in `Justfile` are the two
 halves of that.
 
 CI jobs run in Arch Linux containers, using Arch Linux ARM on the native
@@ -51,10 +51,66 @@ The pm binary and encoder caches distinguish the Arch userspace from the old
 Ubuntu entries; the SHA-256-verified source mirror remains shared.
 
 ```sh
-just container build      # build the image
+just container pull       # download the published image; no local rebuild
 just container-check      # run the gate inside it
 just container            # a shell in it, with the repository mounted
 ```
+
+## Published build host
+
+The `container.yml` workflow publishes
+`ghcr.io/dasmatus/losos-desktop/build-host:latest` for **linux/amd64 and
+linux/arm64**. Docker and Podman select the native architecture automatically.
+`tools/container run` pulls it when absent and otherwise reuses the local copy;
+`just container pull` explicitly refreshes it. The automatic image-layer
+fallback follows the same path rather than rebuilding the Containerfile.
+A failed pull is an error, not permission to start an unexpected local build.
+
+Set `LOSOS_CONTAINER_IMAGE` to select another tag or pin a registry digest:
+
+```sh
+export LOSOS_CONTAINER_IMAGE=ghcr.io/dasmatus/losos-desktop/build-host:sha-<commit>
+just container pull
+just container-check
+```
+
+`sha-<commit>` identifies the Containerfile revision, not immutable bytes:
+manually rebuilding that revision can install newer Arch packages. Use
+`ghcr.io/dasmatus/losos-desktop/build-host@sha256:<digest>` to hold the exact
+multi-architecture image fixed. Cached copies also remain unchanged until an
+explicit pull.
+
+For an unpublished Containerfile change or an offline locally built host:
+
+```sh
+export LOSOS_CONTAINER_IMAGE=localhost/losos-build
+just container build
+just container-check
+```
+
+`container build` remains an explicit local build and tags the selected image.
+The registry supplies the **build tools**, not pm, the plugin components, source
+tarballs or completed OS images. The sibling pm checkout and its binary are
+still mounted as before; publishing this host does not cache pm's OS builds.
+
+### Publishing
+
+The workflow runs on main when the Containerfile, container helper, setup action
+or publishing workflow changes, and can be dispatched manually **on main** to
+refresh the rolling Arch packages. Each architecture builds and smoke-tests on a
+native runner. Only after both succeed does the publishing job update the
+multi-architecture `latest` and `sha-<commit>` tags. Run-specific native tags
+keep different workflow runs from being mixed into one manifest.
+Pull requests never publish; the existing `images.yml` container gate still
+rebuilds and checks proposed Containerfile changes.
+
+No registry password secret is needed: the publishing jobs use `GITHUB_TOKEN`
+with job-scoped `packages: write`. After merging, run the workflow once and
+check the resulting GHCR package's settings: new packages may be private.
+Make `losos-desktop/build-host` **public** for anonymous pulls on other machines,
+or authenticate the chosen engine to GHCR with `read:packages` access.
+If the package already exists, grant this repository Actions write access to it.
+Until the first successful publication, use the explicit local-build path above.
 
 ## The base, and what is not pinned
 
@@ -208,6 +264,38 @@ rather than its binary — `fingerprint-lint.py --check-table` reads
 `policy.rs`, and `plugins.py` compares the vendored `plugin.wit` against pm's.
 Both silently downgrade to a pass when they cannot find it, so a green check
 against a missing pm proves less than it looks like.
+
+**The repository is mounted at its *resolved* path, and the Justfile has to
+agree.** `tools/container` bind-mounts the checkout at the path
+`Path.resolve()` gives it, so on an ostree host -- Fedora Silverblue and
+friends, where `/home` is a symlink to `/var/home` -- the mount is under
+`/var/home` no matter which spelling the developer typed. The container recipes
+then run `just --justfile <repo>/Justfile` *inside* the container, and if that
+`<repo>` is the symlinked spelling it names a directory the container does not
+have:
+
+    error: Failed to read justfile at `/home/<user>/.../Justfile`:
+    No such file or directory (os error 2)
+
+which reads as a missing Justfile and is a missing mount. `repo :=
+canonicalize(justfile_directory())` is what keeps the two spellings from
+diverging, and `./do` resolves the same way before it hands just a path at all.
+
+**pm is mounted, not installed, so it has to be a binary this image can run.**
+The host builds it and the container executes that same file. A host whose
+toolchain lives in its own prefix -- Homebrew, Nix -- produces one whose ELF
+interpreter is a path inside that prefix, which nothing mounts, and the kernel
+blames the program rather than the loader:
+
+    .../pm: cannot execute: required file not found
+
+Build pm in the image, which is what CI does before it runs the gate:
+
+    ./do container-run -- cargo build --release --manifest-path ../pm/Cargo.toml
+
+`tools/container` reads the binary's `PT_INTERP` and warns when it names a
+loader the image cannot provide. A warning and not a refusal: the command above
+is itself a `container run`, and a hard failure would block the fix.
 
 ## What it is not
 

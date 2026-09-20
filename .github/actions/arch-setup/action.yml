@@ -28,9 +28,14 @@ runs:
         if [ "$INSTALL_RUST" = true ]; then
           packages+=(clang lld llvm make pkgconf rustup)
         fi
+        packages+=(python-pip)
         if [ "$NESTED" = true ]; then packages+=(podman); fi
         # Never install against a newly synced index without upgrading the base.
         pacman -Syu --needed --noconfirm "${packages[@]}"
+
+    - name: Install BasedPyright
+      shell: bash
+      run: python3 -m pip install basedpyright==1.40.1 nodejs-wheel-binaries==24.19.0
 
     - name: Install the pinned Rust toolchain
       if: inputs.rust == 'true'
@@ -71,6 +76,20 @@ runs:
         printf '%s\n' '[storage]' 'driver = "vfs"' \
           'runroot = "/run/containers/storage"' \
           'graphroot = "/var/lib/containers/storage"' > /etc/containers/storage.conf
+        # Arch's rootless Podman picks user config first; pin rootless storage
+        # locations and the runtime env so nested jobs never fall back to
+        # overlay in Docker.
+        mkdir -p "$HOME/.config/containers"
+        : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"
+        mkdir -p "$XDG_RUNTIME_DIR/containers/storage" "$HOME/.local/share/containers/storage"
+        printf '%s\n' '[storage]' 'driver = "vfs"' \
+          "runroot = \"$XDG_RUNTIME_DIR/containers/storage\"" \
+          "graphroot = \"$HOME/.local/share/containers/storage\"" \
+          > "$HOME/.config/containers/storage.conf"
+        printf '%s\n' "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
+          "CONTAINERS_STORAGE_CONF=$HOME/.config/containers/storage.conf" \
+          'STORAGE_DRIVER=vfs' >> "$GITHUB_ENV"
+        export XDG_RUNTIME_DIR CONTAINERS_STORAGE_CONF="$HOME/.config/containers/storage.conf" STORAGE_DRIVER=vfs
         # There is no systemd manager inside a job container.
         printf '%s\n' '[engine]' 'cgroup_manager = "cgroupfs"' \
           'events_logger = "file"' '[containers]' 'cgroups = "disabled"' \

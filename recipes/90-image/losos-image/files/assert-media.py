@@ -227,7 +227,9 @@ def check_iso(path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None
+    )
     parser.add_argument("--qcow2", required=True)
     parser.add_argument("--iso", required=True)
     args = parser.parse_args()

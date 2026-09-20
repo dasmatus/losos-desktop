@@ -53,7 +53,14 @@ steps:
   run:
   - mkdir -p /build/root /build/initrd /build/uki /dest/artifacts
   - /bin/sh @RECIPE@/sysroot.sh /dest/deps /build/root --no-pc-rewrite
+  # sysroot.sh stages only usr/, so recreate musl's loader entry explicitly.
+  # /lib becomes a symlink to /usr/lib below, so /usr/lib/ld-musl-*.so.1 is the
+  # single place that keeps PT_INTERP's absolute /lib/ld-musl-*.so.1 valid.
+  - /bin/sh -eu -c 'loader=/build/root/usr/lib/ld-musl-@ARCH@.so.1; if [ ! -e "$loader" ] && [ ! -L "$loader" ]; then test -f /build/root/usr/lib/libc.so; ln -s libc.so "$loader"; fi'
   - cp -a @RECIPE@/files/losos-image/overlay/. /build/root/
+  # The shipped tree is /usr-merged: root-level compatibility paths are
+  # symlinks, and the musl loader entry is staged in /usr/lib ahead of that.
+  - python3 @RECIPE@/files/losos-image/usr-merge.py /build/root
   # pm's own bookkeeping is not part of the OS.
   - rm -rf /build/root/deps
   - rm -f /build/root/metadata

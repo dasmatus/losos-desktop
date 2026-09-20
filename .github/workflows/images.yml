@@ -19,8 +19,8 @@ on:
 
 # Read-only by default. This workflow runs on pull_request, which means it
 # checks out and executes branch code; a token that can write to the repository
-# has no business being in that job. Only `publish` needs more, and it asks for
-# it itself.
+# has no business being in that job. Only the publishing jobs need more, and
+# each asks for it itself.
 permissions:
   contents: read
 
@@ -122,7 +122,7 @@ jobs:
         with:
           # compiler-rt provides CFI's ignorelist; llvm carries LLVMgold.so,
           # which mold needs for LTO. lld remains for the kernel's LLVM=1.
-          packages: clang lld mold llvm compiler-rt just python-yaml
+          packages: clang lld mold llvm compiler-rt just python-yaml skopeo
           rust: "true"
 
       # Checks out the pinned pm and leaves a release binary at
@@ -184,11 +184,10 @@ jobs:
         run: just toolchain-report -- --verify-cfi
 
   # The same gate, in the build host this repository describes rather than in
-  # whatever the runner image happens to have installed. It is slower -- the
-  # image is built from scratch on every run until it is published to a
-  # registry -- and it is the only job that can fail when the Containerfile is
-  # wrong, which the job above cannot, because that one installs its own
-  # dependencies directly with pacman.
+  # whatever the runner image happens to have installed. This deliberately
+  # rebuilds the Containerfile even though consumers pull the published host:
+  # otherwise a pull request changing it would only test yesterday's image.
+  # The job above cannot catch that because it installs packages directly.
   #
   # `just container` passes the seccomp and AppArmor options pm's user
   # namespace needs; GitHub's runners allow both.
@@ -497,6 +496,33 @@ jobs:
           just release-manifest -- --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" release
 
+      # Keep package publishing separate from the build: code compiled on a PR
+      # must never run with a registry write token. Signatures travel with the
+      # archives; a pulled package must still pass pm's own trust check.
+      - name: Sign the built packages and record their release version
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        working-directory: losos-desktop
+        run: |
+          # pm build signs neither its top-level archive nor intermediate ones.
+          # Use the build's existing key, never a new key in the publish job.
+          export XDG_CONFIG_HOME="$PWD/.pm-config"
+          for package in out/pkgs/*.cpkg; do
+            "$GITHUB_WORKSPACE/pm/target/release/pm" sign "$package"
+          done
+          printf '%s\n' "$LOSOS_VERSION" > out/pkgs/package-version.txt
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        with:
+          name: packages-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: |
+            losos-desktop/out/pkgs/*.cpkg
+            losos-desktop/out/pkgs/*.cpkg.sig
+            losos-desktop/out/pkgs/package-version.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+
       # always(): the number is worth having most when the build died, since
       # a full disk is one of the things that kills it.
       # The per-directory lines say what is big; the workspace total says how
@@ -546,6 +572,58 @@ jobs:
           # only evidence there is.
           [ -s "$why" ] || tail -c 900 "$log" > "$why"
           head -c 1400 "$why"
+
+  # These are package transport images, not boot-tested OS releases. Publishing
+  # needs a successful build; the existing image release retains its VM gates.
+  publish-packages:
+    needs: [build, channel]
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - *arch-bootstrap
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: out/pkgs
+      - name: Install the registry transport
+        uses: ./.github/actions/arch-setup
+        with:
+          packages: python skopeo
+      - name: Publish signed package containers to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: ${{ needs.channel.outputs.name }}
+          ARCH: ${{ matrix.arch }}
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/packages-auth.json
+        run: |
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$GHCR_TOKEN" | skopeo login \
+            --authfile "$REGISTRY_AUTH_FILE" --username "$GITHUB_ACTOR" \
+            --password-stdin ghcr.io
+          unset GHCR_TOKEN
+          version=$(cat out/pkgs/package-version.txt)
+          python3 tools/pm-oci publish \
+            --repository "ghcr.io/${GITHUB_REPOSITORY,,}/packages" \
+            --tag "$CHANNEL-$version-$ARCH" --arch "$ARCH" \
+            --source-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            | tee package-containers.txt
+          {
+            echo '### Package containers (digest-pinned)'
+            echo '```text'
+            cat package-containers.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.

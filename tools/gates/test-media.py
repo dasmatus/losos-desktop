@@ -55,6 +55,8 @@ ISO_AREA = "96CD1DD7-D5A4-4A3E-8F1E-4C9EA5B3A9FD"
 def load_checker():
     """Import assert-media.py, whose name is not an identifier."""
     spec = importlib.util.spec_from_file_location("assert_media", CHECKER)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load checker module from {CHECKER}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
