@@ -87,12 +87,12 @@ FROM ${BASE_IMAGE}
 # docs/host-requirements.md) and a distribution rustc cannot satisfy it.
 #
 # It also has to be new enough to build pm, which is a constraint from another
-# repository: pm depends on wasmtime for the plugin sandbox, and wasmtime 47
-# requires 1.94.0. Too old and the failure is forty lines of
-# "wasmtime-internal-<thing> requires rustc 1.94.0", which names the crate
+# repository: pm depends on wasmtime for the plugin sandbox, and wasmtime 48
+# requires 1.95.0. Too old and the failure is forty lines of
+# "wasmtime-internal-<thing> requires rustc 1.95.0", which names the crate
 # that noticed rather than the pin that is wrong. Raise this when pm's tree
-# raises its floor; there is nothing here that can detect it.
-ARG RUST_VERSION=1.94.0
+# raises its floor; the workflow gate keeps the CI toolchain in step with this.
+ARG RUST_VERSION=1.95.0
 
 # Tombstone: an `LLVM_VERSION` argument used to be here, naming the LLVM the
 # image installs. It existed only because Debian versions its LLVM package

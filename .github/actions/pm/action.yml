@@ -99,7 +99,9 @@ runs:
     - name: Build pm
       if: steps.binary.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo build --release --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
+      # pmd is currently a worker entrypoint, not the build service. Build only
+      # the CLI we cache and run, from the dependency graph upstream locked.
+      run: cargo build --locked --release --bin pm --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
 
     - name: Keep the pm binary
       if: steps.binary.outputs.cache-hit != 'true'

@@ -38,10 +38,12 @@ runs:
       env:
         RUSTUP_HOME: /usr/local/rustup
         CARGO_HOME: /usr/local/cargo
+        # pm's Wasmtime dependency sets the floor; match Containerfile.
+        RUST_VERSION: 1.95.0
       run: |
         # Keep both homes in pm's /usr mirror, not the invisible /root (C7).
-        rustup toolchain install 1.94.0 --profile minimal
-        rustup default 1.94.0
+        rustup toolchain install "$RUST_VERSION" --profile minimal
+        rustup default "$RUST_VERSION"
         mkdir -p /usr/local/bin
         # Native Rust and cc-rs look up cc/ar; clang itself looks up ld.
         # Conventional names select LLVM without global RUSTFLAGS, which would
@@ -53,7 +55,7 @@ runs:
         # C3 resolves symlinks before execution: rustup proxies become rustup,
         # so pm and its children must find the real tools on their fixed PATH.
         for tool in cargo rustc rustdoc; do
-          ln -sf "$(rustup which --toolchain 1.94.0 "$tool")" "/usr/local/bin/$tool"
+          ln -sf "$(rustup which --toolchain "$RUST_VERSION" "$tool")" "/usr/local/bin/$tool"
         done
         printf '%s\n' /usr/local/bin >> "$GITHUB_PATH"
         printf '%s\n' "RUSTUP_HOME=$RUSTUP_HOME" "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
