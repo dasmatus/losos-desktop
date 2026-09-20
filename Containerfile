@@ -217,22 +217,6 @@ RUN pacman -Syu --noconfirm --needed \
       `# reached for it first.` \
       diffutils \
       \
-      `# perl, because openssl's whole build system is perl: Configure is a` \
-      `# perl script, and the generated Makefile drives more of them to build` \
-      `# the assembly and the error tables. The base image carries perl-base,` \
-      `# which is Essential and not enough -- openssl reaches for core modules` \
-      `# Debian splits into perl-modules. Nothing on a command line here says` \
-      `# perl, so this looks removable and is not.` \
-      perl \
-      \
-      `# bzip2 is the odd one here: no recipe names it and nothing spells it` \
-      `# on a command line. tar reaches for it by itself for the seven` \
-      `# .tar.bz2 sources in the lock -- and Debian's tar is built to try` \
-      `# lbzip2 first, falling back to bzip2 -- so with neither installed a` \
-      `# fetch step dies with "tar (child): lbzip2: Cannot exec", naming a` \
-      `# program no file in this tree mentions.` \
-      bzip2 \
-      \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
       `# deliberately absent -- but ninja and cmake are invoked as first words.` \
       ninja cmake \

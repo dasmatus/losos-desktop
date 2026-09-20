@@ -66,14 +66,10 @@ configuration.** Until it does, `pam_systemd_home` is not in any stack, so the
 enrolment above is a thing the OS can store and nothing yet consumes.
 
 That absence is also less stable than it looks. gdm's `default-pam-config`
-option defaults to `autodetect`, which is `test -f /etc/arch-release` and four
-siblings evaluated against the *build container* rather than the image. The
-current Arch base matches `/etc/arch-release`, but the recipe spells
-`-Ddefault-pam-config=none`, so the absence is deliberate; changing or removing
-that pin would let the base choose which PAM stack ships.
-The recipe therefore spells `-Ddefault-pam-config=none`, so the absence is
-deliberate rather than a property of the container. That pin travels with the
-change that makes it bite, which is whichever one moves the container base.
+option defaults to `autodetect`, which checks `/etc/arch-release` and four
+siblings in the *build container* rather than in the image. The recipe instead
+spells `-Ddefault-pam-config=none`, so the absence is deliberate; changing or
+removing that pin would let the base choose which PAM stack ships.
 
 Shipping a PAM stack of this OS's own is the next piece of work, and it is what
 turns the paragraph above from enrolled into enforced.
@@ -89,10 +85,11 @@ LUKS volume there is no factor to enrol, and `systemd-cryptenroll` would have
 nothing to point at.
 
 `systemd-cryptenroll --fido2-device=auto /dev/<device>` works today against a
-LUKS volume you made yourself, and the initrd already carries
-`systemd-cryptsetup` and its generator, so a hand-made encrypted volume with
-`fido2-device=auto` in `crypttab` would be unlocked at boot. That is a thing a
-user can do, not a thing this image does.
+LUKS volume you made yourself after boot. Boot-time unlock is a separate gap:
+the current initrd manifest carries `systemd-cryptsetup` and its generator, but
+not `libfido2.so.1` or its runtime closure, so an initrd handling
+`fido2-device=auto` could not load the library yet. That is a thing a user can
+set up manually after switch-root, not a thing this image does at boot.
 
 Making the *root* partition encrypted is its own change and a larger one than
 it looks: `systemd-repart` offers `Encrypt=key-file` and `Encrypt=tpm2` and no
