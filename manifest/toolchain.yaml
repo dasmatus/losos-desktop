@@ -151,6 +151,47 @@ cfi:
   # it, a call from libfoo.so into libbar.so is unchecked, which on a desktop
   # is most of the calls there are. It costs a __cfi_check export per library
   # and a slower check at the boundary.
+  #
+  # That export is not free, and keeping it is share/cfi-export.map's job. The
+  # runtime finds a callee's __cfi_check by NAME in that library's dynamic
+  # symbol table (compiler-rt/lib/cfi/cfi.cpp:216 at llvmorg-18.1.3, which is
+  # the clang the Containerfile carries), and when it is not there :299 marks
+  # the whole module kUncheckedShadow -- every indirect call into the library
+  # passes with no check, no error and no warning. An upstream version script
+  # ending `local: *;` does exactly that, because __cfi_check is nobody's
+  # public API, and most of the version scripts in this tree end that way:
+  # tpm2-tss ships one per library, and cryptsetup, linux-pam, p11-kit,
+  # libpwquality, libfido2, libunistring, libtasn1, gnutls and curl each have
+  # one. So the map is appended to every link that keeps cross-DSO CFI, from
+  # tools/lib/toolchain.py's ldflags(), and the measurements behind it -- why a
+  # second version script works where --export-dynamic-symbol does not, and why
+  # the name is spelled as a glob -- are in the map's own header.
+  #
+  # It costs one more thing, found at curl and written out in that recipe
+  # because that is where the next person meets it. __cfi_check and
+  # __cfi_check_fail are emitted into every object, and under -flto=thin the
+  # object is LLVM bitcode, so llvm-nm lists them -- which breaks libtool's
+  # configure-time probe for its global symbol pipe. The probe generates a C
+  # file declaring every symbol it saw and taking its address, and compiling
+  # `extern char __cfi_check;` with -fsanitize-cfi-cross-dso crashes clang
+  # 18.1.3 in CodeGenFunction::EmitCfiCheckStub(). libtool treats that as the
+  # pipe not working, sets it empty and carries on, so EVERY autotools package
+  # in this tree has an empty symbol pipe and only the ones that ask libtool
+  # to compute an export list ever find out. Three packages here can:
+  # curl, gnutls and libtasn1, each of them only on the `else` of a version
+  # script. curl's recipe takes the other branch explicitly.
+  #
+  # gnutls and libtasn1 need nothing, and that was measured rather than
+  # assumed, because a probe answering the convenient way has already cost
+  # this tree two evenings. Their branch is gnulib's gl_LD_VERSION_SCRIPT
+  # (m4/ld-version-script.m4, read in libtasn1 4.19.0 bytes whose SHA-256
+  # matches sources.lock exactly), and it answers yes only if the linker
+  # REJECTS a malformed version script and then accepts a valid one -- the
+  # first link is deliberately given a file containing the word `foo`. Run
+  # against the linker this tree actually uses: mold fails the garbage map
+  # with `expected '{', but got EOF` and links the valid one, so the
+  # conditional is true and both take the version script. If that ever
+  # changes, --enable-ld-version-script skips the probe outright.
   cross_dso: true
   # Diagnose, not trap. A violation prints the file and line of the indirect
   # call that failed and the callee it was pointed at, which systemd-coredump

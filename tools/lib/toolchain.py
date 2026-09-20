@@ -27,6 +27,14 @@ class Toolchain:
         self.exceptions = {
             entry["package"]: entry for entry in (self.doc.get("exceptions") or [])
         }
+        # The path of share/cfi-export.map as it was staged for the layer being
+        # generated. It is per-layer because only the bundle's own generated
+        # directory is mounted inside the jail (C7), so there is no one path
+        # every layer could share. tools/configure sets it once per layer,
+        # before any flag list is asked for, and every list -- the shared
+        # response file, an exempt package's own, and both meson cross files --
+        # picks up the same value from here rather than being told separately.
+        self.cfi_export_map = None
 
     @classmethod
     def load(cls, path):
@@ -247,7 +255,18 @@ class Toolchain:
             flags.append(f"-fuse-ld={linker}")
         if "lto" not in drops:
             flags += self.lto_flags()
-        flags += self._cfi_for(drops)
+        cfi = self._cfi_for(drops)
+        flags += cfi
+        # Cross-DSO CFI needs __cfi_check in the dynamic symbol table of every
+        # library, and an upstream version script ending `local: *;` takes it
+        # out -- silently, because the runtime that cannot find it marks the
+        # module unchecked rather than failing. share/cfi-export.map puts it
+        # back on every link; the file's own header is the measurement and the
+        # reasoning. Tied to cross_dso rather than to CFI in general because
+        # __cfi_check is emitted only in the cross-DSO mode, so anywhere else
+        # the flag would name a symbol that does not exist.
+        if cfi and self.cfi.get("cross_dso") and self.cfi_export_map:
+            flags.append(f"-Wl,--version-script={self.cfi_export_map}")
         if "hardening" not in drops:
             flags += list(self.hardening.get("ldflags") or [])
         return flags
