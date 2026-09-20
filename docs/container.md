@@ -40,44 +40,94 @@ just container-check      # run the gate inside it
 just container            # a shell in it, with the repository mounted
 ```
 
-## What is actually pinned
+## The base, and what is not pinned
 
-Four inputs decide what ends up in the image, and a Containerfile that pinned
-none of them would pin the *names* of its dependencies rather than their
-contents.
+The base is Arch. `base` and not `base-devel`, because base-devel carries gcc
+and binutils -- the GNU toolchain
+[`host-requirements.md`](host-requirements.md) says is not required here, and
+which a build system left alone with it will autodetect and reach for. Arch
+also ships clang, lld, mold and LLVM as one unversioned set kept in step with
+each other, so the image installs them by the same names
+`manifest/toolchain.yaml` uses and the file needs no version argument and no
+symlink fixups to make `llvm-ar` and friends exist.
 
-**The base image**, by tag today and by digest as soon as one is recorded.
+**Which Arch depends on the architecture, and that is the one ugly part of
+this.** Arch upstream is an x86_64-only distribution: `archlinux:base` is a
+manifest list with a single `linux/amd64` entry. The `aarch64` leg of the
+build matrix runs natively on an arm64 runner and routes every layer through
+this image, so it cannot pull that base at all --
 
-**The Debian archive**, by a `snapshot.debian.org` timestamp. This is the
-reason the base is Debian rather than the distribution this project is
-otherwise closest to: nothing else has a public, timestamped archive, and
-without one `apt-get install` resolves against whatever the mirror holds on the
-day it runs. Moving `DEBIAN_SNAPSHOT` moves every package version in the image,
-and nothing else does.
+```
+choosing an image from manifest list docker://archlinux:base: no image found
+in image index for architecture arm64, variant "v8", OS linux
+```
 
-`Check-Valid-Until: no` is required rather than lax. A snapshot's `Release`
-file is stamped at the moment the snapshot was taken, so anything more than a
-week old is expired by apt's clock, and every build of an older snapshot would
-fail with a date error rather than a missing package.
+-- which arrives before a single package is installed. ARM is
+[Arch Linux ARM](https://archlinuxarm.org/), a separate project with its own
+build farm, and it publishes rootfs tarballs rather than container images, so
+the aarch64 base is a third-party rebuild of that tree.
 
-The snapshot and the base image have to agree, and only one of them is pinned.
-`debian:trixie-slim` is a tag, so what it holds is whatever the last rebuild
-put there -- which can be a point release newer than the snapshot. A package
-taken from the snapshot that depends on an exact version of `libc6` or
-`perl-base` then cannot be installed at all, and apt reports it as two
-conflicting decisions about `perl-base` rather than as a base image that
-moved. `--allow-downgrades` on the install is what makes that survivable: apt
-may move a package to the snapshot's version even when that is backwards, and
-backwards is the direction this file wants, because the snapshot is the thing
-that was pinned and the tag is the thing that drifted. Keeping
-`DEBIAN_SNAPSHOT` at or after the base image's build date keeps the
-reconciliation to a handful of packages instead of most of them.
+`tools/container` picks from `BASE_IMAGES`, keyed on the *host's*
+architecture -- the machine the programs in this image have to run on, which
+is a different question from `tools/configure --arch`. The Containerfile's
+`BASE_IMAGE` default is the x86_64 answer, so a plain
+`docker build -f Containerfile .` still works on a developer's machine, and
+`--build-arg BASE_IMAGE=` overrides either.
 
-**The Rust toolchain**, separately, because it does not come from Debian.
-`rustup target add <arch>-unknown-linux-musl` is a host requirement and
-Debian's `rustc` cannot satisfy it, so rustup is installed and given a version.
-Both architectures' musl targets are in one image, so the same image builds
-both legs of the matrix, and `wasm32-unknown-unknown` is there for
+The selection lives in Python rather than in the Containerfile because doing
+it there needs the multi-stage `FROM base-${TARGETARCH}` trick, and that rests
+on the builder pruning the stages it does not reach. BuildKit does; buildah
+does not promise to, so under podman on an arm64 host it would pull the amd64
+base and fail in exactly the way the arrangement exists to prevent.
+
+What it costs is worth stating plainly: the two legs of the matrix are no
+longer on the same toolchain version, since Arch Linux ARM lags Arch, and half
+the matrix rests on an image maintainer who is not Arch. It is the narrower of
+the two available trades -- the package list in the Containerfile is untouched
+by it, because Arch Linux ARM is Arch's package tree rebuilt rather than a
+distribution with names of its own.
+
+The `container` job builds both images for that reason, one runner each. It is
+the only thing in the workflow that builds either: the `build` job runs on the
+runner rather than in this image, so without the second leg the aarch64 base
+would never be pulled in CI at all, and an image maintainer who stopped
+publishing -- or a package that exists under one name on Arch and another on
+the rebuild -- would surface for the first time on somebody's arm64 laptop.
+What the second leg does not do is make the two toolchains match; that is the
+cost above, and it stays.
+
+**The distribution's packages are not pinned, and that is a decision rather
+than a gap.** The base used to be `debian:trixie-slim` with a
+`snapshot.debian.org` timestamp, and that snapshot was the entire reason the
+base was Debian: it is the one public, timestamped archive, so an install
+resolved against contents that could not move underneath it. Arch has no
+equivalent, so two builds of this Containerfile a week apart install different
+package versions. Reproducibility of the build host was traded for currency of
+the toolchain, deliberately.
+
+What that costs is bounded by what this image is, which is the last section of
+this document: nothing from it ends up in `losos.qcow2`. The distribution is
+compiled from `manifest/sources.lock`, pinned by SHA-256 and unaffected; what
+floats is the set of host programs that did the compiling. The one floating
+thing worth watching is `recipes/00-toolchain/compiler-rt`, which is
+version-locked to the host clang by intent and pinned in `sources.lock` by
+hand. That lock was already loose on Debian trixie -- clang 19 against
+compiler-rt 18.1.8 -- and is now loose by however far Arch has run ahead. It
+fails at the first CFI link in `losos-00-toolchain`, which is early and loud.
+
+Anyone re-pinning this should do it on purpose and say so in the same breath,
+not restore a snapshot URL because the absence of one looks like an oversight.
+
+## What is still pinned
+
+Two things, and a Containerfile that pinned neither would pin the *names* of
+its dependencies rather than their contents.
+
+**The Rust toolchain**, because it does not come from the distribution at all.
+`rustup target add <arch>-unknown-linux-musl` is a host requirement and a
+distribution `rustc` cannot satisfy it, so rustup is installed and given a
+version. Both architectures' musl targets are in one image, so the same image
+builds both legs of the matrix, and `wasm32-unknown-unknown` is there for
 `plugins/build.sh`.
 
 **mkosi**, by commit, and this one is not an optimisation — it is the only
@@ -89,13 +139,13 @@ there. `Format=esp` meant "a UKI wrapped in an ESP" until v26, where it became
 second, because the UKI it stages was built by `files/mkuki.py` with this
 tree's own `.cmdline` and `.osrel` sections. On an older mkosi that step does
 not fail — it produces a different image, which is the worst of the three
-outcomes. Debian trixie froze before v26, so `apt-get install mkosi` is the one
-thing in this file that would have been pinned to a version and still been the
-wrong one.
+outcomes. Installing mkosi from a distribution package is the one thing in this
+file that would have been pinned to a version and still been the wrong one.
 
 Pinning it by commit rather than by tag is the same argument as everywhere
 else: a tag is a name, and a name can be moved. The Containerfile resolves the
-commit and asserts what it got.
+commit and asserts what it got. It carries more weight than it used to, being
+the only version of anything the image still holds still.
 
 mkosi is installed under `/usr` for a reason that is easy to get wrong. pm
 mirrors exactly `/bin /etc /lib /lib32 /lib64 /sbin /usr` from the host into
@@ -149,5 +199,7 @@ against a missing pm proves less than it looks like.
 It is not a base for the OS being built. Nothing from this image ends up in
 `losos.qcow2`: the distribution is compiled from pinned upstream sources by pm,
 into a sysroot, and the only thing the host contributes is the programs that
-ran. Two images built from two different snapshots of Debian should produce
-byte-identical output, and where they do not, that is a bug worth a name.
+ran. Two images built a month apart, from whatever Arch held on each day,
+should produce byte-identical output, and where they do not, that is a bug
+worth a name. That property is what makes an unpinned build host affordable,
+and it is also the thing that stops being checked if nobody ever compares two.

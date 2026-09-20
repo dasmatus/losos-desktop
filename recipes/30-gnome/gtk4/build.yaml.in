@@ -23,7 +23,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gtk4 /build/src/gtk4 --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dbuild-tests=false -Dbuild-demos=false -Dbuild-examples=false -Dintrospection=disabled -Dwayland-backend=true -Dx11-backend=false -Dmedia-gstreamer=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gtk4 /build/src/gtk4 --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dbuild-tests=false -Dbuild-demos=false -Dbuild-examples=false -Dintrospection=disabled -Dwayland-backend=true -Dx11-backend=false -Dmedia-gstreamer=disabled
 
 - stage: Build
   name: compile

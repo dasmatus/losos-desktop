@@ -19,11 +19,15 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_LIBXML2@ --no-same-owner -C /build/src/libxml2 --strip-components=1
 
+# -Dpython=false, not `disabled`. libxml2 2.13.4 declares `python` a boolean,
+# and meson rejects a boolean given a feature triplet before it reads anything
+# else -- so this one option would have stopped the last member of the base
+# layer after thirty-eight packages had built.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libxml2 /build/src/libxml2 --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dpython=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libxml2 /build/src/libxml2 --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dpython=false
 
 - stage: Build
   name: compile

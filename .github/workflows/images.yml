@@ -24,6 +24,24 @@ on:
 permissions:
   contents: read
 
+# One run per pull request branch, and only a pull request's run is cancelled.
+#
+# Every job here compiles the base layer from source, so an out-of-date run is
+# not a wasted minute but a wasted pair of build runners for as long as it
+# takes to reach the package that is actually being worked on. Pushing four
+# fixes in ten minutes -- which is what driving a broken layer forward looks
+# like -- left four pairs of runners compiling four versions of the same tree,
+# three of them for answers nobody would read.
+#
+# cancel-in-progress is an expression rather than `true` because the runs that
+# must never be cancelled are exactly the ones that publish: a workflow_dispatch
+# release build, a tag, a push to main, the nightly schedule. Those are in the
+# group too, so a later run of one of them queues behind rather than killing
+# what is already uploading.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # The pm commit every job here builds and runs, spelled once, the way
   # update-sources.yml already spells it.
@@ -163,7 +181,19 @@ jobs:
   # `just container` passes the seccomp and AppArmor options pm's user
   # namespace needs; GitHub's runners allow both.
   container:
-    runs-on: ubuntu-24.04
+    # Both architectures, because the image no longer has one base. The
+    # Containerfile takes BASE_IMAGE and `tools/container` fills it from
+    # platform.machine(): Arch's own image on x86_64, Arch Linux ARM on
+    # aarch64, since Arch publishes no arm64 image. Two separate distributions
+    # with separate package sets, so an image proved on one says nothing about
+    # the other -- and the build job below runs on the runner rather than in
+    # this image, so nothing else in the workflow would ever build the arm64
+    # one. See docs/container.md.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
@@ -186,6 +216,32 @@ jobs:
       - name: Build the build host
         working-directory: losos-desktop
         run: just container build
+
+      # A build log that does not say which compiler produced it cannot be
+      # compared against another one, and this image's whole premise is that
+      # its toolchain floats: the pin that made two builds of the Debian base
+      # identical has no Arch equivalent, by decision. So every run reports
+      # them, where a reader comparing two failures can see whether the
+      # compiler moved between them.
+      #
+      # It is not hypothetical. kmod's configure probes -Wl,--no-undefined and
+      # answered `no` on the Debian base and `yes` here, from the same source
+      # and the same probe -- a difference that can only be the compiler, and
+      # one nobody could confirm afterwards because neither log said which
+      # compiler it was.
+      #
+      # Emitted as `::notice::` rather than plain output, the way the `pinned`
+      # job already reports. A notice is attached to the check run, so it can
+      # be read from the pull request and over the API without opening the log
+      # -- and this step sits between two long ones, so in the raw log it is
+      # tens of thousands of lines from either end.
+      - name: Say what the image's toolchain is
+        working-directory: losos-desktop
+        run: |
+          clang=$(just container-run -- clang --version | head -1)
+          llvm=$(just container-run -- llvm-config --version | head -1)
+          mold=$(just container-run -- mold --version | head -1)
+          echo "::notice title=Image toolchain (${{ matrix.runner }})::${clang} | LLVM ${llvm} | ${mold}"
 
       # Everything from here runs inside the image, including pm and the
       # plugin components: the point of this job is that the binary and the
@@ -251,10 +307,17 @@ jobs:
           # link through -fuse-ld=mold, and mold does LTO through the
           # LLVMgold.so only that package carries. lld is still here for the
           # kernel's LLVM=1. See docs/host-requirements.md.
+          #
+          # bzip2 is not named by any recipe and appears on no command line.
+          # tar reaches for it on its own for the .tar.bz2 sources in the
+          # lock, and Debian's tar tries lbzip2 before it; the runner image
+          # has neither, so pcre2's fetch step dies with
+          # "tar (child): lbzip2: Cannot exec" -- a program this tree never
+          # mentions. xz-utils beside it is there for the same reason.
           sudo apt-get install -y --no-install-recommends \
             clang lld mold llvm llvm-18-linker-tools libclang-rt-18-dev \
             just python3-yaml python3-jinja2 \
-            ninja-build cmake bison flex bc xz-utils
+            ninja-build cmake bison flex bc xz-utils bzip2 perl
 
       # losos-security is a cargo build and everything above the toolchain
       # layer is musl, so --target needs that target's std installed. Without

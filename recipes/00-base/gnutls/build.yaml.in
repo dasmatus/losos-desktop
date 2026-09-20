@@ -29,11 +29,25 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# The flags are this package's own response files, not the layer's shared
+# pair, and naming them is the entire mechanism: manifest/toolchain.yaml
+# gives gnutls `drops: [visibility]`, tools/configure writes cflags-gnutls.rsp
+# for it either way, and a recipe left spelling @CFLAGS_RSP@ gets the shared
+# flags with the exemption written to disk and read by nothing.
+#
+# gnutls needs the exemption for a reason that reads like the opposite. Its
+# whole public API is declared through _SYM_EXPORT, which is the shape of an
+# export hook and is `__declspec(dllimport)` on Windows and empty everywhere
+# else (lib/includes/gnutls/gnutls.h.in:68-70). What exports libgnutls is
+# lib/Makefile.am:281's -Wl,--version-script and :283's
+# -export-symbols-regex, both of which run long after the compiler has made
+# every symbol hidden. See manifest/toolchain.yaml for the rest.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GNUTLS@ LDFLAGS=@LDFLAGS_RSP_GNUTLS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests
 
 - stage: Build
   name: compile
@@ -51,8 +65,14 @@ steps:
   - make -C /build/b/gnutls install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# A bare `test -e` is what let this package sit in the hidden-visibility class
+# unnoticed: an empty libgnutls.so is still a file. The symbols below are the
+# handshake, the certificate path and the version call -- the three things
+# every consumer of this library reaches for first -- plus __cfi_check, which
+# is present only if the CFI schemes survived the exemption.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libgnutls.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libgnutls.so gnutls_init gnutls_handshake gnutls_certificate_allocate_credentials gnutls_x509_crt_import gnutls_check_version gnutls_deinit __cfi_check

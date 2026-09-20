@@ -19,6 +19,19 @@ x86_64:
   # transformation of anything -- it is a literal that rustc either recognises
   # or rejects.
   rust_target: x86_64-unknown-linux-musl
+  # What openssl's own Configure calls this architecture. A fifth spelling,
+  # after clang's triple, rust's, the kernel's and EFI's, and like rust_target
+  # it is a literal rather than a transformation: Configure matches the name
+  # against Configurations/10-main.conf and exits with its usage message if it
+  # does not recognise it.
+  openssl_target: linux-x86_64
+  # meson's spelling, and a sixth. meson validates cpu_family against its own
+  # list of known architectures and stops `meson setup` on a value it does not
+  # recognise, so this is a literal like the four above rather than a slice of
+  # the triple. `cpu` is the narrower name a project may branch on; nothing in
+  # this tree needs one narrower than the family, so the two agree.
+  meson_cpu_family: x86_64
+  meson_cpu: x86_64
   # What the kernel's own build system calls this architecture, and where it
   # leaves the bootable image. x86 produces a compressed bzImage; most other
   # architectures do not, which is why the path is data rather than a pattern.
@@ -51,6 +64,14 @@ x86_64:
 aarch64:
   triple: aarch64-linux-musl
   rust_target: aarch64-unknown-linux-musl
+  # What openssl's own Configure calls this architecture. A fifth spelling,
+  # after clang's triple, rust's, the kernel's and EFI's, and like rust_target
+  # it is a literal rather than a transformation: Configure matches the name
+  # against Configurations/10-main.conf and exits with its usage message if it
+  # does not recognise it.
+  openssl_target: linux-aarch64
+  meson_cpu_family: aarch64
+  meson_cpu: aarch64
   kernel_arch: arm64
   # arm64 has no bzImage: the EFI stub is built into the uncompressed Image,
   # and that is what goes in the UKI's .linux section.

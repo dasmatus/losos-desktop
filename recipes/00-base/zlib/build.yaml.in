@@ -60,10 +60,14 @@ steps:
 
 # `test -e` was this whole step once, and it passed against a libz.so with an
 # empty dynamic symbol table. A file existing is not a library; see
-# files/check-exports.sh.
+# share/check-exports.sh.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libz.so
-  - /bin/sh @RECIPE@/files/zlib/check-exports.sh @NM@ /dest/usr/lib/libz.so
+  # The symbols this names used to be baked into a copy of the check that
+  # lived in this recipe's files/. It moved to share/ when the same fault
+  # turned up in libcap, libxcrypt, libfido2 and libqrencode within a day
+  # of each other; naming them on the line is what made it shareable.
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libz.so deflate inflate gzopen zlibVersion

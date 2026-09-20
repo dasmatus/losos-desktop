@@ -148,6 +148,14 @@ def stage_support(recipe_out, member_dirs, subs):
         target.write_text(substitute(helper.read_text(), subs))
         target.chmod(0o755)
 
+    # share/*.map is the linker's, not a step's: cfi-export.map is named in
+    # LDFLAGS and read by mold, which runs inside the jail and so needs the
+    # file on the same mount as the response file that names it.
+    for script in sorted((REPO / "share").glob("*.map")):
+        (recipe_out / script.name).write_text(
+            substitute(script.read_text(), subs)
+        )
+
     for package, source in member_dirs:
         files = source / "files"
         if files.is_dir():
@@ -349,6 +357,18 @@ def main():
         local["@CFLAGS_RSP@"] = f"@{recipe_out}/cflags.rsp"
         local["@LDFLAGS_RSP@"] = f"@{recipe_out}/ldflags.rsp"
 
+        # Before anything asks the toolchain for a flag list, because that is
+        # what consumes it. stage_support() copies the file itself, further
+        # down, and both halves have to agree on the name.
+        toolchain.cfi_export_map = recipe_out / "cfi-export.map"
+        # ...and the shared meson flag lists are recomputed here rather than
+        # inherited, because `placeholders()` built them once for the whole run
+        # -- before there was a layer to name the map in. An exempt package's
+        # cross file already gets a fresh pair below; without this the shared
+        # one was the only flag list in the tree missing the map, which is the
+        # kind of gap that shows up as one meson library silently unchecked.
+        local.update(toolchain.meson_subs())
+
         # A separate response file per exempt package. Written BEFORE the
         # members render, because rendering is what consumes these names:
         # defined afterwards, @CFLAGS_RSP_MUSL@ reached the generated recipe
@@ -362,6 +382,20 @@ def main():
         # Emitted as its own file rather than by editing the shared one so a
         # package has to NAME its exemption to get it, and a reader of the
         # recipe sees @CFLAGS_RSP_MUSL@ and goes looking for why.
+        # A meson build has nowhere to put a response file. Every other build
+        # system in this tree takes flags as a VAR=value argument or a -D, so
+        # naming @CFLAGS_RSP_<PKG>@ is enough; meson takes them only from the
+        # cross file, and the cross file is per LAYER. So an exempt meson
+        # package gets a cross file of its own, identical but for the two flag
+        # lists, and names it instead.
+        #
+        # This is not hypothetical. gjs carried a four-scheme CFI exemption for
+        # its SpiderMonkey JIT while still pointing at the shared file, so
+        # cflags-gjs.rsp was written every run and read by nothing: gjs was
+        # built with the full scheme set and the manifest said otherwise.
+        # tools/gates/exceptions-live.py exists so that cannot happen quietly
+        # again.
+        cross_template = (REPO / "share" / "cross.ini.in").read_text()
         for package in toolchain.exceptions:
             token = package.upper().replace("-", "_")
             cflags = recipe_out / f"cflags-{package}.rsp"
@@ -370,6 +404,16 @@ def main():
             ldflags.write_text("\n".join(toolchain.ldflags(package)) + "\n")
             local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
             local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
+
+            # Only the cross file varies per package: the native file below
+            # carries no flags at all, so there is nothing in it for an
+            # exception to drop.
+            cross = recipe_out / f"cross-{package}.ini"
+            cross.write_text(
+                substitute(cross_template,
+                           dict(local, **toolchain.meson_subs(package)))
+            )
+            local[f"@CROSS_INI_{token}@"] = str(cross)
 
         member_dirs = []
         members = []
@@ -389,8 +433,13 @@ def main():
         text = substitute(yaml_dump(bundle), local)
         (recipe_out / "build.yaml").write_text(text)
 
-        # One native file per layer, from share/native.ini.in. Every meson
-        # package in the layer points at it; nothing else carries flags.
+        # One pair per layer. Every meson package in the layer names both:
+        # cross.ini carries the toolchain and the [host_machine] section that
+        # stops meson running what it compiles (C7), native.ini carries the
+        # build-machine compiler a cross build also needs and deliberately no
+        # flags. Nothing else in the layer carries flags.
+        cross = (REPO / "share" / "cross.ini.in").read_text()
+        (recipe_out / "cross.ini").write_text(substitute(cross, local))
         native = (REPO / "share" / "native.ini.in").read_text()
         (recipe_out / "native.ini").write_text(substitute(native, local))
 
