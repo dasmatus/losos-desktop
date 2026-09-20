@@ -69,7 +69,7 @@ env:
   # The same commit images.yml pins, and for the same reason: two gates that
   # follow pm's tip are two gates that can disagree with each other and with
   # whatever this repository's own CI approved.
-  PM_REF: 145bae94bf170a9779029abdb41777ea380dc9f0
+  PM_REF: 47a32e3f74a99f3fe21b7af2d73ab1446da8bacc
 
 jobs:
   # What upstream says, turned into a matrix. Nothing here writes to the tree.

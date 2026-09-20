@@ -32,6 +32,9 @@ repository. The job that genuinely publishes asks for the permission itself.
 Every job also runs in an Arch userspace. The hosted runner labels still name
 Ubuntu because GitHub provides the VM, not an Arch runner; the job container
 is what decides which distribution executes the steps.
+
+pm's Wasmtime dependency also sets a Rust floor. The container and the CI
+setup must move together when pm moves, or one builds while the other cannot.
 """
 
 import copy
@@ -169,6 +172,35 @@ def check_pm_pin(path, doc):
     return failures
 
 
+def check_pm_hosts(container, setup, workflows):
+    """Keep the pm revision and its host toolchain consistent across CI."""
+    failures = []
+    pins = {
+        str((doc.get("env") or {}).get("PM_REF"))
+        for doc in workflows
+        if (doc.get("env") or {}).get("PM_REF")
+    }
+    if len(pins) > 1:
+        failures.append("workflows disagree on PM_REF; update all pm pins together.")
+
+    rust = re.search(r"^ARG RUST_VERSION=(\d+\.\d+\.\d+)$", container, re.MULTILINE)
+    installs = [
+        step for step in (setup.get("runs") or {}).get("steps") or []
+        if "rustup toolchain install" in str(step.get("run", ""))
+    ]
+    if not rust or not installs:
+        failures.append("cannot find the container and CI Rust toolchain pins.")
+    else:
+        for step in installs:
+            version = str((step.get("env") or {}).get("RUST_VERSION", ""))
+            if version != rust.group(1):
+                failures.append(
+                    f"arch-setup Rust {version!r} differs from Containerfile "
+                    f"Rust {rust.group(1)!r}; pm needs the same toolchain in both."
+                )
+    return failures
+
+
 def self_test():
     """A matrix must prove both userspaces, not merely name an Arch image."""
     good = {
@@ -209,7 +241,27 @@ def self_test():
                 "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
             )}]
         assert check_arch_jobs(WORKFLOW, bad), mutation
-    print("workflow: Arch job regression checks passed")
+    container = "ARG RUST_VERSION=1.95.0\n"
+    setup = {"runs": {"steps": [{
+        "env": {"RUST_VERSION": "1.95.0"},
+        "run": 'rustup toolchain install "$RUST_VERSION" --profile minimal',
+    }]}}
+    workflows = [{"env": {"PM_REF": "a" * 40}} for _ in range(2)]
+    assert not check_pm_hosts(container, setup, workflows)
+    for mutation in ("rust-mismatch", "rust-missing", "install-missing", "pm-mismatch"):
+        bad_setup = copy.deepcopy(setup)
+        bad_workflows = copy.deepcopy(workflows)
+        bad_container = container
+        if mutation == "rust-mismatch":
+            bad_setup["runs"]["steps"][0]["env"]["RUST_VERSION"] = "1.94.0"
+        elif mutation == "rust-missing":
+            bad_container = ""
+        elif mutation == "install-missing":
+            bad_setup["runs"]["steps"] = []
+        else:
+            bad_workflows[1]["env"]["PM_REF"] = "b" * 40
+        assert check_pm_hosts(bad_container, bad_setup, bad_workflows), mutation
+    print("workflow: Arch job and pm host regression checks passed")
     return 0
 
 
@@ -268,8 +320,10 @@ def main():
     # A rule that only ever looked at images.yml would say nothing about the
     # next workflow somebody adds, which is the one most likely to get it
     # wrong.
+    workflows = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
         spec = yaml.safe_load(path.read_text()) or {}
+        workflows.append(spec)
         failures.extend(check_pm_pin(path, spec))
         failures.extend(check_arch_jobs(path, spec))
 
@@ -283,6 +337,12 @@ def main():
                 "needs it instead."
             )
 
+    failures.extend(check_pm_hosts(
+        (REPO / "Containerfile").read_text(),
+        yaml.safe_load((REPO / ".github/actions/arch-setup/action.yml").read_text()),
+        workflows,
+    ))
+
     if failures:
         print("workflow: FAILED", file=sys.stderr)
         for failure in failures:
@@ -291,7 +351,7 @@ def main():
 
     print(
         f"workflow: {len(downloads)} artifact download(s) resolve for "
-        f"{len(CHANNELS)} channel(s); Arch jobs, one pm pin and least privilege at the "
+        f"{len(CHANNELS)} channel(s); Arch jobs, matching pm/Rust pins and least privilege at the "
         f"top of {len(list(WORKFLOWS.glob('*.yml')))} workflow(s)"
     )
     return 0

@@ -20,6 +20,12 @@ variable, or an absolute path.
 
 ## Required
 
+Use Rust **1.95.0 or newer** to build the pinned pm: its Wasmtime 48 dependency
+sets that minimum. The Containerfile and Arch CI setup pin the same toolchain.
+`cargo build --locked --release --bin pm` in the sibling checkout builds the
+CLI this distribution uses; the additional `pmd` and `pm-trace` binaries are
+not required by the build or check gates.
+
 | What | Why | Checked by |
 |---|---|---|
 | A kernel with **unprivileged user namespaces** | pm's jail is one. On Ubuntu 24.04 and derivatives `kernel.apparmor_restrict_unprivileged_userns=1` denies the `uid_map` write and nothing builds. | `tools/check-digest` says so by name |

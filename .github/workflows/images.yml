@@ -57,14 +57,15 @@ env:
   # byte for byte against this checkout's copy, so following pm's tip makes this
   # repository's CI a function of another repository's HEAD: when pm merged its
   # plugin contract change, every open pull request here went red on a tree
-  # nobody had touched. This is the commit the vendored contract is a copy of.
+  # nobody had touched. The D-Bus groundwork keeps that contract and the local
+  # CLI build path; pmd is not yet a service to start in these jobs.
   #
   # It had been written out separately in each of the three jobs that check pm
   # out, which is one copy per job to keep in step; it is now also what
   # .github/actions/pm keys pm's build cache on, and a key derived from a
   # second copy of a constant is a key that lies the first time someone bumps
   # only one of them.
-  PM_REF: 145bae94bf170a9779029abdb41777ea380dc9f0
+  PM_REF: 47a32e3f74a99f3fe21b7af2d73ab1446da8bacc
 
 jobs:
   # The channel, decided once. It used to be derived independently in `build`
