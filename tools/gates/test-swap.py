@@ -65,6 +65,7 @@ int __wrap_close(int fd) {
     int regular = fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
     int result = __real_close(fd);
     if (regular && mode("close")) { errno = EIO; return -1; }
+    if (!regular && mode("dirclose")) { errno = EIO; return -1; }
     return result;
 }
 int __real_renameat(int, const char *, int, const char *);
@@ -170,6 +171,10 @@ class SwapTests(unittest.TestCase):
             with self.subTest(error=error):
                 self.run_helper(self.output, error=error, ok=False)
                 self.assertEqual(list(self.output.iterdir()), [])
+
+    def test_directory_close_error_is_not_silent(self):
+        self.run_helper(self.output, error="dirclose", ok=False)
+        self.assertTrue((self.output / CONFIG).is_file())
 
     def test_symlink_directories(self):
         outside = self.directory / "outside"
