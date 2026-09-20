@@ -15,6 +15,7 @@ LINKS = {
     "lib32": "usr/lib32",
     "lib64": "usr/lib64",
 }
+MAX_SYMLINK_HOPS = 40
 
 
 def fail(message):
@@ -39,6 +40,7 @@ def resolve_source_path(root, relative):
     current = root
     pending = deque(Path(relative).parts)
     seen = set()
+    hops = 0
 
     while pending:
         part = pending.popleft()
@@ -54,9 +56,11 @@ def resolve_source_path(root, relative):
 
         current = current / part
         while current.is_symlink():
-            if current in seen:
+            state = (current, tuple(pending))
+            if state in seen or hops >= MAX_SYMLINK_HOPS:
                 return None
-            seen.add(current)
+            seen.add(state)
+            hops += 1
             target = current.readlink()
             if target.is_absolute():
                 current = root

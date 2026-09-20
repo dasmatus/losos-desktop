@@ -207,6 +207,28 @@ def test_usr_merge_accepts_absolute_os_release_target(work, failures):
         print("  usrmerge accepts in-root absolute os-release symlink targets")
 
 
+def test_usr_merge_accepts_revisited_symlink_with_new_suffix(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "usr" / "share").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (root / "usr" / "share" / "final").write_text("ID=losos-desktop\n")
+    (root / "usr" / "lib" / "x").symlink_to("../share")
+    (root / "usr" / "share" / "again").symlink_to("../lib/x/final")
+    (root / "usr" / "lib" / "os-release").symlink_to("x/again")
+
+    subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=True, capture_output=True,
+    )
+
+    if not (root / "bin").is_symlink():
+        failures.append("usr-merge: valid re-entry through a revisited symlink was rejected before rewriting compatibility paths")
+    elif not failures:
+        print("  usrmerge accepts revisiting a symlink when the remaining target path changes")
+
+
 def test_usr_merge_rejects_escape(work, failures):
     root = work / "root"
     root.mkdir()
@@ -716,6 +738,9 @@ def main():
         usr_absolute_source = work / "usr-merge-absolute-source"
         usr_absolute_source.mkdir()
         test_usr_merge_accepts_absolute_os_release_target(usr_absolute_source, failures)
+        usr_revisited = work / "usr-merge-revisited"
+        usr_revisited.mkdir()
+        test_usr_merge_accepts_revisited_symlink_with_new_suffix(usr_revisited, failures)
         usr_escape = work / "usr-merge-escape"
         usr_escape.mkdir()
         test_usr_merge_rejects_escape(usr_escape, failures)
