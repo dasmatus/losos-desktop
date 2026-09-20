@@ -19,9 +19,24 @@
 # the two need each other, which is a genuine cycle and not a missing
 # dependency line.
 #
-# Four ways out, and choosing is a change to the layer graph rather than to
+# Five ways out, and choosing is a change to the layer graph rather than to
 # this file, so it belongs in its own pull request:
 #
+#   0. Move this package, libcbor and libqrencode ABOVE systemd. This is the
+#      cheapest and it was missed yesterday, because the cycle looked
+#      symmetric and is not. systemd never LINKS libfido2: meson.build:1236
+#      takes the dependency and line 1238 keeps only
+#      `partial_dependency(includes: true, compile_args: true)` from it, and
+#      nothing else in the file uses the full object. At runtime it dlopens
+#      "libfido2.so.1" (src/shared/libfido2-util.c:93). So systemd needs this
+#      package's headers and its .pc at configure time and its .so never --
+#      while this package needs systemd's libudev to compile at all. The arrow
+#      only points one way, so the two belong in that order rather than in two
+#      passes. What it costs is the one thing to weigh: libfido2's headers and
+#      a fido2.pc have to be staged into the sysroot ahead of systemd without
+#      the library behind them, which is a second place the version is written
+#      down. Same shape for tpm2-tss and p11-kit, which systemd treats
+#      identically (lines 1243 and 1231).
 #   1. A reduced udev-only systemd in the base layer, then libcbor, libfido2
 #      and libqrencode, then the full systemd above. Keeps one udev
 #      implementation and loses nothing; costs a second systemd compile,
