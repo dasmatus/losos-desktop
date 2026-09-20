@@ -32,13 +32,23 @@ gate has to agree that the file exists by the time the Build stage names it.
 The same goes for a file a patch adds, so the patch series is read for the
 paths it creates.
 
-What it does NOT check is anything about the invocation beyond existence: not
-the options, not whether they mean today what they meant at the pinned
-version, not whether the build then succeeds. The tombstone in this directory
-already says nothing here validates a recipe's -D flags against sources it does
-not have, and that is still true; this gate only closes the coarser question of
-whether the entry point is there to be invoked at all. A bump that crosses a
-major version still needs a human.
+It asks a second question of the same bytes, for meson recipes only: does
+every -D the recipe passes name an option the pinned source declares, and is
+the value the right kind for it? Seventeen did not, across six packages, found
+by hand in one evening -- systemd alone had twelve, four of them options
+removed or renamed upstream, each a hard error on the first line of `meson
+setup`. That is the class the tombstone in this directory says nothing
+validates, and the reason it went unvalidated was never that it is hard: the
+answer lives in a file this tree downloads and never opens. meson_options.txt
+is in the tarball, beside the meson.build this gate already went looking for.
+
+The check is narrow on purpose: a name the source does not declare, a feature
+given `true`, a boolean given `enabled`, a combo given something outside its
+own choices. It says nothing about whether an option still MEANS what it meant
+at the pinned version -- `-Dtests=false` on a project that moved its tests
+behind a different name is a passing line and a wrong one -- and nothing about
+whether the build then succeeds. A bump that crosses a major version still
+needs a human.
 
 It reads the template a human edits rather than the generated recipe, like
 cross-configure.py, and for the same reason -- and it scans lines rather than
@@ -266,6 +276,161 @@ MARKERS = (
 )
 
 
+# meson renamed its own option file: meson.options is current, meson_options
+# the older spelling. A project ships one or the other, so the first found
+# wins and finding neither is not a failure -- a project may declare no
+# options at all, and the recipe then passes no -D either.
+OPTION_FILES = ("meson.options", "meson_options.txt")
+
+# meson's built-in options live in its core rather than in a project's option
+# file, so a recipe naming one is not naming a project option and there is
+# nothing here to check it against. Listed rather than guessed at from a
+# prefix: `python.install_env` and `pkgconfig.relocatable` have dots, `b_pie`
+# and `c_args` have neither, and a project is free to declare an option called
+# `debug` of its own.
+BUILTIN_OPTIONS = frozenset("""
+prefix bindir datadir includedir infodir libdir libexecdir licensedir
+localedir localstatedir mandir sbindir sharedstatedir sysconfdir
+auto_features backend buildtype debug default_library default_both_libraries
+errorlogs genvslite install_umask layout optimization prefer_static strip
+unity unity_size warning_level werror wrap_mode force_fallback_for vsenv
+pkgconfig.relocatable python.install_env python.platlibdir python.purelibdir
+python.bytecompile python.allow_limited_api
+b_asneeded b_colorout b_coverage b_lto b_lto_threads b_lundef b_ndebug b_pch
+b_pgo b_pie b_sanitize b_staticpic b_thinlto_cache b_vscrt
+c_args c_link_args cpp_args cpp_link_args c_std cpp_std cpp_eh cpp_rtti
+c_winlibs cpp_winlibs
+""".split())
+
+FEATURE_VALUES = ("enabled", "disabled", "auto")
+BOOLEAN_VALUES = ("true", "false")
+
+MESON_SETUP = re.compile(r"meson\.py\s+setup(?=\s|$)")
+DASH_D = re.compile(r"(?<!\S)-D([A-Za-z0-9_.:+-]+)=(\S*)")
+OPTION_CALL = re.compile(r"\boption\s*\(")
+OPTION_TYPE = re.compile(r"\btype\s*:\s*'([a-z]+)'")
+OPTION_CHOICES = re.compile(r"\bchoices\s*:\s*\[(.*?)\]", re.S)
+QUOTED = re.compile(r"'([^']*)'|\"([^\"]*)\"")
+
+
+def option_bodies(text):
+    """Yield the text between each `option(` and its matching `)`.
+
+    Balanced parens with quote tracking, rather than a regex up to the next
+    newline-and-paren. That shortcut reads ZERO options out of systemd's file,
+    which closes the call at the end of its description line -- and a parser
+    that silently finds nothing would report every option in the recipe as
+    undeclared, which is a worse failure than the one it looks for.
+    """
+    for match in OPTION_CALL.finditer(text):
+        index = match.end()
+        depth, quote, start = 1, None, index
+        while index < len(text) and depth:
+            char = text[index]
+            if quote:
+                if text.startswith(quote, index):
+                    index += len(quote)
+                    quote = None
+                    continue
+                # A backslash escape only ever appears inside a description,
+                # and skipping two characters is what keeps \' from closing it.
+                index += 2 if char == "\\" else 1
+                continue
+            if char in "'\"":
+                triple = text[index:index + 3]
+                quote = triple if triple in ("'''", '"""') else char
+                index += len(quote)
+                continue
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            index += 1
+        if not depth:
+            yield text[start:index - 1]
+
+
+def parse_options(text):
+    """Map an option file to {name: (kind, choices)}.
+
+    A call with no `type:` is meson's own default, which is boolean -- the
+    shape a project uses when it writes option('foo', value: true) and nothing
+    else.
+    """
+    declared = {}
+    for body in option_bodies(text):
+        name = QUOTED.search(body)
+        if not name:
+            continue
+        kind = OPTION_TYPE.search(body)
+        choices = []
+        listed = OPTION_CHOICES.search(body)
+        if listed:
+            choices = [q.group(1) if q.group(1) is not None else q.group(2)
+                       for q in QUOTED.finditer(listed.group(1))]
+        declared[name.group(1) if name.group(1) is not None else name.group(2)] = (
+            kind.group(1) if kind else "boolean", choices
+        )
+    return declared
+
+
+def option_problem(name, value, declared):
+    """Why this -D is wrong at the pinned version, or None.
+
+    The sentence says what the option IS rather than that it is not what was
+    passed, because that is the half the reader does not have: every one of
+    the seventeen looked right on the line it was written on.
+    """
+    if name not in declared:
+        return "the pinned source declares no such option"
+    kind, choices = declared[name]
+    if kind == "feature" and value not in FEATURE_VALUES:
+        return ("it is a feature, so meson takes only "
+                + ", ".join(FEATURE_VALUES))
+    if kind == "boolean" and value not in BOOLEAN_VALUES:
+        return "it is a boolean, so meson takes only true or false"
+    if kind == "combo" and choices and value not in choices:
+        return "it is a combo, and its choices are " + ", ".join(choices)
+    return None
+
+
+def read_option_file(tarball, strip):
+    """The pinned source's option file, as (name, text), or (None, None)."""
+    with tarfile.open(tarball) as archive:
+        for member in archive:
+            parts = member.name.split("/")
+            if len(parts) != strip + 1 or parts[-1] not in OPTION_FILES:
+                continue
+            handle = archive.extractfile(member)
+            if handle is None:
+                continue
+            return parts[-1], handle.read().decode("utf-8", "replace")
+    return None, None
+
+
+def meson_options_of(text, dest):
+    """Every -D on a `meson setup` line configuring `dest`, as (name, value).
+
+    Scoped to the directory this tar line unpacked, so a build file with two
+    meson members never checks one member's options against the other's
+    tarball.
+    """
+    passed = []
+    for line in text.splitlines():
+        if line.strip().startswith("#") or not MESON_SETUP.search(line):
+            continue
+        if dest not in line.split():
+            continue
+        for match in DASH_D.finditer(line):
+            name, value = match.group(1), match.group(2)
+            # A subproject option (`sub:opt`) is the subproject's to declare,
+            # and --wrap-mode=nodownload means this tree has no subprojects.
+            if ":" in name or name in BUILTIN_OPTIONS:
+                continue
+            passed.append((name, value))
+    return passed
+
+
 def resolve(wanted, tarball, strip):
     """Stream the tarball, ticking off what was wanted; return what was not.
 
@@ -415,12 +580,91 @@ def self_test():
                     f"{expect_missing}: {list(missing)}"
                 )
 
+    # The option half, exercised on text rather than on tarballs: what it
+    # reads is a file, and the tar plumbing above is already covered. Every
+    # case here is a shape that was actually met -- systemd's closing paren,
+    # GNOME's triple-quoted descriptions, fwupd's name on its own line.
+    systemd_shaped = (
+        "option('nspawn', type : 'feature', value : 'auto',\n"
+        "       description : 'install systemd-nspawn')\n"
+        "option('status-unit-format-default', type : 'combo',\n"
+        "       choices : ['name', 'description', 'combined'],\n"
+        "       description : 'use unit name or description by default')\n"
+        "option('machined', type : 'boolean', value : true,\n"
+        "       description : 'install systemd-machined')\n"
+    )
+    declared = parse_options(systemd_shaped)
+    option_cases = [
+        ("three options read from a systemd-shaped file",
+         len(declared) == 3),
+        ("a feature is read as a feature",
+         declared.get("nspawn") == ("feature", [])),
+        ("a combo keeps its choices",
+         declared.get("status-unit-format-default")
+         == ("combo", ["name", "description", "combined"])),
+        ("a boolean beside them is still a boolean",
+         declared.get("machined")[0] == "boolean"),
+        # The regression this parser exists for: a description ending the line
+        # the call closes on. A regex to the next newline-and-paren reads zero
+        # options here and would then call every -D in the recipe undeclared.
+        ("a call closing on its description line is not skipped",
+         "machined" in declared),
+        ("a feature given true is caught",
+         option_problem("nspawn", "true", declared) is not None),
+        ("a feature given enabled passes",
+         option_problem("nspawn", "enabled", declared) is None),
+        ("a boolean given enabled is caught",
+         option_problem("machined", "enabled", declared) is not None),
+        ("a combo outside its choices is caught",
+         option_problem("status-unit-format-default", "combined2", declared)
+         is not None),
+        ("a combo inside its choices passes",
+         option_problem("status-unit-format-default", "combined", declared)
+         is None),
+        ("an option the source does not declare is caught",
+         option_problem("nscd", "false", declared) is not None),
+    ]
+    triple = parse_options(
+        "option('docs', type: 'feature',\n"
+        "  description: '''build the documentation,\n"
+        "which needs gi-docgen (see README)''')\n"
+        "option('tests', value: false)\n"
+    )
+    option_cases += [
+        ("a triple-quoted description does not swallow the next call",
+         set(triple) == {"docs", "tests"}),
+        ("a call with no type: is boolean, which is meson's default",
+         triple.get("tests") == ("boolean", [])),
+    ]
+    line = ("  - python3 /x/meson.py setup /build/b/p /build/src/p "
+            "--cross-file @RECIPE@/cross.ini --prefix=/usr "
+            "-Dtests=false -Dintrospection=disabled -Dc_args=-O2 "
+            "-Dglib:werror=false")
+    passed = dict(meson_options_of(line, "/build/src/p"))
+    option_cases += [
+        ("the -D options are read off the setup line",
+         set(passed) == {"tests", "introspection"}),
+        # c_args is meson's own and glib:werror is a subproject's; neither is
+        # declared in this project's option file, so checking them against it
+        # would report two failures that are not there.
+        ("a built-in and a subproject option are left alone",
+         "c_args" not in passed and "glib:werror" not in passed),
+        ("a setup line for another member's directory is not read",
+         meson_options_of(line, "/build/src/other") == []),
+        ("a commented-out setup line is not read",
+         meson_options_of("  # " + line.strip(), "/build/src/p") == []),
+    ]
+    for label, ok in option_cases:
+        if not ok:
+            failures.append(f"{label}: expected this to hold and it does not")
+
     if failures:
         print("recipe-entrypoints --self-test: FAILED", file=sys.stderr)
         for failure in failures:
             print("  " + failure, file=sys.stderr)
         return 1
-    print(f"recipe-entrypoints: self-test green, {len(cases)} case(s)")
+    print(f"recipe-entrypoints: self-test green, {len(cases)} entry-point "
+          f"case(s) and {len(option_cases)} option case(s)")
     return 0
 
 
@@ -439,7 +683,8 @@ def main():
     lock = yaml.safe_load((REPO / "manifest" / "sources.lock").read_text()) or {}
     mirror = Path(args.mirror)
 
-    failures, deferred, missing_bytes, checked = [], [], [], 0
+    failures, deferred, missing_bytes = [], [], []
+    checked, options_checked = 0, 0
     # Which deferred recipes were actually looked at, and which still failed.
     # An entry that stops failing has to say so: a deferred finding nobody
     # removes is indistinguishable from a gate that was quietly switched off.
@@ -476,6 +721,40 @@ def main():
 
             if name in DEFERRED:
                 seen_deferred.add(name)
+
+            # The second question of the same bytes, before the entry-point
+            # one because the `continue`s below are for a recipe with nothing
+            # left to look for -- and a meson recipe whose meson.build an
+            # earlier step created still has sixteen options to get wrong.
+            #
+            # Skipped for a deferred recipe: those are recipes driving the
+            # wrong build system entirely, so their options belong to a file
+            # that is not in this tarball and every one of them would be
+            # reported as undeclared.
+            if name not in DEFERRED:
+                passed = meson_options_of(text, dest)
+                if passed:
+                    where, declaration = read_option_file(tarball, strip)
+                    declared = parse_options(declaration) if where else {}
+                    if not declared:
+                        had = (f"ships {where} and this gate read no option "
+                               f"out of it" if where else
+                               f"has neither {' nor '.join(OPTION_FILES)}")
+                        failures.append(
+                            f"{template.relative_to(REPO)}: the recipe passes "
+                            f"{len(passed)} -D option(s), and the pinned "
+                            f"tarball {had}.\n    {entry['url']}"
+                        )
+                    else:
+                        options_checked += len(passed)
+                        for option, value in passed:
+                            why = option_problem(option, value, declared)
+                            if why:
+                                failures.append(
+                                    f"{template.relative_to(REPO)}: "
+                                    f"-D{option}={value} -- {why}.\n"
+                                    f"    Read {where} in {entry['url']}"
+                                )
 
             wanted = wanted_from(text, dest)
             if not wanted:
@@ -548,7 +827,8 @@ def main():
         note = f", {len(missing_bytes)} source(s) not mirrored and not checked"
     held = f", {len(deferred)} deferred" if deferred else ""
     print(f"recipe-entrypoints: {checked} build-system entry point(s) "
-          f"present{held}{note}")
+          f"present, {options_checked} meson option(s) declared at the pinned "
+          f"version{held}{note}")
     return 0
 
 
