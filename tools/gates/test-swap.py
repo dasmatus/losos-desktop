@@ -127,19 +127,25 @@ class SwapTests(unittest.TestCase):
     def test_total_not_free_and_repeat(self):
         self.run_helper(self.output, free=0)
         self.assert_config(12345 * 4096)
-        # Replacing the inode proves the published file was not truncated in place.
-        with (self.output / CONFIG).open() as previous:
-            old_inode = os.fstat(previous.fileno()).st_ino
-            self.run_helper(self.output, total=99, free=98)
-            self.assertNotEqual((self.output / CONFIG).stat().st_ino, old_inode)
-            self.assertIn(str(12345 * 4096), previous.read())
-        self.assert_config(99 * 4096)
+        self.run_helper(self.output, total=99, free=98)
+        self.assert_config(12345 * 4096)
+
+    def test_existing_regular_config_is_authoritative(self):
+        self.output.mkdir(mode=0o755, parents=True)
+        config = self.output / CONFIG
+        config.write_text("administrator override\n")
+        inode = config.stat().st_ino
+        self.run_helper(self.output, total=99)
+        self.assertEqual(config.read_text(), "administrator override\n")
+        self.assertEqual(config.stat().st_ino, inode)
 
     def test_rounding(self):
         for total, unit in ((1, 1), (4096, 1), (4097, 1), (12345, 3),
                             (3 * 1024**3 + 17, 1)):
             with self.subTest(total=total, unit=unit):
-                self.run_helper(self.output, total=total, unit=unit)
+                output = self.directory / f"{total}-{unit}" / "repart.d"
+                self.run_helper(output, total=total, unit=unit)
+                self.output = output
                 self.assert_config((total * unit + 4095) // 4096 * 4096)
 
     def test_arguments(self):
@@ -167,11 +173,11 @@ class SwapTests(unittest.TestCase):
         self.run_helper(self.output, error="interrupt")
         self.assert_config(12345 * 4096)
 
-    def test_write_errors_preserve_old_config(self):
+    def test_existing_regular_config_avoids_write_path(self):
         self.run_helper(self.output)
         for error in ("write", "zero", "fchmod", "fsync", "close", "rename"):
             with self.subTest(error=error):
-                self.run_helper(self.output, total=1, error=error, ok=False)
+                self.run_helper(self.output, total=1, error=error)
                 self.assert_config(12345 * 4096)
 
     def test_write_errors_leave_no_partial_config(self):
@@ -213,14 +219,14 @@ class SwapTests(unittest.TestCase):
         self.assertFalse((self.directory / "missing").exists())
         self.assertEqual(list(self.output.iterdir()), [])
 
-    def test_hardlink_is_replaced_not_modified(self):
+    def test_existing_hardlink_is_untouched(self):
         self.output.mkdir(mode=0o755, parents=True)
         target = self.directory / "untouched"
         target.write_text("sentinel")
         os.link(target, self.output / CONFIG)
         self.run_helper(self.output)
         self.assertEqual(target.read_text(), "sentinel")
-        self.assert_config(12345 * 4096)
+        self.assertEqual((self.output / CONFIG).read_text(), "sentinel")
 
     def test_invalid_directory_paths(self):
         file = self.directory / "file"
@@ -298,6 +304,18 @@ class SwapWiringTests(unittest.TestCase):
                     lines = self.active_lines(
                         f"overlay/usr/lib/systemd/system/{service}.service.d/{dropin}")
                     self.assertFalse(any(line.startswith("ExecStart=") for line in lines))
+
+    def test_encrypted_swap_activation(self):
+        crypttab = (REPO / "overlay/etc/crypttab").read_text().splitlines()
+        self.assertEqual(
+            [line for line in crypttab if line and not line.startswith("#")],
+            ["swap /dev/disk/by-partlabel/losos-swap /dev/urandom swap"],
+        )
+        fstab = (REPO / "overlay/etc/fstab").read_text().splitlines()
+        self.assertEqual(
+            [line for line in fstab if line and not line.startswith("#")],
+            ["/dev/mapper/swap none swap defaults,nofail 0 0"],
+        )
 
     def test_kernel_swap_and_zswap(self):
         lines = self.active_lines("recipes/10-systemd/linux/files/losos.config")

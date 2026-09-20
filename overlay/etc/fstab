@@ -1,0 +1,3 @@
+# The swap mapping comes from /etc/crypttab; the explicit line disables
+# systemd-gpt-auto-generator's raw-swap path and activates only /dev/mapper/swap.
+/dev/mapper/swap none swap defaults,nofail 0 0

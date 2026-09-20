@@ -72,6 +72,9 @@ static int write_config(int dir, uint64_t bytes)
             errno = EINVAL;
             return -1;
         }
+        /* A regular config in /run wins over the generated default: leave any
+         * administrator override in place instead of rewriting it on each boot. */
+        return 0;
     } else if (errno != ENOENT) {
         return -1;
     }
