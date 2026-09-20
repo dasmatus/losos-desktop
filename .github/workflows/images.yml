@@ -220,21 +220,28 @@ jobs:
       # A build log that does not say which compiler produced it cannot be
       # compared against another one, and this image's whole premise is that
       # its toolchain floats: the pin that made two builds of the Debian base
-      # identical has no Arch equivalent, by decision. So the versions go in
-      # the log of every run, where a reader comparing two failures can see
-      # whether the compiler moved between them.
+      # identical has no Arch equivalent, by decision. So every run reports
+      # them, where a reader comparing two failures can see whether the
+      # compiler moved between them.
       #
       # It is not hypothetical. kmod's configure probes -Wl,--no-undefined and
       # answered `no` on the Debian base and `yes` here, from the same source
       # and the same probe -- a difference that can only be the compiler, and
       # one nobody could confirm afterwards because neither log said which
       # compiler it was.
+      #
+      # Emitted as `::notice::` rather than plain output, the way the `pinned`
+      # job already reports. A notice is attached to the check run, so it can
+      # be read from the pull request and over the API without opening the log
+      # -- and this step sits between two long ones, so in the raw log it is
+      # tens of thousands of lines from either end.
       - name: Say what the image's toolchain is
         working-directory: losos-desktop
         run: |
-          just container-run -- clang --version
-          just container-run -- llvm-config --version
-          just container-run -- mold --version
+          clang=$(just container-run -- clang --version | head -1)
+          llvm=$(just container-run -- llvm-config --version | head -1)
+          mold=$(just container-run -- mold --version | head -1)
+          echo "::notice title=Image toolchain (${{ matrix.runner }})::${clang} | LLVM ${llvm} | ${mold}"
 
       # Everything from here runs inside the image, including pm and the
       # plugin components: the point of this job is that the binary and the
