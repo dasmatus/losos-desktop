@@ -603,7 +603,7 @@ def self_test():
          declared.get("status-unit-format-default")
          == ("combo", ["name", "description", "combined"])),
         ("a boolean beside them is still a boolean",
-         declared.get("machined")[0] == "boolean"),
+         declared.get("machined") == ("boolean", [])),
         # The regression this parser exists for: a description ending the line
         # the call closes on. A regex to the next newline-and-paren reads zero
         # options here and would then call every -D in the recipe undeclared.
@@ -669,7 +669,9 @@ def self_test():
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None
+    )
     parser.add_argument("--mirror", default=str(REPO / "out" / "sources"),
                         help="where tools/fetch-sources staged the tarballs")
     parser.add_argument("--self-test", action="store_true",

@@ -70,7 +70,9 @@ def read_pe(data):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None
+    )
     parser.add_argument("--stub", required=True, help="linuxx64.efi.stub")
     parser.add_argument("--linux", required=True, help="the kernel image")
     parser.add_argument("--initrd", required=True)

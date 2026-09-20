@@ -74,8 +74,9 @@ with the SHA-256 pins unchanged.
 
 Run `just` with no arguments for the full list. A legacy wrapper remains for compatibility.
 
-What the build host itself has to provide — `just`, clang, python3 with `jinja2`,
-cargo with the musl target, and working user namespaces among them — is in
+What the build host itself has to provide — `just`, clang, python3 with `jinja2`
+and `basedpyright`, cargo with the musl target, and working user namespaces
+among them — is in
 [`docs/host-requirements.md`](docs/host-requirements.md). It is short, and it
 is a list rather than a bootstrap step because pm resolves a step's first word
 on the host: a tool that installs a tool would have the same problem.
