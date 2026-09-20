@@ -302,6 +302,34 @@ def test_usr_merge_preflights_before_rewriting(work, failures):
         print("  usrmerge preflights /etc/os-release before rewriting compatibility paths")
 
 
+def test_usr_merge_preflights_all_compat_paths(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (root / "lib").mkdir()
+    (root / "etc").mkdir()
+    (root / "bin" / "losos-release").write_text("#!/bin/sh\n")
+    (root / "lib" / "libdup.so").write_text("from-lib\n")
+    (root / "usr" / "lib" / "libdup.so").write_text("from-usr\n")
+    (root / "usr" / "lib" / "os-release").write_text("ID=losos-desktop\n")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted conflicting compatibility path contents")
+    elif "already exists" not in result.stderr:
+        failures.append("usr-merge: compatibility path conflict did not explain the preflight failure")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: compatibility conflict should fail before rewriting earlier paths")
+    elif not (root / "bin" / "losos-release").exists():
+        failures.append("usr-merge: compatibility conflict should not move /bin contents")
+    elif not failures:
+        print("  usrmerge preflights all compatibility paths before rewriting any of them")
+
+
 def test_usr_merge_rejects_symlinked_etc(work, failures):
     root = work / "root"
     outside = work / "outside"
@@ -544,6 +572,9 @@ def main():
         usr_partial = work / "usr-merge-partial"
         usr_partial.mkdir()
         test_usr_merge_preflights_before_rewriting(usr_partial, failures)
+        usr_preflight_links = work / "usr-merge-preflight-links"
+        usr_preflight_links.mkdir()
+        test_usr_merge_preflights_all_compat_paths(usr_preflight_links, failures)
         usr_etc_link = work / "usr-merge-etc-link"
         usr_etc_link.mkdir()
         test_usr_merge_rejects_symlinked_etc(usr_etc_link, failures)
