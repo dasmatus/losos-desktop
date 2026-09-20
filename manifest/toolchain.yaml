@@ -163,8 +163,17 @@ cfi:
   # ending `local: *;` does exactly that, because __cfi_check is nobody's
   # public API, and most of the version scripts in this tree end that way:
   # tpm2-tss ships one per library, and cryptsetup, linux-pam, p11-kit,
-  # libpwquality, libfido2, libunistring, libtasn1, gnutls and curl each have
-  # one. So the map is appended to every link that keeps cross-DSO CFI, from
+  # libpwquality, libfido2, libtasn1, gnutls, libbpf, kmod and curl each have
+  # one -- each read in the build file that PASSES the script rather than in
+  # the tarball that ships it, which is the only test that settles it.
+  # libunistring was on this list and does not belong: lib/Makefile.am
+  # generates libunistring.sym and then deliberately declines to pass it,
+  # upstream saying it would prevent building some of the gnulib unit tests.
+  # CI is the proof rather than the reading -- libunistring passed as base
+  # member 16 with __cfi_check named in its check-exports line, so it was
+  # exporting the symbol before this map existed. A package that merely ships
+  # a .map, .sym or .vers file is not affected by anything.
+  # So the map is appended to every link that keeps cross-DSO CFI, from
   # tools/lib/toolchain.py's ldflags(), and the measurements behind it -- why a
   # second version script works where --export-dynamic-symbol does not, and why
   # the name is spelled as a glob -- are in the map's own header.
