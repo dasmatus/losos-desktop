@@ -30,6 +30,15 @@
 #
 # because ltmain evals `$NM <objects> | $pipe` and the line ends in a bare `|`.
 #
+# The crash was first reproduced on clang 18.1.3, which is a local sandbox's
+# compiler and NOT this build's -- the Containerfile asks for LLVM_VERSION=19
+# and CI reports 19.1.7. That gap mattered enough to close, since this whole
+# recipe rests on the crash: it was reproduced again on 19.1.1 and still kills
+# the compiler. Worth one warning for whoever repeats it -- the translation
+# unit needs a CFI-relevant function in it as well as the
+# `extern char __cfi_check;`. The declaration alone compiles fine on both, so
+# the smallest possible test looks like the bug has been fixed.
+#
 # So the recipe passes --enable-versioned-symbols and takes the `if` branch,
 # where libtool hands a finished version script to the linker and never reads a
 # symbol itself. That is also what every mainstream distribution builds curl
@@ -57,7 +66,8 @@
 #
 # Promoting it works because __cfi_check is not hidden to begin with. clang
 # emits it at default visibility whether or not -fvisibility=hidden is in the
-# flags (measured on clang 18.1.3, and recorded in share/check-exports.sh),
+# flags (measured on clang 18.1.3 and again on 19.1.1, the second for the
+# reason given above; recorded in share/check-exports.sh),
 # precisely so cross-DSO dispatch can find it. A version script can promote a
 # STV_DEFAULT symbol; it could not have rescued a hidden one.
 #
