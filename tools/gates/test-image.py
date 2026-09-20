@@ -244,11 +244,26 @@ def test_usr_merge_accepts_existing_compat_symlink(work, failures):
         [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
         check=True, capture_output=True,
     )
-    if not (root / "bin").is_symlink():
-        failures.append("usr-merge: existing compatibility symlink was not preserved")
-    elif symlink_target(root, root / "bin") != root / "usr/bin":
-        failures.append("usr-merge: existing compatibility symlink no longer points at /usr/bin")
-    elif not failures:
+    checks = {
+        "bin": root / "usr/bin",
+        "sbin": root / "usr/sbin",
+        "lib": root / "usr/lib",
+        "lib32": root / "usr/lib32",
+        "lib64": root / "usr/lib64",
+        "etc/os-release": root / "usr/lib/os-release",
+    }
+    for relative, expected in checks.items():
+        path = root / relative
+        if not path.is_symlink():
+            failures.append(f"usr-merge: {relative} is not a symlink after preserving existing links")
+            continue
+        actual = symlink_target(root, path)
+        if actual != expected:
+            failures.append(
+                f"usr-merge: {relative} resolves to {actual!r}, expected {expected!r}"
+            )
+
+    if not failures:
         print("  usrmerge accepts already-correct compatibility symlinks")
 
 

@@ -146,7 +146,7 @@ def merge_dir(root, source_name, target_name):
                 return status
         source.rmdir()
 
-    source.symlink_to(target_name)
+    source.symlink_to(f"/{target_name}")
     return 0
 
 
