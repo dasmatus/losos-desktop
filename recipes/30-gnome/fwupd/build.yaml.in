@@ -56,11 +56,30 @@ steps:
 # logitech_bulkcontroller (protobuf-c), flashrom (libflashrom) and
 # modem_manager (ModemManager). uefi_capsule_splash is disabled because its
 # image generation wants python cairo and PIL at build time.
+#
+# Eleven of these options were wrong against the pinned 2.1.7, and the reason
+# is in the git log rather than the recipe: `chore: bump 19 upstream source(s)`
+# moved fwupd from 2.0.x and nothing revalidated the option list. CLAUDE.md
+# says a bump across a major version needs a human, and this is what it costs
+# when one does not get it.
+#
+# Five of them -- sqlite, curl, cbor, libarchive, lzma -- are not probes any
+# more. fwupd 2.1 takes all five as hard dependencies, so there is no option
+# left to enable. This tree builds every one of them, so nothing is lost by
+# the option going away; what would have been lost is the build, at
+# `meson setup`, on the first unknown name.
+#
+# -Dudev went the same way and -Dintrospection became a feature. consolekit
+# and elogind are gone with the backends they named: fwupd speaks to logind
+# and nothing else now, which is what this OS wants anyway. The
+# logitech_bulkcontroller and flashrom plugins are gone from the tree, so the
+# two lines disabling them named nothing -- the comment below still explains
+# why modem_manager is off, which is the one of the three that remains.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/fwupd /build/src/fwupd --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dhsi=enabled -Dsystemd=enabled -Dpolkit=enabled -Dsqlite=enabled -Dcurl=enabled -Dgnutls=enabled -Dcbor=enabled -Dblkid=enabled -Dlibarchive=enabled -Dlzma=enabled -Dudev=enabled -Dlibdrm=enabled -Dlvfs=true -Ddocs=disabled -Dtests=false -Dman=false -Dmetainfo=false -Dintrospection=false -Dbash_completion=false -Dfish_completion=false -Dfirmware-packager=false -Dpassim=disabled -Dsupported_build=disabled -Dbluez=disabled -Dconsolekit=disabled -Delogind=disabled -Dvalgrind=disabled -Dumockdev_tests=disabled -Dplugin_uefi_capsule_splash=false -Dplugin_logitech_bulkcontroller=disabled -Dplugin_flashrom=disabled -Dplugin_modem_manager=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/fwupd /build/src/fwupd --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dhsi=enabled -Dsystemd=enabled -Dpolkit=enabled -Dgnutls=enabled -Dblkid=enabled -Dlibdrm=enabled -Dlvfs=true -Ddocs=disabled -Dtests=false -Dman=false -Dmetainfo=false -Dintrospection=disabled -Dbash_completion=false -Dfish_completion=false -Dfirmware-packager=false -Dpassim=disabled -Dsupported_build=disabled -Dbluez=disabled -Dvalgrind=disabled -Dumockdev_tests=disabled -Dplugin_uefi_capsule_splash=false -Dplugin_modem_manager=disabled
 
 - stage: Build
   name: compile
