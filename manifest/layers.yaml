@@ -86,7 +86,11 @@
     - cryptsetup
     - tpm2-tss
     - libcbor
-    - libfido2
+    # Headers and a .pc only, with nothing compiled. The real libfido2 is in
+    # losos-20-systemd, after systemd, because it needs libudev to compile
+    # while systemd needs only its headers to configure and dlopens the
+    # library at runtime. The recipe has the whole argument.
+    - libfido2-headers
     - linux-pam
     - nettle
     - libtasn1
@@ -116,6 +120,14 @@
     - linux
     - nvidia-open
     - systemd
+    # After systemd, and this is the only reason it is not down in
+    # losos-10-base with libcbor: libfido2 hard-requires libudev on Linux, and
+    # systemd is the only thing in this distribution that provides it. The
+    # dependency does not run the other way -- systemd keeps only includes and
+    # compile args from libfido2 and dlopens it at runtime -- so libfido2-headers
+    # satisfies systemd's configure from the base layer and the library itself
+    # lands here.
+    - libfido2
 
 - name: losos-30-graphics
   dir: 20-graphics
