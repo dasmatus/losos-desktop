@@ -98,9 +98,20 @@ b_lto           = false
 # without -fsanitize-link-runtime, and an executable link gets it and
 # --export-dynamic together.
 #
+# meson being the only objector is a claim about everything else, so it was
+# checked as one rather than inferred from dbus linking: there is no
+# -Wl,-z,defs and no --no-undefined anywhere in tools/lib/toolchain.py,
+# manifest/toolchain.yaml or this directory. The shared ldflags do carry
+# -Wl,-z,now, which is the opposite kind of switch -- it moves resolution
+# from first call to load -- and that is the one that decides whether the
+# design holds. Built as a pair on glibc and run: a .so with those two
+# undefined, an executable linked against it, clean under -z now. Not musl,
+# and nothing has booted, so it is evidence and not proof.
+#
 # What it costs is real: a library that genuinely fails to resolve one of its
-# own symbols now links, and fails when something loads it. That is the trade
-# cross-DSO CFI asks for, and manifest/toolchain.yaml's cfi.cross_dso is where
-# it would be unmade.
+# own symbols now links, and fails when something loads it -- at load rather
+# than at first call, because of -z now. That is the trade cross-DSO CFI asks
+# for, and manifest/toolchain.yaml's cfi.cross_dso is where it would be
+# unmade.
 b_lundef        = false
 b_pie           = true
