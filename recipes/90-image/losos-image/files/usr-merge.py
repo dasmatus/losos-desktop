@@ -5,6 +5,7 @@ import argparse
 import os
 import shutil
 import sys
+from collections import deque
 from pathlib import Path
 
 LINKS = {
@@ -35,11 +36,23 @@ def target_path(root, link):
 
 
 def resolve_source_path(root, relative):
-    current = root
-    resolved_root = root.resolve(strict=False)
+    current = root.resolve(strict=False)
+    resolved_root = current
+    pending = deque(Path(relative).parts)
     seen = set()
 
-    for part in Path(relative).parts:
+    while pending:
+        part = pending.popleft()
+        if part in ("", "."):
+            continue
+        if part == "..":
+            current = current.parent
+            try:
+                current.relative_to(resolved_root)
+            except ValueError:
+                return None
+            continue
+
         current = current / part
         while current.is_symlink():
             if current in seen:
@@ -47,14 +60,17 @@ def resolve_source_path(root, relative):
             seen.add(current)
             target = current.readlink()
             if target.is_absolute():
-                current = target
+                current = resolved_root
+                pending.extendleft(reversed(Path(str(target).lstrip("/")).parts))
             else:
-                current = Path(os.path.normpath(str(current.parent / target)))
-            try:
-                current.resolve(strict=False).relative_to(resolved_root)
-            except (ValueError, RuntimeError):
-                return None
-        if not current.exists():
+                current = current.parent
+                pending.extendleft(reversed(target.parts))
+
+        try:
+            current.relative_to(resolved_root)
+        except ValueError:
+            return None
+        if not current.exists() and not pending:
             return current
 
     return current
