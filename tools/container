@@ -125,7 +125,8 @@ def base_image():
     programs in it have to run here. `tools/configure --arch` is the other
     question and is unrelated.
     """
-    machine = MACHINE_ALIASES.get(platform.machine(), platform.machine())
+    raw_machine = platform.machine()
+    machine = MACHINE_ALIASES.get(raw_machine, raw_machine)
     try:
         return BASE_IMAGES[machine]
     except KeyError:
