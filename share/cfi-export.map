@@ -17,7 +17,15 @@
 #
 # Upstream version scripts end `local: *;` as a matter of course, and
 # __cfi_check is not part of anybody's public API, so it is exactly what
-# `local: *;` is for. Measured on clang 18.1.3 with mold and with lld: a
+# `local: *;` is for. Measured on clang 19.1.1 -- which was the Containerfile's
+# LLVM until this tree's base became Arch -- after an earlier round was made
+# only on a developer box's 18.1.3, and repeated on 18.1.3, with mold and with
+# lld in both cases. The Arch base installs whatever pacman currently ships and
+# reported clang 22.1.8 / LLVM 22.1.8 / mold 2.42.1 on the run that switched
+# it, so the container's compiler is now three majors past the newest of those
+# measurements and nobody has repeated them there. Two rounds of "still
+# reproduces" is a trend, not a proof that 22 behaves the same. What was
+# measured: a
 # library built with cross-DSO CFI and linked with a `global: api_*; local: *;`
 # script exports no __cfi_check at all. That is most of the version scripts in
 # this tree -- tpm2-tss ships one per library, and cryptsetup, linux-pam,
