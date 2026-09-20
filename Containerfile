@@ -189,6 +189,14 @@ RUN pacman -Syu --noconfirm --needed \
       just \
       make pkgconf tar xz zstd cpio patch \
       \
+      `# perl, because openssl's whole build system is perl: Configure is` \
+      `# a perl script, and the Makefile it writes drives more of them to` \
+      `# generate the assembly and the error tables. Nothing on a command` \
+      `# line here says perl, so it looks removable and is not. Arch's base` \
+      `# metapackage does not carry it -- Debian's perl-base is Essential` \
+      `# and came free, which is why no list had to name it there either.` \
+      perl \
+      \
       `# bzip2 is the odd one here: no recipe names it and nothing spells` \
       `# it on a command line. tar picks a decompressor from the file` \
       `# itself, and seven sources in manifest/sources.lock are .tar.bz2,` \
