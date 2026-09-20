@@ -82,13 +82,14 @@ both architectures. zswap is a compressed RAM cache in front of disk swap, not
 a replacement for it. Its RAM pool retains the kernel's default limit; the
 RAM-sized allocation below is **disk space**, not the zswap pool.
 
-Before repart runs, `losos-swap` writes `/run/repart.d/25-swap.conf` with equal
-minimum and maximum sizes derived from the running machine's total usable RAM
-(`sysinfo.totalram * mem_unit`, equivalent to `/proc/meminfo`'s `MemTotal`).
-It does not use fluctuating free/available memory or the image builder's RAM.
-The size is rounded up only to repart's 4096-byte alignment. The swap header
-uses one page, so the usable capacity reported by `swapon` is slightly smaller
-than the partition's disk allocation.
+Before repart runs, `losos-swap` writes
+`/sysroot/run/repart.d/25-swap.conf` with equal minimum and maximum sizes
+derived from the running machine's total usable RAM (`sysinfo.totalram *
+mem_unit`, equivalent to `/proc/meminfo`'s `MemTotal`). It does not use
+fluctuating free/available memory or the image builder's RAM. The size is
+rounded up only to repart's 4096-byte alignment. The swap header uses one
+page, so the usable capacity reported by `swapon` is slightly smaller than the
+partition's disk allocation.
 
 The initrd carries this helper, its repart drop-in, and the util-linux swap
 tools. repart formats the partition with `mkswap`; after switch-root,

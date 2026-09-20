@@ -260,6 +260,7 @@ class SwapWiringTests(unittest.TestCase):
     def test_initrd_programs(self):
         files = self.active_lines("recipes/90-image/losos-image/files/initrd-manifest.txt")
         for path in ("usr/lib/repart.d", "usr/lib/repart.sysinstall.d",
+                     "usr/lib/systemd/systemd-sysinstall",
                      "usr/lib/losos/losos-swap", "usr/sbin/mkswap",
                      "usr/sbin/swapon", "usr/sbin/swapoff"):
             with self.subTest(path=path):
@@ -267,13 +268,11 @@ class SwapWiringTests(unittest.TestCase):
 
     def test_service_ordering_and_installer_isolation(self):
         for service, dropin, output, condition in (
-            ("systemd-repart", "20-swap.conf", "/run/repart.d", "!losos.install"),
+            ("systemd-repart", "20-swap.conf", "/sysroot/run/repart.d", "!losos.install"),
             ("systemd-sysinstall", "10-losos.conf", "/run/repart.sysinstall.d",
              "losos.install"),
         ):
             with self.subTest(service=service):
-                # systemd uses an empty repeated ExecStart= to reset the vendor
-                # command; keep the final value here and verify the reset below.
                 config = configparser.ConfigParser(interpolation=None, strict=False)
                 config.optionxform = str
                 config.read(REPO / "overlay/usr/lib/systemd/system" /
@@ -282,21 +281,10 @@ class SwapWiringTests(unittest.TestCase):
                 self.assertEqual(config["Service"]["ExecStartPre"],
                                  f"/usr/lib/losos/losos-swap {output}")
                 if service == "systemd-repart":
-                    command = shlex.split(config["Service"]["ExecStart"])
-                    self.assertEqual(command[0], "/usr/bin/systemd-repart")
-                    for argument in ("--dry-run=no", "--definitions=/run/repart.d",
-                                     "--definitions=/usr/lib/repart.d",
-                                     "--definitions=/sysusr/usr/local/lib/repart.d",
-                                     "--definitions=/sysusr/usr/lib/repart.d"):
-                        self.assertIn(argument, command)
-                    # Definitions must escape initrd's implicit /sysroot, while
-                    # leaving the backing disk to repart's automatic selection.
-                    self.assertTrue(all(arg.startswith("--") for arg in command[1:]))
+                    self.assertNotIn("ExecStart", config["Service"])
                     lines = self.active_lines(
                         f"overlay/usr/lib/systemd/system/{service}.service.d/{dropin}")
-                    starts = [line for line in lines if line.startswith("ExecStart=")]
-                    self.assertEqual(starts, [
-                        "ExecStart=", "ExecStart=" + config["Service"]["ExecStart"]])
+                    self.assertFalse(any(line.startswith("ExecStart=") for line in lines))
 
     def test_kernel_swap_and_zswap(self):
         lines = self.active_lines("recipes/10-systemd/linux/files/losos.config")
