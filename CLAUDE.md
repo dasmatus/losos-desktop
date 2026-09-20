@@ -154,6 +154,20 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   what to emit and tells configure nothing, which is how thirty-six recipes
   came to be written without it. `tools/gates/cross-configure.py` is what stops
   the thirty-seventh; musl and openssl are exempt there, with reasons.
+- **meson spells `--host` as `--cross-file`, and needs it for the same
+  reason.** A meson build with only `--native-file` is a *native* build, and a
+  native build compiles a test program and then runs it — the musl-dynamic
+  binary pm's jail has no interpreter for. The failure names the wrong thing:
+  `Could not invoke sanity check executable: [Errno 2] No such file or
+  directory: '.../sanity_check_for_c.exe'`, which reads as the compiler having
+  produced nothing rather than as a missing loader. meson skips that run only
+  when a cross file's `[host_machine]` section has told it the build is cross
+  (`is_cross and not has_exe_wrapper()`), so `share/cross.ini.in` is where the
+  toolchain now lives and `share/native.ini.in` carries the build-machine
+  compiler and deliberately no flags. Every meson step names both;
+  `tools/gates/cross-configure.py` checks meson and autotools together. dbus
+  found this, being the first meson package this tree ever compiled — the
+  other forty-seven would have found it one build at a time.
 - **`losos-15-hosttools` is the inverse, and the two rules must move together.**
   gperf, flex and gettext are *run* by the layers above — the kernel's build and
   systemd's — and pm's jail cannot execute a musl-dynamic binary at all. They

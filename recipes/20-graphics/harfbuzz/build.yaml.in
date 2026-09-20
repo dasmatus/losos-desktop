@@ -19,19 +19,18 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_HARFBUZZ@ --no-same-owner -C /build/src/harfbuzz --strip-components=1
 
+# --cross-file is @CROSS_INI_HARFBUZZ@ and not the layer's shared cross.ini:
+# meson takes flags from the cross file and nowhere else, so a meson recipe
+# has no CFLAGS= argument on which to name a response file, and this is the
+# only way harfbuzz's `drops: [visibility]` reaches the compiler. HB_EXTERN is `extern` and nothing more -- hb-common.h defines it
+# that way behind #ifndef and only the MSVC branch of hb.hh redefines it --
+# so without this libharfbuzz.so installs empty and pango is the first thing
+# to say so.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-# --native-file is @NATIVE_INI_HARFBUZZ@ and not the layer's shared
-# native.ini: meson takes flags from the native file and nowhere else, so a
-# meson recipe has no CFLAGS= argument on which to name a response file, and
-# this is the only way harfbuzz's `drops: [visibility]` reaches the
-# compiler. HB_EXTERN is `extern` and nothing more -- hb-common.h defines it
-# that way behind #ifndef and only the MSVC branch of hb.hh redefines it --
-# so without this libharfbuzz.so installs empty and pango is the first thing
-# to say so.
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/harfbuzz /build/src/harfbuzz --native-file @NATIVE_INI_HARFBUZZ@ --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=disabled -Ddocs=disabled -Dintrospection=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/harfbuzz /build/src/harfbuzz --cross-file @CROSS_INI_HARFBUZZ@ --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=disabled -Ddocs=disabled -Dintrospection=disabled
 
 - stage: Build
   name: compile

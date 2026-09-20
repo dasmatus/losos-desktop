@@ -79,7 +79,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/fwupd /build/src/fwupd --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dhsi=enabled -Dsystemd=enabled -Dpolkit=enabled -Dgnutls=enabled -Dblkid=enabled -Dlibdrm=enabled -Dlvfs=true -Ddocs=disabled -Dtests=false -Dman=false -Dmetainfo=false -Dintrospection=disabled -Dbash_completion=false -Dfish_completion=false -Dfirmware-packager=false -Dpassim=disabled -Dsupported_build=disabled -Dbluez=disabled -Dvalgrind=disabled -Dumockdev_tests=disabled -Dplugin_uefi_capsule_splash=false -Dplugin_modem_manager=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/fwupd /build/src/fwupd --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dhsi=enabled -Dsystemd=enabled -Dpolkit=enabled -Dgnutls=enabled -Dblkid=enabled -Dlibdrm=enabled -Dlvfs=true -Ddocs=disabled -Dtests=false -Dman=false -Dmetainfo=false -Dintrospection=disabled -Dbash_completion=false -Dfish_completion=false -Dfirmware-packager=false -Dpassim=disabled -Dsupported_build=disabled -Dbluez=disabled -Dvalgrind=disabled -Dumockdev_tests=disabled -Dplugin_uefi_capsule_splash=false -Dplugin_modem_manager=disabled
 
 - stage: Build
   name: compile
