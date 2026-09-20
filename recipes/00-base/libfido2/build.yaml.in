@@ -45,8 +45,17 @@ steps:
   - make -C /build/b/libfido2 install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+  # libfido2 is on a drops: [visibility] exception, and this is what makes
+  # that exception honest rather than hopeful. fido_dev_open present means the
+  # API really did survive -- it does not, at hidden visibility, despite the
+  # version script naming it. __cfi_check present means the narrow drop kept
+  # CFI rather than silently losing it, which is the whole reason for
+  # preferring it over drops: [cfi] on a library that parses CBOR off a USB
+  # device. Neither symbol proves the other: __cfi_check is there at hidden
+  # visibility too.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libfido2.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libfido2.so fido_init fido_dev_open fido_dev_info_manifest __cfi_check

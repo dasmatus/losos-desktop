@@ -69,8 +69,12 @@ steps:
   - make -C /build/b/libqrencode install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+  # libqrencode is on the same drops: [visibility] exception and gets the
+  # same two-part assertion: the API symbol says visibility was fixed,
+  # __cfi_check says the schemes are still on.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libqrencode.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libqrencode.so QRcode_encodeString QRcode_free __cfi_check
