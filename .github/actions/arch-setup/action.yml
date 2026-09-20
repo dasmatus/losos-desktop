@@ -83,8 +83,8 @@ runs:
         # KVM, before tools/vm-test can choose TCG. The read-only host /dev
         # mount permits discovery; the device-cgroup rule allows only KVM.
         if [ -c /host-dev/kvm ]; then
-          read -r kvm_major kvm_minor < <(stat -c '%t %T' /host-dev/kvm)
-          mknod -m 666 /dev/kvm c "$((16#$kvm_major))" "$((16#$kvm_minor))"
+          read -r kvm_major kvm_minor kvm_mode < <(stat -c '%t %T %a' /host-dev/kvm)
+          mknod -m "$kvm_mode" /dev/kvm c "$((16#$kvm_major))" "$((16#$kvm_minor))"
         else
           echo "Host has no KVM device; tools/vm-test will use TCG."
         fi
