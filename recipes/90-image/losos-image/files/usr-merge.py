@@ -137,8 +137,6 @@ def merge_dir(root, source_name, target_name):
 
     if source.is_symlink():
         return 0
-    if source.exists() and not source.is_dir():
-        return fail(f"/{source_name} exists but is not a directory")
 
     target.mkdir(parents=True, exist_ok=True)
     if source.is_dir():
@@ -153,25 +151,10 @@ def merge_dir(root, source_name, target_name):
 
 
 def os_release(root):
-    status = check_source_path(root, "usr/lib/os-release")
-    if status:
-        return status
-    source = root / "usr/lib/os-release"
     target = root / "etc/os-release"
-    status = check_os_release_parent(root)
-    if status:
-        return status
-    target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_symlink():
-        if target_path(root, target) != source:
-            return fail(f"/etc/os-release already links to {target.readlink()}, not ../usr/lib/os-release")
         return 0
-    if target.exists():
-        return fail("/etc/os-release exists and is not a symlink")
-    status = check_os_release_parent(root)
-    if status:
-        return status
-
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.symlink_to("../usr/lib/os-release")
     return 0
 
