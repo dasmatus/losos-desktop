@@ -1,6 +1,43 @@
 # libfido2 1.15.0
 #
 # FIDO2 tokens as a LUKS unlock factor, via systemd-cryptenroll.
+#
+# THIS RECIPE CANNOT BUILD WHERE manifest/layers.yaml PUTS IT, and no build has
+# reached it yet to say so: it is member twenty-nine of losos-10-base's
+# thirty-nine. Found by configuring the pinned source rather than by waiting.
+#
+# libfido2 hard-requires libudev on Linux. CMakeLists.txt calls
+# `pkg_search_module(UDEV libudev REQUIRED)` in the non-MSVC branch whenever
+# CMAKE_SYSTEM_NAME is Linux, and it is NOT gated on NFC_LINUX, so turning NFC
+# off does not avoid it. Nor is it a configure-time artifact: src/hid_linux.c
+# is compiled on Linux unconditionally and makes fourteen udev_* calls --
+# udev_new, the udev_enumerate_* family, udev_device_* -- to find hidraw nodes
+# at all.
+#
+# losos-10-base has no udev. systemd is the only provider in this tree, it is
+# the layer above in losos-20-systemd, and it is built -Dlibfido2=enabled. So
+# the two need each other, which is a genuine cycle and not a missing
+# dependency line.
+#
+# Four ways out, and choosing is a change to the layer graph rather than to
+# this file, so it belongs in its own pull request:
+#
+#   1. A reduced udev-only systemd in the base layer, then libcbor, libfido2
+#      and libqrencode, then the full systemd above. Keeps one udev
+#      implementation and loses nothing; costs a second systemd compile,
+#      because pm has no build cache (C5, C6), and pass one leaves files
+#      behind that pass two may not overwrite.
+#   2. eudev in the base layer. Cheap, and puts a systemd fork in a
+#      systemd-native distribution, with two libudev.so.1 meeting in the image.
+#   3. Patch hid_linux.c to walk /dev/hidraw* directly. Carried forever and
+#      re-derived at every bump.
+#   4. Drop -Dlibfido2=enabled from systemd. No hardware unlock; the WebAuthn
+#      half of docs/yubikey.md is unaffected, since that is udev rules and a
+#      kernel config rather than this library.
+#
+# Written here rather than left in a thread because the build will reach this
+# recipe before the decision is made, and the next reader should get the
+# diagnosis instead of repeating it.
 name: libfido2
 version:
 - '1'
