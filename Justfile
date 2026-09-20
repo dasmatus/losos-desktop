@@ -125,6 +125,7 @@ lint:
   python3 "{{repo}}/tools/gates/plugins.py"
   python3 "{{repo}}/tools/gates/workflow.py" --self-test
   python3 "{{repo}}/tools/gates/workflow.py"
+  python3 -m basedpyright --project "{{repo}}/basedpyrightconfig.json"
   python3 "{{repo}}/tools/gates/patches.py"
   python3 "{{repo}}/tools/gates/cross-configure.py"
   python3 "{{repo}}/tools/gates/exceptions-live.py"

@@ -1,0 +1,15 @@
+{
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "include": [
+    "tools",
+    "recipes/90-image/losos-image/files"
+  ],
+  "exclude": [
+    "out",
+    "**/__pycache__"
+  ],
+  "extraPaths": [
+    "tools/lib"
+  ]
+}

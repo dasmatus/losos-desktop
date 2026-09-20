@@ -28,9 +28,14 @@ runs:
         if [ "$INSTALL_RUST" = true ]; then
           packages+=(clang lld llvm make pkgconf rustup)
         fi
+        packages+=(python-pip)
         if [ "$NESTED" = true ]; then packages+=(podman); fi
         # Never install against a newly synced index without upgrading the base.
         pacman -Syu --needed --noconfirm "${packages[@]}"
+
+    - name: Install BasedPyright
+      shell: bash
+      run: python3 -m pip install basedpyright==1.40.1 nodejs-wheel-binaries==24.19.0
 
     - name: Install the pinned Rust toolchain
       if: inputs.rust == 'true'

@@ -24,6 +24,12 @@ INITRD_REPART_SEARCH = (
     "/sysusr/usr/lib/repart.d",
 )
 
+
+class CaseConfigParser(configparser.ConfigParser):
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
+
+
 # Link-time wrappers leave the production binary free of test-only environment
 # overrides. Short writes and delayed errors exercise atomic publication too.
 FIXTURE = r"""
@@ -256,9 +262,10 @@ class SwapWiringTests(unittest.TestCase):
         self.assertIn("- losos-swap", core.split("members:\n", 1)[1].splitlines())
         justfile = (REPO / "Justfile").read_text()
         lint = re.search(r"(?ms)^lint:\n(.*?)(?=^\S|\Z)", justfile)
-        self.assertIsNotNone(lint)
+        if lint is None:
+            self.fail("Justfile lint recipe block was not found")
         self.assertIn('python3 "{{repo}}/tools/gates/test-swap.py"',
-                      [line.strip() for line in lint[1].splitlines()])
+                      [line.strip() for line in lint.group(1).splitlines()])
 
     def test_recipe_source_layout(self):
         # configure already copies the member's files/ to files/<package>/;
@@ -287,8 +294,7 @@ class SwapWiringTests(unittest.TestCase):
              "losos.install"),
         ):
             with self.subTest(service=service):
-                config = configparser.ConfigParser(interpolation=None, strict=False)
-                config.optionxform = str
+                config = CaseConfigParser(interpolation=None, strict=False)
                 config.read(REPO / "overlay/usr/lib/systemd/system" /
                             f"{service}.service.d" / dropin)
                 self.assertEqual(config["Unit"]["ConditionKernelCommandLine"], condition)
