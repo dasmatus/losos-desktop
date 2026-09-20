@@ -167,8 +167,7 @@ cfi:
   # second version script works where --export-dynamic-symbol does not, and why
   # the name is spelled as a glob -- are in the map's own header.
   #
-  # It costs one more thing, found at curl and written out in that recipe
-  # because that is where the next person meets it. __cfi_check and
+  # It costs one more thing, found at curl. __cfi_check and
   # __cfi_check_fail are emitted into every object, and under -flto=thin the
   # object is LLVM bitcode, so llvm-nm lists them -- which breaks libtool's
   # configure-time probe for its global symbol pipe. The probe generates a C
@@ -179,7 +178,10 @@ cfi:
   # in this tree has an empty symbol pipe and only the ones that ask libtool
   # to compute an export list ever find out. Three packages here can:
   # curl, gnutls and libtasn1, each of them only on the `else` of a version
-  # script. curl's recipe takes the other branch explicitly.
+  # script. curl reaches that else unconditionally and so needs the other
+  # branch asked for by name, which is what --enable-versioned-symbols does;
+  # its recipe is where that is written out, because that is where the next
+  # person meets it.
   #
   # gnutls and libtasn1 need nothing, and that was measured rather than
   # assumed, because a probe answering the convenient way has already cost
