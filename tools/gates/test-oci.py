@@ -163,7 +163,8 @@ class OCITransportTests(unittest.TestCase):
 
     @unittest.skipUnless(SKOPEO, "skopeo is unavailable; mocked transport tests still run")
     def test_real_skopeo_local_roundtrip(self):
-        assert SKOPEO is not None
+        if SKOPEO is None:
+            self.skipTest("skopeo is unavailable; mocked transport tests still run")
         for arch, oci_arch in oci.ARCHES.items():
             with self.subTest(arch=arch), oci.workspace(self.root) as work:
                 layout, copied = work / "source", work / "copied"
