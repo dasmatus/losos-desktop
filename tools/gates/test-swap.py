@@ -254,7 +254,8 @@ class SwapWiringTests(unittest.TestCase):
 
     def test_initrd_programs(self):
         files = self.active_lines("recipes/90-image/losos-image/files/initrd-manifest.txt")
-        for path in ("usr/lib/losos/losos-swap", "usr/sbin/mkswap",
+        for path in ("usr/lib/repart.d", "usr/lib/repart.sysinstall.d",
+                     "usr/lib/losos/losos-swap", "usr/sbin/mkswap",
                      "usr/sbin/swapon", "usr/sbin/swapoff"):
             with self.subTest(path=path):
                 self.assertIn(path, files)
@@ -279,7 +280,9 @@ class SwapWiringTests(unittest.TestCase):
                     command = shlex.split(config["Service"]["ExecStart"])
                     self.assertEqual(command[0], "/usr/bin/systemd-repart")
                     for argument in ("--dry-run=no", "--definitions=/run/repart.d",
-                                     "--definitions=/usr/lib/repart.d"):
+                                     "--definitions=/usr/lib/repart.d",
+                                     "--definitions=/sysusr/usr/local/lib/repart.d",
+                                     "--definitions=/sysusr/usr/lib/repart.d"):
                         self.assertIn(argument, command)
                     # Definitions must escape initrd's implicit /sysroot, while
                     # leaving the backing disk to repart's automatic selection.
