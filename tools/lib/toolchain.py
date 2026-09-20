@@ -199,6 +199,20 @@ class Toolchain:
         # never checked. That is a real loss, which is why this is per-package
         # and why manifest/toolchain.yaml makes each entry say what it buys.
         #
+        # One coupling the manifest does not record, because there is nowhere
+        # in it to say so: at -fvisibility=default the four C++ schemes are
+        # emitted only while cross_dso is on. Counting llvm.type.test for a
+        # virtual call through a base pointer under -flto=thin
+        # -fsanitize=cfi-vcall, clang 18.1.3 -- hidden/no-cross 3, hidden/cross
+        # 4, default/no-cross 0, default/cross 4. A default-visibility class
+        # gets public LTO visibility, and checks on those are emitted only with
+        # -fsanitize-cfi-cross-dso: no error, no warning, nothing missing from
+        # the line, which is the same quiet failure as the empty symbol table
+        # one level up. Nothing is lost today -- every taker is C, and
+        # cfi-icall is untouched by visibility (2, 4, 2, 4 in the same matrix)
+        # -- so this is a note for the first C++ package to take the exemption,
+        # or for whoever turns cross_dso off somewhere else entirely.
+        #
         # This is also the knob the standing question turns on. If the default
         # is ever inverted -- hidden opted into by the packages that annotate,
         # rather than blanket with exceptions -- it is `cfi.visibility` that

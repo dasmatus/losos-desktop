@@ -378,6 +378,20 @@ calls a security vulnerability, in a component whose job includes validating
 images from untrusted applications. `losos-40-gnome` builds none of fuse3,
 pipewire or bubblewrap.
 
+The bwrap half is worse than a configure-time probe, and both ways out of it
+are bad. At `src/meson.build:157` the build bakes
+`-DHELPER="@0@".format(bwrap.full_path())` into the binary: a compiled-in
+absolute path to whichever bubblewrap the build host happened to have, in an
+image that has none. So on a runner with bubblewrap installed, leaving
+`sandboxed-image-validation` at its default `true` does not fail -- it
+succeeds, and ships a portal pointing at a path that is not there, which is
+the same trap `losos-release` and `/usr/lib/os-release` record in CLAUDE.md.
+Failing when bwrap is absent is the good outcome. Turning the option off is
+the only setting that is safe to build, and what it turns off is the
+validation of images from untrusted applications. The security choice here is
+forced rather than taken, and it stays forced until bubblewrap is a package in
+this tree.
+
 What this costs: no Secret Service implementation and no portal, so an
 application asking for a password or a file chooser through the portal gets
 neither. That is a desktop with visible holes, not a cosmetic gap, and it is

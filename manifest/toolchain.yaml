@@ -161,8 +161,17 @@ cfi:
   # process ever does.
   #
   # This costs an unwinder. -fno-sanitize-trap puts libclang_rt.cfi_diag on
-  # every link line, cfi_diag walks the stack to find the call site, and the
-  # walk calls _Unwind_Backtrace and _Unwind_GetIP -- which musl does not have.
+  # every EXECUTABLE's link line, cfi_diag walks the stack to find the call
+  # site, and the walk calls _Unwind_Backtrace and _Unwind_GetIP -- which musl
+  # does not have.
+  #
+  # Executable is the word that matters, and it was missing here. clang links
+  # no sanitizer runtime into a -shared link at all, so every library this
+  # tree builds calls __cfi_slowpath_diag and __ubsan_handle_cfi_check_fail
+  # and defines neither; the executable that loads it resolves both, because
+  # clang passes --export-dynamic on the same link that pulls the runtime in.
+  # That is cross-DSO CFI working as designed -- one shadow map per process --
+  # and it is why share/cross.ini.in turns meson's b_lundef off.
   # That is what recipes/00-toolchain/libunwind is for, and why target.unwindlib
   # below names it. Tombstone: this was `true` for one commit, with a note
   # saying diagnose was unavailable because building libunwind needed the full
