@@ -36,6 +36,7 @@ def target_path(root, link):
 
 def resolve_source_path(root, relative):
     current = root
+    resolved_root = root.resolve(strict=False)
     seen = set()
 
     for part in Path(relative).parts:
@@ -50,8 +51,8 @@ def resolve_source_path(root, relative):
             else:
                 current = Path(os.path.normpath(str(current.parent / target)))
             try:
-                current.relative_to(root)
-            except ValueError:
+                current.resolve(strict=False).relative_to(resolved_root)
+            except (ValueError, RuntimeError):
                 return None
         if not current.exists():
             return current

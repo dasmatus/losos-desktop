@@ -309,7 +309,35 @@ def test_usr_merge_rejects_outside_os_release(work, failures):
         failures.append("usr-merge: outside os-release should fail before rewriting compatibility paths")
     elif not failures:
         print("  usrmerge rejects /usr/lib/os-release paths that escape the staged root")
- 
+
+
+def test_usr_merge_rejects_intermediate_symlink_escape(work, failures):
+    root = work / "root"
+    outside = work / "outside"
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (outside / "lib").mkdir(parents=True)
+    (outside / "lib" / "os-release").write_text("ID=host\n")
+    (root / "usr" / "lib" / "escape").symlink_to(outside / "lib")
+    (root / "usr" / "lib" / "os-release").symlink_to("escape/os-release")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append(
+            "usr-merge: accepted /usr/lib/os-release through an intermediate symlink escape"
+        )
+    elif "resolves outside the staged root" not in result.stderr:
+        failures.append("usr-merge: intermediate symlink escape did not explain the invalid source path")
+    elif (root / "bin").is_symlink():
+        failures.append(
+            "usr-merge: intermediate symlink escape should fail before rewriting compatibility paths"
+        )
+    elif not failures:
+        print("  usrmerge rejects /usr/lib/os-release with intermediate symlink escapes")
+
 
 def test_usr_merge_preflights_before_rewriting(work, failures):
     root = work / "root"
@@ -626,6 +654,9 @@ def main():
         usr_outside = work / "usr-merge-outside"
         usr_outside.mkdir()
         test_usr_merge_rejects_outside_os_release(usr_outside, failures)
+        usr_intermediate = work / "usr-merge-intermediate"
+        usr_intermediate.mkdir()
+        test_usr_merge_rejects_intermediate_symlink_escape(usr_intermediate, failures)
         usr_unresolved = work / "usr-merge-unresolved"
         usr_unresolved.mkdir()
         test_usr_merge_rejects_unresolved_escape(usr_unresolved, failures)
