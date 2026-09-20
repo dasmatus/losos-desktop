@@ -105,6 +105,7 @@ lint:
   python3 "{{repo}}/tools/gates/test-libvirt.py"
   python3 "{{repo}}/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "{{repo}}/tools/gates/plugins.py"
+  python3 "{{repo}}/tools/gates/workflow.py" --self-test
   python3 "{{repo}}/tools/gates/workflow.py"
   python3 "{{repo}}/tools/gates/patches.py"
   python3 "{{repo}}/tools/gates/cross-configure.py"
