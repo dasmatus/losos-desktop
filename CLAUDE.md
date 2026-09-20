@@ -160,7 +160,9 @@ Beyond the numbered list in `docs/pm-constraints.md`:
   binary pm's jail has no interpreter for. The failure names the wrong thing:
   `Could not invoke sanity check executable: [Errno 2] No such file or
   directory: '.../sanity_check_for_c.exe'`, which reads as the compiler having
-  produced nothing rather than as a missing loader. meson skips that run only
+  produced nothing rather than as a missing loader — and meson writes it to
+  stdout and its own log, so pm's error block says `stderr: <no output>` and a
+  reader who stops there learns nothing at all. meson skips that run only
   when a cross file's `[host_machine]` section has told it the build is cross
   (`is_cross and not has_exe_wrapper()`), so `share/cross.ini.in` is where the
   toolchain now lives and `share/native.ini.in` carries the build-machine
