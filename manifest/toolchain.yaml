@@ -333,6 +333,86 @@ exceptions:
       The narrow `visibility` drop libcap uses is therefore not available
       here: it keeps the schemes, and the schemes need the LTO this package
       cannot have.
+  # The rest of losos-10-base, in member order. Six packages, one fault, and
+  # one piece of evidence behind all of them: none declares a single
+  # `visibility("default")` anywhere in its tree -- not in its sources, not in
+  # its generated `configure`, under either spelling of the attribute -- so
+  # under the layer's -fvisibility=hidden each ships a library with an empty
+  # dynamic symbol table. Checked against the hash-pinned tarball in
+  # manifest/sources.lock, not against whatever upstream ships today.
+  #
+  # Four of the six ship a linker version script, which is the trap rather than
+  # the reassurance: the linker makes a hidden symbol local before a version
+  # node can claim it, so a `global:` list has nothing left to promote. Proved
+  # on libfido2, which names 267 symbols in src/export.gnu and exported none.
+  #
+  # Said plainly, because it is the weaker part of this entry: these six are
+  # not individually build-measured the way libcap and libxcrypt were. Nothing
+  # in this tree has built them yet. What is measured is the mechanism, on the
+  # same clang, and the absence of any annotation for it to spare. Each carries
+  # a check-exports line naming symbols out of its own version script or
+  # headers, so if one of them is somehow fine the exception costs it only
+  # interposition protection, and if it is not the build says so at the package
+  # instead of four layers later.
+  #
+  # `visibility` and not `cfi` throughout: at -fvisibility=default clang keeps
+  # every scheme and cross-DSO, so none of these gives up indirect-call
+  # checking. See libcap above for the measurement.
+  - package: openssl
+    drops: [visibility]
+    why: >
+      Declares its API bare -- `int SSL_connect(SSL *s);` -- with no export
+      macro to hook and no visibility attribute anywhere in 3.3.2. It builds
+      libcrypto and libssl from its own perl-driven Configure and derives their
+      symbol lists from util/libcrypto.num and util/libssl.num, which is
+      version-script machinery and cannot outrank STV_HIDDEN either.
+
+      Giving up interposition protection on the system's crypto library is not
+      nothing, and it is worth saying that openssl is default-visible on every
+      distribution that ships it, so this is the status quo elsewhere rather
+      than a hole opened here. CFI stays on, which is the part that would
+      actually have been missed.
+  - package: json-c
+    drops: [visibility]
+    why: >
+      json-c has the hook zlib had and it is still not usable here. Every
+      public header opens with `#ifndef JSON_EXPORT` / `#define JSON_EXPORT
+      extern` for the non-MSVC case, which is exactly ZEXPORT's shape -- but it
+      is repeated in five headers behind that guard, so whichever one an
+      include order reaches first wins and a patch has to land in all of them
+      identically to be sound. That is a patch worth writing once a build can
+      verify it; asserting it now, with nothing able to compile json-c against
+      the musl sysroot, would be a guess in a file whose whole convention is
+      that nothing is guessed. If the patch lands, this entry comes out.
+  - package: tpm2-tss
+    drops: [visibility]
+    why: >
+      Public declarations return TSS2_RC and carry no decorator. It ships a
+      version script per library -- tss2-esys.map, tss2-sys.map, tss2-mu.map
+      and eight more -- which is the case that looks safest and is not.
+      systemd reaches TPM2 through libtss2-esys, so an empty one takes
+      measured boot and TPM2-bound disk encryption with it.
+  - package: linux-pam
+    drops: [visibility]
+    why: >
+      `extern int PAM_NONNULL((1,3,4)) pam_start(...)`. PAM_NONNULL is an
+      attribute macro and looks like a hook, but it decorates only the
+      functions that take pointers, so it is not the place an export attribute
+      belongs. libpam.map lists the API and cannot rescue it.
+  - package: p11-kit
+    drops: [visibility]
+    why: >
+      Bare declarations and libp11-kit.map. It is also the reason meson
+      exemptions had to work at all: p11-kit is a meson build, it has no
+      CFLAGS= argument to name a response file on, and so it names
+      @NATIVE_INI_P11_KIT@ instead. gnutls links it directly, which is where
+      an empty one would have surfaced.
+  - package: libpwquality
+    drops: [visibility]
+    why: >
+      Bare declarations, libpwquality.map, nothing else. The smallest of the
+      six and the same shape as the rest; systemd-homed asks it whether a
+      password is acceptable.
   # losos-15-hosttools, all three of it. These are the one kind of package in
   # the tree that is not part of the OS being built so much as part of the
   # machinery building it, and that distinction is the whole exemption.

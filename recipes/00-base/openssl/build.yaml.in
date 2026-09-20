@@ -33,7 +33,14 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig
+# The flags are this package's own response files, not the layer's shared
+# pair, and naming them is the entire mechanism: manifest/toolchain.yaml
+# gives openssl `drops: [visibility]`, tools/configure writes
+# cflags-openssl.rsp for it either way, and a recipe left spelling
+# @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
+# read by nothing. Without it libcrypto and libssl install with empty dynamic
+# symbol tables and curl is the first thing to say so.
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/openssl /build/src/openssl/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_OPENSSL@ LDFLAGS=@LDFLAGS_RSP_OPENSSL@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig
 
 - stage: Build
   name: compile
@@ -56,3 +63,5 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libssl.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libssl.so SSL_new SSL_CTX_new SSL_connect OPENSSL_init_ssl
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcrypto.so OPENSSL_init_crypto EVP_EncryptInit_ex EVP_DigestInit_ex
