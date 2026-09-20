@@ -67,9 +67,10 @@ enrolment above is a thing the OS can store and nothing yet consumes.
 
 That absence is also less stable than it looks. gdm's `default-pam-config`
 option defaults to `autodetect`, which is `test -f /etc/arch-release` and four
-siblings evaluated against the *build container* rather than the image: on the
-current base none match and gdm installs no PAM files, but a `Containerfile`
-that changes the base changes whose PAM stack ships, with nothing saying so.
+siblings evaluated against the *build container* rather than the image. The
+current Arch base matches `/etc/arch-release`, but the recipe spells
+`-Ddefault-pam-config=none`, so the absence is deliberate; changing or removing
+that pin would let the base choose which PAM stack ships.
 The recipe therefore spells `-Ddefault-pam-config=none`, so the absence is
 deliberate rather than a property of the container. That pin travels with the
 change that makes it bite, which is whichever one moves the container base.
