@@ -195,9 +195,12 @@ def self_test():
         if mutation == "no-container":
             del gate["container"]
         elif mutation == "wrong-arch":
-            bad["jobs"]["build"]["strategy"]["matrix"]["include"][1]["image"] = (
-                ARCH_IMAGES["ubuntu-24.04"]
-            )
+            for leg in bad["jobs"]["build"]["strategy"]["matrix"]["include"]:
+                if leg.get("runner") == "ubuntu-24.04-arm":
+                    leg["image"] = ARCH_IMAGES["ubuntu-24.04"]
+                    break
+            else:
+                raise AssertionError("self-test fixture missing ubuntu-24.04-arm leg")
         elif mutation == "shell":
             del bad["defaults"]
         else:
