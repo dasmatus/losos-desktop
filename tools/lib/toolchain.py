@@ -290,10 +290,23 @@ class Toolchain:
             "@SYSROOT@": self.target.get("sysroot", "/build/sysroot"),
             "@RESOURCE_DIR_PREFIX@": self.resource_dir_prefix(),
         }
-        # meson native files want a TOML-ish list, not a shell string.
-        subs["@MESON_C_ARGS@"] = _ini_list(self.cflags())
-        subs["@MESON_LINK_ARGS@"] = _ini_list(self.ldflags())
+        subs.update(self.meson_subs())
         return subs
+
+    def meson_subs(self, package=None):
+        """The native file's two flag lists, for the layer or one exempt package.
+
+        meson native files want a TOML-ish list, not a shell string, which is
+        why these are not just @CFLAGS@ again. Taking `package` is what lets an
+        exempt meson build have a native file of its own: a meson recipe has no
+        CFLAGS= argument to name @CFLAGS_RSP_<PKG>@ on, so the only way its
+        exemption can reach the compiler is for the whole native file to be
+        generated for it.
+        """
+        return {
+            "@MESON_C_ARGS@": _ini_list(self.cflags(package)),
+            "@MESON_LINK_ARGS@": _ini_list(self.ldflags(package)),
+        }
 
 
 def _ini_list(flags):
