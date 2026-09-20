@@ -51,6 +51,7 @@
   # recipe because a layer is the unit that carries the consequence.
   members:
     - losos-release
+    - losos-swap
     - losos-security
 
 - name: losos-10-base
