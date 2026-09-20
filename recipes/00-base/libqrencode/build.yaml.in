@@ -43,11 +43,43 @@ steps:
 # on whitespace, so a multi-word flag string would arrive as separate arguments.
 # No CXX variables, because the project declares LANGUAGES C and cmake warns
 # about manually-specified variables it never used.
+# CMAKE_POLICY_DEFAULT_CMP0056=NEW is what makes the compiler work at all
+# here, and the failure without it names the wrong thing entirely:
+#
+#     -- Check for working C compiler: /usr/bin/clang - broken
+#     /usr/bin/ld: cannot find crtbeginS.o: No such file or directory
+#     /usr/bin/ld: cannot find -lgcc: No such file or directory
+#
+# which reads as a broken toolchain rather than as a dropped flag. CMP0056 is
+# "try_compile() honours CMAKE_EXE_LINKER_FLAGS", introduced in CMake 3.2, and
+# a project is given the OLD behaviour when its own cmake_minimum_required is
+# older than that. libqrencode's CMakeLists.txt:1 asks for 3.1.0, so every
+# try_compile -- including the compiler sanity check CMake runs before anything
+# else -- silently drops the linker flags we passed and links with the
+# defaults.
+#
+# That matters because --rtlib=compiler-rt, --unwindlib=libunwind and
+# -fuse-ld=mold live in the LDFLAGS response file and nowhere else. Without
+# them clang falls back to libgcc and the host ld, and neither the GCC runtime
+# nor its crt objects exist in this sysroot -- hence crtbeginS.o and -lgcc
+# rather than anything about qrencode. The probe is the only thing that fails;
+# the real build would have linked correctly, which is what makes this so easy
+# to misread.
+#
+# NEW rather than dropping the probe (CMAKE_TRY_COMPILE_TARGET_TYPE=
+# STATIC_LIBRARY, as compiler-rt does) because the flags here are correct and
+# should be tested. compiler-rt's case is a genuine bootstrap -- it is building
+# the runtime a link would need -- and this is not.
+#
+# The other cmake packages in this tree do not need it: libfido2 asks for 3.7
+# and the rest are at or above 3.2, so they already get NEW. Left per-recipe
+# rather than made global for that reason -- a tree-wide default would hide
+# which package actually has the old declaration.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libqrencode -B /build/b/libqrencode -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBQRENCODE@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DBUILD_SHARED_LIBS=ON -DWITH_TOOLS=NO -DWITH_TESTS=NO
+  - cmake -S /build/src/libqrencode -B /build/b/libqrencode -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBQRENCODE@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DBUILD_SHARED_LIBS=ON -DWITH_TOOLS=NO -DWITH_TESTS=NO
 
 - stage: Build
   name: compile

@@ -13,8 +13,31 @@
 #
 # A linker version script does NOT save a package here and must not be taken as
 # evidence that it is fine: -fvisibility=hidden writes STV_HIDDEN into the
-# object, and a `global:` list has nothing left to promote. libfido2 ships a
-# version script naming 267 symbols and exported zero.
+# object, and a `global:` list has nothing left to promote.
+#
+# libfido2 used to be cited here as the case -- "ships a version script naming
+# 267 symbols and exported zero" -- and that was the right outcome attached to
+# the wrong cause. Its CMake build passes no version script to the linker at
+# all: src/export.gnu is in the tarball, and neither CMakeLists.txt nor
+# src/CMakeLists.txt at 1.15.0 mentions it, --version-script, or LINK_FLAGS.
+# The empty table was -fvisibility=hidden by itself, which is what
+# drops: [visibility] fixed. So libfido2 says nothing about version scripts in
+# either direction, and the paragraph below is where the real ones are.
+#
+# THE OPPOSITE DIRECTION IS ALSO TRUE AND IS EASIER TO MISS. A version script
+# can DESTROY a symbol that was perfectly visible. Every one ending `local: *;`
+# -- which is most of them, since it is how a library says "export my API and
+# nothing else" -- localises __cfi_check along with everything else that is not
+# public API. That one is STV_DEFAULT even under -fvisibility=hidden, precisely
+# so cross-DSO CFI can find it, so a version script is the only thing that can
+# take it away. Losing it is silent and total: the runtime looks the name up in
+# DT_SYMTAB and, not finding it, marks the module's whole address range
+# unchecked.
+#
+# The two read alike and pull opposite ways: above, a version script is not
+# enough to rescue a symbol; here, it is enough to remove one. Hence the two
+# different messages below, and share/cfi-export.map, which is appended to
+# every link so the second case cannot happen quietly.
 #
 # Symbols are NAMED rather than counted. A count is satisfied by a library
 # exporting some other handful, and the symbols that matter are the ones the
