@@ -37,10 +37,12 @@ compiler:
   # so clang drives it the way it drives a gold-compatible linker -- asked to
   # print its link line, the driver adds `-plugin .../LLVMgold.so` and
   # `-plugin-opt=thinlto` with mold and adds neither with lld. LLVMgold.so is
-  # therefore load-bearing from here on, and Debian ships it in
-  # `llvm-N-linker-tools`, which `llvm-N-dev` does NOT depend on -- the
-  # Containerfile names it for that reason and nothing else. Without it the
-  # first link in the tree stops with
+  # therefore load-bearing from here on, and where it lives is a packaging
+  # decision rather than a fixed path: Arch ships it inside `llvm`, Debian
+  # splits it into `llvm-N-linker-tools`, which `llvm-N-dev` does NOT depend
+  # on. The Containerfile asks clang for it -- `clang -print-file-name=` is
+  # the same lookup the driver performs -- rather than asserting either
+  # layout. Without it the first link in the tree stops with
   #
   #     mold: fatal: could not open plugin file: .../LLVMgold.so
   #
@@ -325,9 +327,12 @@ exceptions:
       sysroot that already holds a libc and compiler-rt's crt objects.
 
       Dropping it means --unwindlib=none, which is not the same as leaving the
-      flag off: off means clang's build-time default, and the Containerfile's
-      clang defaults to libgcc even under --rtlib=compiler-rt. No sysroot here
-      has libgcc_s. tools/lib/toolchain.py carries the measurement.
+      flag off: off means clang's build-time default, and the clang this was
+      measured on defaults to libgcc even under --rtlib=compiler-rt. No
+      sysroot here has libgcc_s. Stating the flag is what makes the default
+      irrelevant, so this holds whatever the base's clang was built to prefer
+      -- which matters now that the base is Arch and pins no version.
+      tools/lib/toolchain.py carries the measurement.
 
       `stdlibxx` is the same argument one language over: most of libunwind is
       C++, cmake links it with clang++, and clang++ links libstdc++ by
@@ -364,8 +369,8 @@ exceptions:
       takes the checks away from a library every unit in the system feeds
       capability text to, and it does not have to. clang accepts this tree's
       whole scheme set with -fsanitize-cfi-cross-dso at -fvisibility=default;
-      what it refuses is -fvisibility= missing altogether. Checked on 19.1.1,
-      which is the Containerfile's, as well as on 18.1.3, which is not. So libcap keeps indirect-call checking and loses only the
+      what it refuses is -fvisibility= missing altogether. Checked on 19.1.1
+      and on 18.1.3. So libcap keeps indirect-call checking and loses only the
       guarantee that nothing interposes its exports at load time, which for a
       library that has been default-visible since 1999 is the status quo
       everywhere else rather than a new hole.

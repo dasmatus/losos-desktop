@@ -22,12 +22,8 @@
 #
 # __cfi_check earns a word, because it is easy to assert for the wrong reason.
 # It is present whenever CFI is on, at hidden and default visibility alike --
-# measured on clang 19.1.1 and on 18.1.3, with mold and with lld -- so on its
-# own it proves nothing about visibility. Neither of those numbers is the
-# container's: Containerfile:61 installs Debian trixie's LLVM 19, which is a
-# different patch release of the same series, and no measurement here has been
-# taken on it. Saying "19.1.1, the Containerfile's" is the error this file's
-# history already made once with 18.1.3, one series smaller.
+# measured on clang 19.1.1 and on 18.1.3 -- so on its
+# own it proves nothing about visibility.
 # What it does prove is that a `drops: [visibility]` exception kept the checks
 # instead of quietly losing them, which is the thing `drops: [cfi]` gives up.
 # So a package on the narrow exception should name it alongside its API: the

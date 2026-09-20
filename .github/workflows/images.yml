@@ -181,7 +181,19 @@ jobs:
   # `just container` passes the seccomp and AppArmor options pm's user
   # namespace needs; GitHub's runners allow both.
   container:
-    runs-on: ubuntu-24.04
+    # Both architectures, because the image no longer has one base. The
+    # Containerfile takes BASE_IMAGE and `tools/container` fills it from
+    # platform.machine(): Arch's own image on x86_64, Arch Linux ARM on
+    # aarch64, since Arch publishes no arm64 image. Two separate distributions
+    # with separate package sets, so an image proved on one says nothing about
+    # the other -- and the build job below runs on the runner rather than in
+    # this image, so nothing else in the workflow would ever build the arm64
+    # one. See docs/container.md.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with: { path: losos-desktop }
@@ -204,6 +216,32 @@ jobs:
       - name: Build the build host
         working-directory: losos-desktop
         run: just container build
+
+      # A build log that does not say which compiler produced it cannot be
+      # compared against another one, and this image's whole premise is that
+      # its toolchain floats: the pin that made two builds of the Debian base
+      # identical has no Arch equivalent, by decision. So every run reports
+      # them, where a reader comparing two failures can see whether the
+      # compiler moved between them.
+      #
+      # It is not hypothetical. kmod's configure probes -Wl,--no-undefined and
+      # answered `no` on the Debian base and `yes` here, from the same source
+      # and the same probe -- a difference that can only be the compiler, and
+      # one nobody could confirm afterwards because neither log said which
+      # compiler it was.
+      #
+      # Emitted as `::notice::` rather than plain output, the way the `pinned`
+      # job already reports. A notice is attached to the check run, so it can
+      # be read from the pull request and over the API without opening the log
+      # -- and this step sits between two long ones, so in the raw log it is
+      # tens of thousands of lines from either end.
+      - name: Say what the image's toolchain is
+        working-directory: losos-desktop
+        run: |
+          clang=$(just container-run -- clang --version | head -1)
+          llvm=$(just container-run -- llvm-config --version | head -1)
+          mold=$(just container-run -- mold --version | head -1)
+          echo "::notice title=Image toolchain (${{ matrix.runner }})::${clang} | LLVM ${llvm} | ${mold}"
 
       # Everything from here runs inside the image, including pm and the
       # plugin components: the point of this job is that the binary and the
