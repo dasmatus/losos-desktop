@@ -105,9 +105,7 @@ def check_entry(source, destination):
 
 
 def check_target_dir(target):
-    if target.exists() and not target.is_dir():
-        return fail(f"{target} already exists and is not a directory")
-    if target.is_symlink():
+    if target.is_symlink() or (target.exists() and not target.is_dir()):
         return fail(f"{target} already exists and is not a directory")
     return 0
 

@@ -350,6 +350,28 @@ def test_usr_merge_preflights_all_compat_paths(work, failures):
         print("  usrmerge preflights all compatibility paths before rewriting any of them")
 
 
+def test_usr_merge_rejects_symlinked_late_target(work, failures):
+    root = work / "root"
+    (root / "usr" / "bin").mkdir(parents=True)
+    (root / "usr" / "lib").mkdir(parents=True)
+    (root / "bin").mkdir()
+    (root / "usr" / "lib64").symlink_to("../missing-lib64")
+    (root / "usr" / "lib" / "os-release").write_text("ID=losos-desktop\n")
+
+    result = subprocess.run(
+        [sys.executable, str(IMAGE / "usr-merge.py"), str(root)],
+        check=False, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        failures.append("usr-merge: accepted a symlinked late compatibility target")
+    elif "usr/lib64 already exists and is not a directory" not in result.stderr:
+        failures.append("usr-merge: symlinked late compatibility target did not explain the preflight failure")
+    elif (root / "bin").is_symlink():
+        failures.append("usr-merge: symlinked late compatibility target should fail before rewriting earlier paths")
+    elif not failures:
+        print("  usrmerge rejects symlinked late compatibility targets before rewriting")
+
+
 def test_usr_merge_rejects_symlinked_etc(work, failures):
     root = work / "root"
     outside = work / "outside"
@@ -598,6 +620,9 @@ def main():
         usr_preflight_links = work / "usr-merge-preflight-links"
         usr_preflight_links.mkdir()
         test_usr_merge_preflights_all_compat_paths(usr_preflight_links, failures)
+        usr_late_target = work / "usr-merge-late-target"
+        usr_late_target.mkdir()
+        test_usr_merge_rejects_symlinked_late_target(usr_late_target, failures)
         usr_etc_link = work / "usr-merge-etc-link"
         usr_etc_link.mkdir()
         test_usr_merge_rejects_symlinked_etc(usr_etc_link, failures)
