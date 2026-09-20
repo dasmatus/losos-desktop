@@ -56,11 +56,14 @@
 #
 # __cfi_check earns a word, because it is easy to assert for the wrong reason.
 # It is present whenever CFI is on, at hidden and default visibility alike --
-# measured on clang 18.1.3, and repeated on 19.1.1 after it turned out that
-# 18.1.3 is a local sandbox's compiler and not the build's: the Containerfile
-# asks for LLVM_VERSION=19 and CI reports 19.1.7. Every measurement in this
-# file and in share/cfi-export.map held on both. So __cfi_check on its own
-# proves nothing about visibility.
+# measured on clang 18.1.3 and repeated on 19.1.1, and every measurement in
+# this file and in share/cfi-export.map held on both. The versions are written
+# down because they are what was MEASURED; no comment here names the
+# container's compiler, deliberately. That number has been 18.1.3, 19.1.7 and
+# 22.1.8 within a day, and a comment pinned to it is wrong the next time the
+# base image moves -- which is how three files came to name a compiler this
+# build has not used for months. So __cfi_check on its own proves nothing
+# about visibility.
 # What it does prove is that a `drops: [visibility]` exception kept the checks
 # instead of quietly losing them, which is the thing `drops: [cfi]` gives up.
 # So a package on the narrow exception should name it alongside its API: the

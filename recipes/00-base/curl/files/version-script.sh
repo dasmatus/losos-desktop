@@ -30,14 +30,25 @@
 #
 # because ltmain evals `$NM <objects> | $pipe` and the line ends in a bare `|`.
 #
-# The crash was first reproduced on clang 18.1.3, which is a local sandbox's
-# compiler and NOT this build's -- the Containerfile asks for LLVM_VERSION=19
-# and CI reports 19.1.7. That gap mattered enough to close, since this whole
-# recipe rests on the crash: it was reproduced again on 19.1.1 and still kills
-# the compiler. Worth one warning for whoever repeats it -- the translation
-# unit needs a CFI-relevant function in it as well as the
-# `extern char __cfi_check;`. The declaration alone compiles fine on both, so
-# the smallest possible test looks like the bug has been fixed.
+# The crash is confirmed on clang 18.1.3, 19.1.1 and 22.1.8 -- three majors
+# apart, and worth stating because this whole recipe rests on it and the
+# obvious hope is that a newer compiler has fixed it. It has not. At 22.1.8,
+# on a container base built from Arch, configure still printed
+#
+#     checking command to parse llvm-nm output from clang object... failed
+#
+# for both openssl and curl, and curl went on to build anyway -- which is this
+# script doing its job rather than the problem having gone away.
+#
+# That `failed` line is the cheapest way to check the state of this on any new
+# toolchain: it is in the build log of every autotools package, and it needs no
+# artifact, no successful link and no nm. Two warnings for whoever reproduces
+# the crash itself instead. The translation unit needs a CFI-relevant function
+# in it as well as the `extern char __cfi_check;` -- the declaration alone
+# compiles fine -- so the smallest possible test looks like the bug is fixed.
+# And none of these numbers is the container's compiler, deliberately: that has
+# been three different values in a day, so a comment naming it is wrong by the
+# next base image and a comment naming what was measured never is.
 #
 # So the recipe passes --enable-versioned-symbols and takes the `if` branch,
 # where libtool hands a finished version script to the linker and never reads a
