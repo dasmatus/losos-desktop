@@ -278,6 +278,14 @@ def main():
             parser.error("--prebuilt-packages must name the final package layer archive")
         if not prebuilt.is_file() or prebuilt.stat().st_size == 0:
             parser.error("--prebuilt-packages must be a non-empty archive")
+        # The image-host fallback mounts the repository, not an arbitrary
+        # caller's download directory. Remember a durable, mounted copy so its
+        # inner configure can regenerate after the original input disappears.
+        managed = out / "pkgs" / prebuilt.name
+        if prebuilt != managed:
+            managed.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(prebuilt, managed)
+        prebuilt = managed
     if recipes_out.exists():
         shutil.rmtree(recipes_out)
     recipes_out.mkdir(parents=True)

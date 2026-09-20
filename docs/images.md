@@ -152,6 +152,8 @@ artifact from the same workflow run, not a cache or an earlier build.
 
 `tools/configure --prebuilt-packages <archive>` stages that trusted closure
 beside the image recipe and copies it into `/dest/deps` before unpacking.
+External inputs are first imported into `out/pkgs`, which remains available
+inside the container fallback even if the original download is removed.
 Only the image's dependency edge is removed, so pm assembles the system without
 compiling the packages again. The option is remembered across `just build`'s
 regeneration and container fallback. The archive must be outside `out/recipes`,
@@ -165,11 +167,22 @@ sources, package compilation, assembly, boot verification and OTA verification
 to succeed. A skipped image build is not sufficient for automerge.
 After a successful pull-request `images` run, `automerge.yml` checks that the
 pull request is still open, ready for review, targets `main`, and has the
-tested head commit before requesting GitHub's native squash automerge. It
-never checks out or executes pull-request code with its write token.
+tested head commit before requesting a squash merge through GitHub.
+Only same-repository branches qualify; forks and changes under `.github/`
+require manual review and merging, so a pull request cannot rewrite its
+workflow to authorize its own merge. The handler never checks out or executes
+pull-request code with its write token.
 
-Repository administrators must enable **Allow auto-merge** and **Squash
-merging** in Settings → General. Protect `main` with the required **ci** check
-and any required reviews or additional checks; native automerge respects those
-requirements. The completion workflow must first land on the default branch
-to receive `workflow_run` events.
+Repository administrators must enable **Squash merging** in Settings → General.
+Protect `main` with the required **ci** check and any required reviews or
+additional checks. The handler merges only when GitHub reports the head ready
+to merge, without bypassing protection. If reviews or other checks are still
+pending, rerun `images` after they are satisfied. It deliberately does not
+enable persistent auto-merge: that enrollment could survive a later push that
+changes workflows and no longer qualifies. The completion workflow must first
+land on the default branch to receive `workflow_run` events.
+
+Merges made with `GITHUB_TOKEN` do not trigger `push` workflows. After a
+successful merge the handler explicitly dispatches `images` on `main`, keeping
+post-merge image publishing intact. Its job-local Actions write permission is
+needed for that dispatch; package and assembly jobs remain read-only.

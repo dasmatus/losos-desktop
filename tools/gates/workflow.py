@@ -174,15 +174,19 @@ def check_automerge(doc):
         if required not in condition:
             failures.append(f"automerge.yml: merge must require {required}")
     permissions = merge.get("permissions") or {}
-    if permissions.get("actions") != "read":
-        failures.append("automerge.yml: merge needs actions: read to inspect its triggering run")
+    if permissions.get("actions") != "write":
+        failures.append("automerge.yml: merge needs actions: write to dispatch post-merge images")
     steps = merge.get("steps") or []
     if any(step.get("uses") for step in steps):
         failures.append("automerge.yml: the privileged handler must not check out or download code")
     commands = "\n".join(str(step.get("run", "")) for step in steps)
-    for required in ("--auto", "--squash", "--match-head-commit", ".head.sha == $sha"):
+    for required in ("--squash", "--match-head-commit", ".head.sha == $sha",
+                     "gh workflow run images.yml",
+                     ".head.repo.full_name == $repo", 'startswith(".github/")'):
         if required not in commands:
             failures.append(f"automerge.yml: missing native current-head merge guard {required}")
+    if "--auto" in commands or "--admin" in commands:
+        failures.append("automerge.yml: do not authorize later revisions or bypass protection")
     return failures
 
 

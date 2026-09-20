@@ -46,21 +46,25 @@ def main():
         staged = out / "recipes" / image / archive.name
         assert staged.read_bytes() == archive.read_bytes()
         remembered = (out / "configure.args").read_text().splitlines()
-        assert f"--prebuilt-packages={archive}" in remembered
+        managed = out / "pkgs" / archive.name
+        assert f"--prebuilt-packages={managed}" in remembered
         assert "--arch=aarch64" in remembered
         assert "--version=20260920.1" in remembered
+        # The source may have been downloaded outside the container mount.
+        # Replay must use the imported copy, not depend on that original path.
+        archive.unlink()
         configure(*remembered)
         assert recipe(image) == assembled
-        assert staged.read_bytes() == archive.read_bytes()
+        assert staged.read_bytes() == managed.read_bytes()
 
         # An input in the disposable tree must fail BEFORE configure deletes it.
         configure("--allow-unresolved", "--prebuilt-packages", str(staged), success=False)
         assert staged.exists()
         configure("--allow-unresolved", "--prebuilt-packages",
                   str(work / "wrong.cpkg"), success=False)
-        archive.unlink()
+        managed.unlink()
         configure(*remembered, success=False)
-        archive.touch()
+        managed.touch()
         configure(*remembered, success=False)
         configure("--allow-unresolved")
         assert recipe(image) == original[image]
