@@ -13,42 +13,8 @@
 #
 # A linker version script does NOT save a package here and must not be taken as
 # evidence that it is fine: -fvisibility=hidden writes STV_HIDDEN into the
-# object, and a `global:` list has nothing left to promote.
-#
-# libfido2 is the case, and it is a real one: src/export.gnu names 267 symbols
-# and the library exported none of them. The script is genuinely wired up --
-# CMakeLists.txt:361-368 at the 1.15.0 tag appends
-# -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/export.gnu to
-# CMAKE_SHARED_LINKER_FLAGS, three conditionals deep in the top-level file and
-# never as a target property, so grepping src/CMakeLists.txt for --version-script
-# or LINK_FLAGS finds nothing and reads as proof the script is unused. It is
-# used. The linker was handed 267 names that -fvisibility=hidden had already
-# made STV_HIDDEN and promoted not one of them, which is the paragraph above
-# rather than a build that forgot its own export list. drops: [visibility] is
-# what fixed it.
-#
-# THE OPPOSITE DIRECTION IS ALSO TRUE AND IS EASIER TO MISS. A version script
-# can DESTROY a symbol that was perfectly visible. Every one ending `local: *;`
-# -- which is most of them, since it is how a library says "export my API and
-# nothing else" -- localises __cfi_check along with everything else that is not
-# public API. That one is STV_DEFAULT even under -fvisibility=hidden, precisely
-# so cross-DSO CFI can find it, so a version script is the only thing that can
-# take it away. Losing it is silent and total: the runtime looks the name up in
-# DT_SYMTAB and, not finding it, marks the module's whole address range
-# unchecked.
-#
-# The two read alike and pull opposite ways: above, a version script is not
-# enough to rescue a symbol; here, it is enough to remove one. Hence the two
-# different messages below, and share/cfi-export.map, which is appended to
-# every link so the second case cannot happen quietly.
-#
-# libfido2 is in both classes at once, which is worth saying because fixing one
-# leaves a library that passes the other's test. Hidden visibility came first
-# and emptied the table wholesale, API and all. drops: [visibility] gives the
-# API back -- and hands the version script real symbols to filter, at which
-# point `local: *;` at the end of src/export.gnu takes __cfi_check away
-# instead. So share/cfi-export.map is load-bearing for libfido2 itself, not
-# only for the packages whose dynamic tables were never empty to begin with.
+# object, and a `global:` list has nothing left to promote. libfido2 ships a
+# version script naming 267 symbols and exported zero.
 #
 # Symbols are NAMED rather than counted. A count is satisfied by a library
 # exporting some other handful, and the symbols that matter are the ones the
@@ -56,14 +22,8 @@
 #
 # __cfi_check earns a word, because it is easy to assert for the wrong reason.
 # It is present whenever CFI is on, at hidden and default visibility alike --
-# measured on clang 18.1.3 and repeated on 19.1.1, and every measurement in
-# this file and in share/cfi-export.map held on both. The versions are written
-# down because they are what was MEASURED; no comment here names the
-# container's compiler, deliberately. That number has been 18.1.3, 19.1.7 and
-# 22.1.8 within a day, and a comment pinned to it is wrong the next time the
-# base image moves -- which is how three files came to name a compiler this
-# build has not used for months. So __cfi_check on its own proves nothing
-# about visibility.
+# measured on clang 19.1.1 and on 18.1.3 -- so on its
+# own it proves nothing about visibility.
 # What it does prove is that a `drops: [visibility]` exception kept the checks
 # instead of quietly losing them, which is the thing `drops: [cfi]` gives up.
 # So a package on the narrow exception should name it alongside its API: the

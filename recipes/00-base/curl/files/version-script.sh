@@ -30,26 +30,6 @@
 #
 # because ltmain evals `$NM <objects> | $pipe` and the line ends in a bare `|`.
 #
-# The crash is confirmed on clang 18.1.3, 19.1.1 and 22.1.8 -- three majors
-# apart, and worth stating because this whole recipe rests on it and the
-# obvious hope is that a newer compiler has fixed it. It has not. At 22.1.8,
-# on a container base built from Arch, configure still printed
-#
-#     checking command to parse llvm-nm output from clang object... failed
-#
-# for both openssl and curl, and curl went on to build anyway -- which is this
-# script doing its job rather than the problem having gone away.
-#
-# That `failed` line is the cheapest way to check the state of this on any new
-# toolchain: it is in the build log of every autotools package, and it needs no
-# artifact, no successful link and no nm. Two warnings for whoever reproduces
-# the crash itself instead. The translation unit needs a CFI-relevant function
-# in it as well as the `extern char __cfi_check;` -- the declaration alone
-# compiles fine -- so the smallest possible test looks like the bug is fixed.
-# And none of these numbers is the container's compiler, deliberately: that has
-# been three different values in a day, so a comment naming it is wrong by the
-# next base image and a comment naming what was measured never is.
-#
 # So the recipe passes --enable-versioned-symbols and takes the `if` branch,
 # where libtool hands a finished version script to the linker and never reads a
 # symbol itself. That is also what every mainstream distribution builds curl
@@ -77,8 +57,7 @@
 #
 # Promoting it works because __cfi_check is not hidden to begin with. clang
 # emits it at default visibility whether or not -fvisibility=hidden is in the
-# flags (measured on clang 18.1.3 and again on 19.1.1, the second for the
-# reason given above; recorded in share/check-exports.sh),
+# flags (measured on clang 18.1.3, and recorded in share/check-exports.sh),
 # precisely so cross-DSO dispatch can find it. A version script can promote a
 # STV_DEFAULT symbol; it could not have rescued a hidden one.
 #

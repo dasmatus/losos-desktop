@@ -66,6 +66,42 @@ steps:
 # the real build would have linked correctly, which is what makes this so easy
 # to misread.
 #
+#
+# CMAKE_POLICY_VERSION_MINIMUM=3.5 is a third thing the same line 1 causes, and
+# it appeared only when the build host became Arch. CMake 4 removed
+# compatibility with pre-3.5 policy versions outright, so a `project()` whose
+# cmake_minimum_required asks for less is now an error rather than a
+# deprecation warning:
+#
+#     CMake Error at CMakeLists.txt:1 (cmake_minimum_required):
+#       Compatibility with CMake < 3.5 has been removed from CMake.
+#
+# Debian trixie's CMake 3.31 still accepted it, which is why this tree carried
+# the recipe for months without noticing. The variable is CMake's own suggested
+# remedy and its documentation gives it as `versionadded:: 4.0`, so on a CMake
+# 3.x it is an unused cache variable, reported as such and otherwise ignored.
+# That report is the same "Manually-specified variables were not used by the
+# project" warning this recipe avoids two paragraphs up by not passing CXX
+# variables -- accepted here rather than avoided, because the alternative is a
+# recipe that only configures on one of the two bases.
+#
+# THE TWO POLICY FLAGS ON THIS LINE ARE NOT REDUNDANT, and dropping either
+# breaks one of the two bases. CMAKE_POLICY_VERSION_MINIMUM sets a minimum
+# *policy version*, and a policy version of 3.5 makes every policy introduced
+# at or below it NEW -- CMP0056 arrived in 3.2, so on CMake 4 the floor flag
+# already covers it and CMAKE_POLICY_DEFAULT_CMP0056 changes nothing. On a
+# CMake 3.x it is the reverse: the floor flag does not exist yet and is
+# ignored, and CMAKE_POLICY_DEFAULT_CMP0056 is the only thing making
+# try_compile keep the linker flags. Each flag is load-bearing on exactly the
+# base the other is inert on. Stated from CMake's documented behaviour of
+# cmake_minimum_required rather than from watching a --trace-expand, which is
+# worth doing if anyone wants to tidy this.
+#
+# The same two recipes need it as need CMP0056, and for once that is not a
+# coincidence: 3.5 is above 3.2, so anything already below the CMP0056 floor is
+# below this one too. libcbor's recipe carries that sweep; compiler-rt and
+# libunwind ask for 3.20 and were not in it.
+#
 # NEW rather than dropping the probe (CMAKE_TRY_COMPILE_TARGET_TYPE=
 # STATIC_LIBRARY, as compiler-rt does) because the flags here are correct and
 # should be tested. compiler-rt's case is a genuine bootstrap -- it is building
@@ -79,7 +115,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libqrencode -B /build/b/libqrencode -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBQRENCODE@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DBUILD_SHARED_LIBS=ON -DWITH_TOOLS=NO -DWITH_TESTS=NO
+  - cmake -S /build/src/libqrencode -B /build/b/libqrencode -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBQRENCODE@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DWITH_TOOLS=NO -DWITH_TESTS=NO
 
 - stage: Build
   name: compile

@@ -29,6 +29,15 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# The flags are this package's own response files, not the layer's shared
+# pair, and naming them is the entire mechanism: manifest/toolchain.yaml
+# gives linux-pam `drops: [visibility]`, tools/configure writes
+# cflags-linux-pam.rsp for it either way, and a recipe left spelling
+# @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
+# read by nothing. Without it libpam installs empty and systemd's own
+# PAM support is the first thing to say so.
+#
 # --disable-doc is load-bearing beyond the documentation, and the reason is
 # not local to this recipe. linux-pam is the third spelling in this tree of
 # the build-machine-compiler problem that libgpg-error and nettle carry:
@@ -48,13 +57,6 @@ steps:
   name: configure
   dl_urls: null
   run:
-# The flags are this package's own response files, not the layer's shared
-# pair, and naming them is the entire mechanism: manifest/toolchain.yaml
-# gives linux-pam `drops: [visibility]`, tools/configure writes
-# cflags-linux-pam.rsp for it either way, and a recipe left spelling
-# @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
-# read by nothing. Without it libpam installs empty and systemd's own
-# PAM support is the first thing to say so.
   - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doc
 
 - stage: Build

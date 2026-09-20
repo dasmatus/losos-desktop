@@ -99,11 +99,17 @@ class Toolchain:
         Dropping it emits `--unwindlib=none`, not nothing. Those are different
         instructions and the difference is the whole reason this line is
         written out rather than skipped: omitting the flag does not mean "no
-        unwinder", it means clang's build-time default, and the clang in the
-        Containerfile -- Ubuntu's 18.1.3 (1ubuntu1) -- defaults to libgcc even
-        under --rtlib=compiler-rt. Upstream clang returns UNW_None for
-        compiler-rt on linux-musl, so the reasoning in manifest/toolchain.yaml
-        holds against an unpatched compiler; Ubuntu's patch is what breaks it.
+        unwinder", it means clang's build-time default, and the clang this was
+        found on -- Debian trixie's LLVM 19, which the Containerfile carried
+        before the base became Arch -- defaults to libgcc even under
+        --rtlib=compiler-rt. Writing the flag out is what makes that
+        irrelevant, so the line stays correct on the Arch base whether or not
+        its clang carries the same patch. Upstream clang returns
+        UNW_None for compiler-rt on linux-musl, so the reasoning in
+        manifest/toolchain.yaml holds against an unpatched compiler; the
+        distribution patch is what breaks it. Debian's 19 and Ubuntu's 18.1.3
+        behave identically here, which is why this went unnoticed while the
+        comment named the wrong one.
 
         Measured by asking the driver to print its link command on that exact
         compiler: with the flag omitted, two "-lgcc_s"; with --unwindlib=none,
@@ -199,8 +205,11 @@ class Toolchain:
         #     with '-fvisibility='
         #
         # while accepting every scheme this tree enables, cross-DSO included,
-        # at -fvisibility=default. Measured on clang 18.1.3, which is what the
-        # Containerfile and the runners both carry. So hidden is a security
+        # at -fvisibility=default. Measured on clang 18.1.3 and repeated on
+        # 19.1.1. Deliberately no machine: this comment named 18 as "the
+        # container's" for several commits before anyone checked, then 19, and
+        # the Arch base moved it to 22 within the hour. The measurement is the
+        # durable part. So hidden is a security
         # choice here and not a compiler requirement: what CFI needs is for the
         # value to be *stated*, and what it loses at `default` is the guarantee
         # that no exported symbol is interposed at load time by something it

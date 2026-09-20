@@ -29,10 +29,7 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
-- stage: Build
-  name: configure
-  dl_urls: null
-  run:
+#
 # The flags are this package's own response files, not the layer's shared
 # pair, and naming them is the entire mechanism: manifest/toolchain.yaml
 # gives tpm2-tss `drops: [visibility]`, tools/configure writes
@@ -40,7 +37,39 @@ steps:
 # @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
 # read by nothing. Without it libtss2-esys installs empty and every TPM2
 # feature above this layer is the first thing to say so.
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_TPM2_TSS@ LDFLAGS=@LDFLAGS_RSP_TPM2_TSS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doxygen-doc
+#
+# --disable-defaultflags turns off the block at configure.ac:613-638, and it is
+# here for one line inside it: ADD_LINK_FLAG([-Wl,--no-undefined]) at :634.
+# EXTRA_LDFLAGS is AM_LDFLAGS (Makefile.am:13) and every libtss2-*.la link
+# names it, so that flag reaches libtss2-sys, -esys and -fapi alike -- and
+# cross-DSO CFI in diagnose mode leaves __cfi_slowpath_diag and
+# __ubsan_handle_cfi_check_fail undefined in every shared object this tree
+# builds, by design. It is openssl's failure again, from a package's own build
+# system rather than from ours, and the flag has no switch narrower than the
+# block.
+#
+# Nothing is lost by turning the block off, because this tree already sets
+# everything in it and sets most of it harder. Checked against the generated
+# response files rather than assumed: -O2, -fPIC and all three of
+# -Wl,-z,{relro,now,noexecstack} are already there verbatim;
+# -fstack-protector-all is answered by -fstack-protector-strong with
+# -fstack-clash-protection beside it, and AX_ADD_FORTIFY_SOURCE's
+# _FORTIFY_SOURCE=2 by _FORTIFY_SOURCE=3. What is genuinely dropped is the
+# warning set (-Wall, -Wextra, -Wformat-security, -Wstrict-overflow=5) and
+# -std=c99, none of which changes the artifact -- and clang's default gnu17 is
+# a superset of c99, so code that compiled under the stricter one compiles
+# under it.
+#
+# The probe cannot be made to answer no from outside. AX_CHECK_LINK_FLAG links
+# a trivial EXECUTABLE, and an executable link is exactly where clang does put
+# libclang_rt.cfi_diag, so -Wl,--no-undefined succeeds there and is added --
+# then fails on the first library. A flag that only breaks what the probe does
+# not build is a flag the probe cannot reject.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/tpm2-tss /build/src/tpm2-tss/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_TPM2_TSS@ LDFLAGS=@LDFLAGS_RSP_TPM2_TSS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doxygen-doc --disable-defaultflags
 
 - stage: Build
   name: compile
@@ -58,9 +87,44 @@ steps:
   - make -C /build/b/tpm2-tss install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# This package installs eleven libraries and systemd opens FOUR of them, so a
+# check on libtss2-esys alone covers a quarter of what the image needs. It
+# does not link any of them: src/shared/tpm2-util.c dlopens each by SONAME and
+# resolves the rest with dlsym -- libtss2-esys.so.0 with 43 symbols at :130,
+# libtss2-rc.so.0 with Tss2_RC_Decode at :192, libtss2-mu.so.0 with 20
+# marshalling symbols at :202. Read at v261, which for systemd is the pinned
+# bytes, since sources.lock pins a tag archive and the tag and the tarball are
+# the same tree.
+#
+# So nothing in this tree links these libraries, no link can fail, and three
+# of the four could ship with empty symbol tables through a green build and a
+# green image. The first symptom would be a machine that cannot unseal its own
+# disk. That is the same trap as libcryptsetup and it is four times over here.
+#
+# The SONAMEs are tested as well as the development symlinks because the
+# SONAME is what systemd passes to dlopen; a library installed without its
+# versioned name is invisible to it. All four are .so.0 -- mu and esys from
+# `-version-info 0:1:0` at Makefile.am:273 and :599, rc and tcti-device from
+# libtool's 0:0:0 default, neither naming -version-info at all.
+#
+# libtss2-tcti-device is the one whose symbols systemd does not resolve
+# itself: :233 opens it with dlopen_verbose and the comment says it loads the
+# library without asking for anything. Tss2_Tcti_Info is still what makes it
+# usable, because libtss2-tctildr is what looks that up by name once the file
+# is open, so it is checked here rather than assumed.
+#
+# __cfi_check on each line is what says the exemption kept the CFI schemes
+# rather than trading them away.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libtss2-esys.so
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-esys.so Esys_Initialize Esys_Finalize Esys_Startup Esys_GetRandom
+  - test -e /dest/usr/lib/libtss2-esys.so.0
+  - test -e /dest/usr/lib/libtss2-mu.so.0
+  - test -e /dest/usr/lib/libtss2-rc.so.0
+  - test -e /dest/usr/lib/libtss2-tcti-device.so.0
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-esys.so Esys_Initialize Esys_Finalize Esys_Startup Esys_GetRandom Esys_Unseal Esys_PolicyPCR __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-mu.so Tss2_MU_TPM2B_PUBLIC_Marshal Tss2_MU_TPM2B_PUBLIC_Unmarshal Tss2_MU_TPM2B_PRIVATE_Unmarshal Tss2_MU_TPML_PCR_SELECTION_Marshal __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-rc.so Tss2_RC_Decode __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libtss2-tcti-device.so Tss2_Tcti_Device_Init Tss2_Tcti_Info __cfi_check

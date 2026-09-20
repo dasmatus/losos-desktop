@@ -17,7 +17,24 @@
 #
 # Upstream version scripts end `local: *;` as a matter of course, and
 # __cfi_check is not part of anybody's public API, so it is exactly what
-# `local: *;` is for. Measured on clang 18.1.3 with mold and with lld: a
+# `local: *;` is for. Measured on clang 18.1.3 and on 19.1.1, with mold and
+# with lld in both cases. Neither number is a machine: version scripts do not
+# care which image the compiler came from, and a comment naming the container's
+# clang goes stale the next time the base moves -- this one did, by three
+# majors, when the base became Arch.
+#
+# The mechanism underneath is the libtool symbol-pipe crash, and it does not
+# get better with a newer compiler. It still reproduces on the Arch base's
+# clang 22.1.8: configure prints `checking command to parse .../llvm-nm output
+# from .../clang object... failed` for every autotools package there, as it
+# does at 18 and 19. That is the reassuring answer rather than the alarming
+# one. A clang that stopped crashing would be worse, because libtool would
+# then succeed and build its OWN version script ending `local: *;`, stripping
+# __cfi_check exactly as a shipped one does -- turning a loud failure into a
+# silent one and making this file the only thing standing between the tree and
+# quietly unchecked libraries. Three majors apart, three times, it crashes.
+#
+# What was measured: a
 # library built with cross-DSO CFI and linked with a `global: api_*; local: *;`
 # script exports no __cfi_check at all. That is most of the version scripts in
 # this tree -- tpm2-tss ships one per library, and cryptsetup, linux-pam,

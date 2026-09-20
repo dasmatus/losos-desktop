@@ -112,6 +112,48 @@ b_lto           = false
 # openssl's flag and not one of ours -- and openssl already drops that flag
 # for sanitizer builds, which the response file is what hides from it.
 #
+# So the rest of the tree was swept for it rather than waited on. Two more:
+# tpm2-tss adds -Wl,--no-undefined at configure.ac:634, into the AM_LDFLAGS
+# every libtss2-*.so link names, and kmod adds the same flag at
+# configure.ac:296 through a CC_CHECK_FLAGS_APPEND probe. Each recipe takes it
+# off its own way, and each says how at the point of use.
+#
+# The first pass of that sweep got its scope wrong, which is worth keeping
+# because the mistake is easy to repeat. It covered only the members the build
+# had not yet reached, on the reasoning that anything already compiled was
+# proven -- and kmod had compiled. That was proof about the OLD build
+# container. kmod's flag comes from a probe that REPLACES the variable it is
+# testing (m4/attributes.m4:12-24), so an LDFLAGS probe links without
+# -fuse-ld=mold, --rtlib=compiler-rt or --unwindlib=libunwind while a CFLAGS
+# probe keeps all three -- which is why fourteen CFLAGS probes answered yes
+# and then all three LDFLAGS probes answered no together. On the old base that
+# link failed and configure appended nothing, so kmod built with none of the
+# flags its own build system asked for and looked exactly like a package that
+# had been proven. So a package that compiled is evidence about the container
+# it compiled in, and a probed flag makes that distinction load-bearing.
+#
+# Everything else is clear, read at the pinned version: zlib, xz, zstd, lz4,
+# libffi, pcre2, expat, libseccomp, curl, libmicrohttpd, libqrencode,
+# libgpg-error, libgcrypt, json-c, popt, cryptsetup, libcbor, libfido2,
+# nettle, libtasn1, libarchive, libbpf, gnutls, libpwquality, libpng,
+# libjpeg-turbo, libusb, sqlite and xdg-desktop-portal.
+#
+# libxcrypt asks for the flag too -- configure.ac:164-184 probes -Wl,-z,defs
+# and then -Wl,--no-undefined and puts whichever works into libcrypt_la_LDFLAGS
+# at Makefile.am:164 -- and needs nothing, for a reason that is luck rather
+# than design: its exception is `drops: [cfi, lto]`, so its objects carry no
+# CFI calls for the flag to catch. It is the one package here whose exemption
+# happens to immunise it against this. If that entry is ever narrowed to
+# `[lto]`, libxcrypt joins this list the same day.
+#
+# linux-pam and libarchive look like the class and are not, which is the part
+# worth writing down: both pass libtool's -no-undefined, on every PAM module
+# and on libarchive itself. That is a declaration and not a flag. ltmain.sh
+# turns it into allow_undefined_flag=$no_undefined_flag, and configure sets
+# no_undefined_flag only under solaris*, aix and sysv -- on linux-gnu it is
+# empty, so the whole thing expands to nothing. Grepping for the string finds
+# them; only reading what libtool does with it says they are safe.
+#
 # The shared ldflags do carry
 # -Wl,-z,now, which is the opposite kind of switch -- it moves resolution
 # from first call to load -- and that is the one that decides whether the

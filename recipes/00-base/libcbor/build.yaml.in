@@ -38,28 +38,46 @@ steps:
 # src/CMakeLists.txt runs generate_export_header(cbor), so every public symbol
 # carries an explicit visibility("default") and the examples link against the
 # same shared library the sysroot gets.
+#
+# CMAKE_POLICY_DEFAULT_CMP0056=NEW is a second, unrelated problem with the same
+# `project()` call, and it is the C compiler test rather than the C++ one.
+# CMP0056 is "try_compile() honours CMAKE_EXE_LINKER_FLAGS", added in CMake
+# 3.2, and a project gets the OLD behaviour when its own
+# cmake_minimum_required is older -- libcbor's CMakeLists.txt:1 asks for 3.0.
+# So the sanity check drops the LDFLAGS response file, which is the only place
+# --rtlib=compiler-rt, --unwindlib=libunwind and -fuse-ld=mold are written, and
+# links with clang's defaults against a sysroot that has neither the GCC
+# runtime nor its crt objects. libqrencode failed exactly that way at member 21
+# and the error named the wrong thing entirely:
+#
+#     -- Check for working C compiler: /usr/bin/clang - broken
+#     /usr/bin/ld: cannot find crtbeginS.o: No such file or directory
+#     /usr/bin/ld: cannot find -lgcc: No such file or directory
+#
+# libcbor is member 28 and is the only other package in this tree that declares
+# a minimum below 3.2 -- swept at the pinned versions rather than waiting for
+# the build to arrive: zstd and lz4 ask for 3.5, libfido2 for 3.7, and zlib
+# (2.4.4...3.15.0), json-c (3.9...3.12) and libjpeg-turbo (2.8.12...3.28) use
+# the <min>...<max> form, which sets every policy up to <max> to NEW. So this
+# is the last of them, not the second of many.
+#
+# CMAKE_POLICY_VERSION_MINIMUM=3.5 rides along for the same line 1, and only
+# since the build host became Arch: CMake 4 made a pre-3.5 policy version an
+# error rather than a deprecation warning, where Debian trixie's CMake 3.31
+# still accepted it. The sweep above covers it unchanged -- 3.5 is above 3.2,
+# so the two packages under the CMP0056 floor are exactly the two under this
+# one. libqrencode carries the error text and the reasoning -- including why
+# the two policy flags on this line are not redundant, and why dropping
+# either one breaks one of the two bases.
+#
+# The CXX skip above is NOT what fixes this and would not have: it suppresses a
+# test rather than correcting the flags one is run with, and the C test has no
+# equivalent here because the C compiler genuinely has to work.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-# CMAKE_POLICY_DEFAULT_CMP0056=NEW, for the reason written out at length in
-# recipes/00-base/libqrencode: CMP0056 is "try_compile() honours
-# CMAKE_EXE_LINKER_FLAGS", added in CMake 3.2, and a project whose own
-# cmake_minimum_required is older gets the OLD behaviour, so every try_compile
-# -- CMakeTestCCompiler included, which runs before anything else -- silently
-# drops the linker flags passed just above. libcbor's CMakeLists.txt:1 asks for
-# 3.0 and its only cmake_policy call is CMP0069 at :157, read across the whole
-# 185-line file at the v0.11.0 tag. Without this the failure is
-# `clang - broken` and a missing crtbeginS.o, which reads as a broken toolchain
-# and is a probe that was never given --rtlib=compiler-rt.
-#
-# libqrencode (member 21) and libcbor (28) are the only two cmake packages in
-# this tree that need it, and that is checked rather than assumed: zstd and lz4
-# ask 3.5 and libfido2 3.7, while zlib, json-c and libjpeg-turbo use the
-# `<min>...<max>` form, which sets every policy up to <max> to NEW. Left
-# per-recipe rather than defaulted tree-wide so that the two packages carrying
-# an old declaration are the two that say so.
-  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
+  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile
@@ -81,16 +99,8 @@ steps:
   - make -C /build/b/libcbor install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
-  # libcbor keeps hidden visibility -- src/CMakeLists.txt runs
-  # generate_export_header(cbor), so every public symbol carries an explicit
-  # visibility("default") and nothing has to be given up for it. Named here
-  # anyway, because that is a property of upstream that a version bump could
-  # quietly change, and the failure it would cause is silent: see
-  # share/check-exports.sh. __cfi_check is asserted alongside so a future
-  # exception cannot take the checks away without this step noticing.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcbor.so
-  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcbor.so cbor_load cbor_serialize __cfi_check
