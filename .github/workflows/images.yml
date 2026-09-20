@@ -217,6 +217,25 @@ jobs:
         working-directory: losos-desktop
         run: just container build
 
+      # A build log that does not say which compiler produced it cannot be
+      # compared against another one, and this image's whole premise is that
+      # its toolchain floats: the pin that made two builds of the Debian base
+      # identical has no Arch equivalent, by decision. So the versions go in
+      # the log of every run, where a reader comparing two failures can see
+      # whether the compiler moved between them.
+      #
+      # It is not hypothetical. kmod's configure probes -Wl,--no-undefined and
+      # answered `no` on the Debian base and `yes` here, from the same source
+      # and the same probe -- a difference that can only be the compiler, and
+      # one nobody could confirm afterwards because neither log said which
+      # compiler it was.
+      - name: Say what the image's toolchain is
+        working-directory: losos-desktop
+        run: |
+          just container-run -- clang --version
+          just container-run -- llvm-config --version
+          just container-run -- mold --version
+
       # Everything from here runs inside the image, including pm and the
       # plugin components: the point of this job is that the binary and the
       # components the gate uses are the ones a developer following
