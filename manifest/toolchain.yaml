@@ -414,8 +414,11 @@ exceptions:
       Bare declarations and libp11-kit.map. It is also the reason meson
       exemptions had to work at all: p11-kit is a meson build, it has no
       CFLAGS= argument to name a response file on, and so it names
-      @NATIVE_INI_P11_KIT@ instead. gnutls links it directly, which is where
-      an empty one would have surfaced.
+      @CROSS_INI_P11_KIT@ instead. The *cross* file and not the native one,
+      because share/native.ini.in carries no flags at all -- it describes the
+      build machine, whose compiler must stay at the host's defaults -- so a
+      per-package copy of it would have nothing in it to drop. gnutls links
+      p11-kit directly, which is where an empty one would have surfaced.
   - package: libpwquality
     drops: [visibility]
     why: >
@@ -496,7 +499,7 @@ exceptions:
       empty libharfbuzz would surface three packages later as a text-shaping
       failure with no obvious cause.
 
-      A meson build, so it names @NATIVE_INI_HARFBUZZ@ rather than a response
+      A meson build, so it names @CROSS_INI_HARFBUZZ@ rather than a response
       file -- see p11-kit for why that is the only way.
   - package: libpng
     drops: [visibility]
