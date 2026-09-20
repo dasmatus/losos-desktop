@@ -19,11 +19,18 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_GNOME_SESSION@ --no-same-owner -C /build/src/gnome-session --strip-components=1
 
+# gnome-session 47 has six options and neither -Dsystemd_session nor
+# -Dsystemd_journal is among them: the systemd session is what gnome-session
+# now is, rather than something to turn on. What is left of that intent is
+# -Dsystemduserunitdir, which says where the units go.
+#
+# -Dx11=false for the same reason as gdm: it defaults true, and this tree has
+# no X11 for it to find except the build host's (C7).
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-session /build/src/gnome-session --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dsystemd_session=enabled -Dsystemd_journal=true -Ddocbook=false
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gnome-session /build/src/gnome-session --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Ddocbook=false -Dx11=false -Dsystemduserunitdir=/usr/lib/systemd/user
 
 - stage: Build
   name: compile

@@ -348,6 +348,48 @@ honest count after real build attempts should be expected to land well above the
 because this OS runs `systemd-networkd` rather than NetworkManager. That trade
 is deliberate — one network stack, already a systemd unit — but it is a trade.
 
+## Two GNOME recipes are written against a release the lock does not pin
+
+Found by `tools/gates/recipe-entrypoints.py` on its first real run, which reads
+each recipe's build system against the bytes `manifest/sources.lock` actually
+pins. Both are the same shape: a recipe that would be correct for a different
+version of its own package. Neither is a recipe someone can fix by reading it,
+and the pin is the constrained end, so both are **deferred** in that gate --
+reported in full on every build, and not failing it. A gate that blocked every
+build on a problem four layers above where the build currently stops would not
+be finding things earlier; it would be stopping the work that reaches them.
+
+**gnome-keyring.** The recipe drives meson. The pinned 46.2 ships `configure`,
+`configure.ac` and `Makefile.am` and no `meson.build`: gnome-keyring moved to
+meson in 48. Rewriting the recipe backwards does not help, because 46.2's
+`configure.ac` asks for `gck-1`, `gcr-3` and `gcr-base-3`, and this tree pins
+gcr 4.4.1, which ships `gcr-4` and `gck-2`. The recipe and the rest of the layer
+agree with each other and disagree with the lock. The fix is the bump to 48,
+which is meson and wants gcr-4 -- and it waits on bytes that have to be fetched
+and hashed, because `sha256: TODO` is a sentinel and never a value to guess.
+
+**xdg-desktop-portal.** The mirror image: the recipe drives `configure` and the
+pinned 1.18.4 ships `meson.build`, the portal having moved to meson in 1.18.
+Translating the options is the smaller half of the work. Its `meson.build` takes
+`fuse3` and `libpipewire-0.3` as unconditional `dependency()` calls, and
+`find_program('bwrap', required: ...)` runs at configure time unless
+`sandboxed-image-validation` is turned off -- which the option's own description
+calls a security vulnerability, in a component whose job includes validating
+images from untrusted applications. `losos-40-gnome` builds none of fuse3,
+pipewire or bubblewrap.
+
+What this costs: no Secret Service implementation and no portal, so an
+application asking for a password or a file chooser through the portal gets
+neither. That is a desktop with visible holes, not a cosmetic gap, and it is
+listed here rather than worked around because the alternative -- letting an
+`auto` probe find the build host's fuse3 and pipewire through pm's read-only
+`/usr` mirror (C7) -- would produce an image that linked the wrong libc's
+libraries and said nothing.
+
+The deferral cannot go stale quietly. The gate fails if a deferred recipe's
+entry point turns up present, naming the package and pointing back at this
+section, because a hole this tree no longer has is one it must stop claiming.
+
 ## Nothing here has booted
 
 There is no VM in the development environment: no KVM, no EFI firmware, no loop
