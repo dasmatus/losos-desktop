@@ -69,6 +69,12 @@ runs:
         printf '%s\n' '[storage]' 'driver = "vfs"' \
           'runroot = "/run/containers/storage"' \
           'graphroot = "/var/lib/containers/storage"' > /etc/containers/storage.conf
+        # Arch's rootless Podman picks user config first; pin both locations and
+        # the runtime env so nested jobs never fall back to overlay in Docker.
+        mkdir -p "$HOME/.config/containers"
+        cp /etc/containers/storage.conf "$HOME/.config/containers/storage.conf"
+        printf '%s\n' 'CONTAINERS_STORAGE_CONF=/etc/containers/storage.conf' \
+          'STORAGE_DRIVER=vfs' >> "$GITHUB_ENV"
         # There is no systemd manager inside a job container.
         printf '%s\n' '[engine]' 'cgroup_manager = "cgroupfs"' \
           'events_logger = "file"' '[containers]' 'cgroups = "disabled"' \
