@@ -42,8 +42,24 @@ shift 2
 
 [ "$#" -gt 0 ] || { echo "check-exports: name at least one symbol"; exit 1; }
 
+# Read the table once and keep it, because the whole-API case deserves its own
+# report. A library with nothing in its dynamic symbol table is the signature
+# of this class, and saying so is a diagnosis; naming whichever symbol happened
+# to be checked first reads as one missing function and sends the next person
+# looking for it in the source.
+table=$("$NM" --dynamic --defined-only "$LIB")
+
+if [ -z "$table" ]; then
+  echo "check-exports: $LIB has an EMPTY dynamic symbol table"
+  echo "check-exports: not one symbol, not just the ones named here. Its public"
+  echo "check-exports: API carries no visibility attribute and -fvisibility=hidden"
+  echo "check-exports: has made every definition STV_HIDDEN. See the exceptions"
+  echo "check-exports: in manifest/toolchain.yaml for what to do about it."
+  exit 1
+fi
+
 for symbol in "$@"; do
-  if ! "$NM" --dynamic --defined-only "$LIB" | grep -q "[ 	]$symbol\$\|[ 	]$symbol@"; then
+  if ! printf '%s\n' "$table" | grep -q "[ 	]$symbol\$\|[ 	]$symbol@"; then
     echo "check-exports: $LIB does not export $symbol"
     if [ "$symbol" = "__cfi_check" ]; then
       echo "check-exports: CFI was dropped for this package rather than kept."
