@@ -140,10 +140,10 @@ image per architecture. Install `skopeo` alongside Python 3:
 
 ```sh
 skopeo login ghcr.io
-just release-images -- publish --repository ghcr.io/OWNER/losos-desktop/images \
+just release-images -- publish --repository ghcr.io/owner/losos-desktop/images \
   --tag nightly-20260920.1-x86_64 --arch x86_64 --source release \
-  --source-url https://github.com/OWNER/losos-desktop
-just release-images -- pull ghcr.io/OWNER/losos-desktop/images@sha256:DIGEST \
+  --source-url https://github.com/owner/losos-desktop
+just release-images -- pull ghcr.io/owner/losos-desktop/images@sha256:DIGEST \
   --arch x86_64 --output release
 ```
 

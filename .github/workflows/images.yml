@@ -628,15 +628,22 @@ jobs:
             --authfile "$REGISTRY_AUTH_FILE" --username "$GITHUB_ACTOR" \
             --password-stdin ghcr.io
           unset GHCR_TOKEN
+          tag="$CHANNEL-$LOSOS_VERSION-${{ matrix.arch }}"
           ref=$(
             just release-images -- publish \
               --repository "ghcr.io/${GITHUB_REPOSITORY,,}/images" \
-              --tag "$CHANNEL-$LOSOS_VERSION-${{ matrix.arch }}" \
+              --tag "$tag" \
               --arch "${{ matrix.arch }}" --source release \
               --source-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
           )
           printf '%s\n' "$ref" | tee "release-ref-${{ matrix.arch }}.txt"
           echo "reference=$ref" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release image (${{ matrix.arch }})"
+            echo
+            echo "- Tag: \`$tag\`"
+            echo "- Ref: \`$ref\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: steps.release_image.outputs.reference != ''
@@ -952,7 +959,14 @@ jobs:
             for arch in x86_64 aarch64; do
               dir="pulled/$arch"
               [ -d "$dir" ] || continue
-              find "$dir" -maxdepth 1 -type f ! -name SHA256SUMS -exec cp {} release/ \;
+              while IFS= read -r file; do
+                name=${file##*/}
+                if [ -e "release/$name" ]; then
+                  echo "publish: duplicate release filename from $arch: $name" >&2
+                  exit 1
+                fi
+                cp "$file" "release/$name"
+              done < <(find "$dir" -maxdepth 1 -type f ! -name SHA256SUMS | sort)
               cat "$dir/SHA256SUMS" >> release/SHA256SUMS
             done
             sort -u release/SHA256SUMS -o release/SHA256SUMS
