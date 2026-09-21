@@ -45,4 +45,4 @@ toolchain-report *args:
   #!/usr/bin/env bash
   set -euo pipefail
   if [ "${1:-}" = "--" ]; then shift; fi
-  python3 "{{repo}}/tools/pm-toolchain" report "$@"
+  "{{repo}}/tools/pm-toolchain" report "$@"
