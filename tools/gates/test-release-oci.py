@@ -244,7 +244,9 @@ class ReleaseOCITransportTests(unittest.TestCase):
         ref = self.publish()
         layout, _, manifest = self.image(ref)
         layer_path = layout / "blobs/sha256" / manifest["layers"][0]["digest"][7:]
-        broken = self.mutate(ref, layer_bytes=layer_path.read_bytes()[:-600])
+        broken_bytes = bytearray(layer_path.read_bytes())
+        broken_bytes[512] ^= 1
+        broken = self.mutate(ref, layer_bytes=bytes(broken_bytes))
         work = self.root / "manual-work"
         work.mkdir()
         with self.assertRaises(oci.OCIError):
