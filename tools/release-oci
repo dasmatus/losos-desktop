@@ -341,27 +341,35 @@ def restore(layout, digest, arch, work, output):
         planned.append((header, digest_hex, size, candidate, target))
     require(manifest["layers"][0]["size"] == total_size,
             "layer must contain exactly the named release files")
-    with regular_open(layer) as source:
-        for header, digest_hex, size, candidate, _ in planned:
-            file_hash = hashlib.sha256()
-            with candidate.open("xb") as dest:
-                require(source.read(len(header)) == header,
-                        "unsupported tar header: expected matching regular release files")
-                remaining = size
-                while remaining:
-                    block = source.read(min(CHUNK, remaining))
-                    require(block, "truncated release layer")
-                    file_hash.update(block)
-                    dest.write(block)
-                    remaining -= len(block)
-                padding = -size % 512
-                require(source.read(padding) == b"\0" * padding, "invalid tar member padding")
-                require(file_hash.hexdigest() == digest_hex,
-                        f"SHA-256 mismatch for {candidate.name}")
-                dest.flush()
-                os.fsync(dest.fileno())
-        require(source.read(1024) == b"\0" * 1024 and not source.read(1),
-                "invalid tar trailer or extra members")
+    created = []
+    try:
+        with regular_open(layer) as source:
+            for header, digest_hex, size, candidate, _ in planned:
+                file_hash = hashlib.sha256()
+                with candidate.open("xb") as dest:
+                    created.append(candidate)
+                    require(source.read(len(header)) == header,
+                            "unsupported tar header: expected matching regular release files")
+                    remaining = size
+                    while remaining:
+                        block = source.read(min(CHUNK, remaining))
+                        require(block, "truncated release layer")
+                        file_hash.update(block)
+                        dest.write(block)
+                        remaining -= len(block)
+                    padding = -size % 512
+                    require(source.read(padding) == b"\0" * padding, "invalid tar member padding")
+                    require(file_hash.hexdigest() == digest_hex,
+                            f"SHA-256 mismatch for {candidate.name}")
+                    dest.flush()
+                    os.fsync(dest.fileno())
+            require(source.read(1024) == b"\0" * 1024 and not source.read(1),
+                    "invalid tar trailer or extra members")
+    except BaseException:
+        for candidate in created:
+            with contextlib.suppress(FileNotFoundError):
+                candidate.unlink()
+        raise
     linked = []
     try:
         for _, _, _, candidate, target in planned:

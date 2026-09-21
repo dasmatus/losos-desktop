@@ -962,7 +962,10 @@ jobs:
               while IFS= read -r file; do
                 name=${file##*/}
                 if [ -e "release/$name" ]; then
-                  echo "publish: duplicate release filename from $arch: $name" >&2
+                  if cmp -s "$file" "release/$name"; then
+                    continue
+                  fi
+                  echo "publish: duplicate release filename with different contents from $arch: $name" >&2
                   exit 1
                 fi
                 cp "$file" "release/$name"

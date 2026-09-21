@@ -236,6 +236,18 @@ class ReleaseOCITransportTests(unittest.TestCase):
         (self.output / "SHA256SUMS").write_text("existing")
         self.pull(ref, success=False)
 
+    def test_restore_cleans_partial_candidates_on_failure(self):
+        ref = self.publish()
+        layout, _, manifest = self.image(ref)
+        layer_path = layout / "blobs/sha256" / manifest["layers"][0]["digest"][7:]
+        broken = self.mutate(ref, layer_bytes=layer_path.read_bytes()[:-600])
+        work = self.root / "manual-work"
+        work.mkdir()
+        with self.assertRaises(oci.OCIError):
+            oci.restore(layout, broken.split("@", 1)[1], "x86_64", work, self.output)
+        self.assertFalse(list(work.iterdir()))
+        self.assertFalse(list(self.output.iterdir()))
+
 
 if __name__ == "__main__":
     unittest.main()
