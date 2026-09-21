@@ -6,6 +6,7 @@ import hashlib
 import importlib.machinery
 import importlib.util
 import io
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -231,6 +232,14 @@ class ReleaseOCITransportTests(unittest.TestCase):
                  success=False)
         shutil.rmtree(self.source / "subdir")
         (self.source / "pointer").symlink_to("SHA256SUMS")
+        self.cli("publish", "--repository", "ghcr.io/owner/images",
+                 "--tag", "valid", "--arch", "x86_64", "--source", self.source,
+                 success=False)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "mkfifo is unavailable")
+    def test_rejects_special_files(self):
+        fifo = self.source / "named-pipe"
+        os.mkfifo(fifo)
         self.cli("publish", "--repository", "ghcr.io/owner/images",
                  "--tag", "valid", "--arch", "x86_64", "--source", self.source,
                  success=False)

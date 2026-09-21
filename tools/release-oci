@@ -163,7 +163,14 @@ def release_files(source):
     files = []
     for path in sorted(source.iterdir()):
         require(not path.is_symlink(), f"symlinks are unsupported: {path}")
-        require(path.is_file(), f"source must contain only regular files: {path}")
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            try:
+                require(stat.S_ISREG(os.fstat(fd).st_mode), f"not a regular file: {path}")
+            finally:
+                os.close(fd)
+        except (OCIError, OSError) as error:
+            raise OCIError(f"source must contain only regular files: {path}") from error
         files.append(path)
     require(files, f"no release files in {source}")
     return files

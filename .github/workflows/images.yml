@@ -985,7 +985,12 @@ jobs:
                 for raw in manifest.read_text().splitlines():
                     if not raw.strip():
                         continue
-                    recorded, name = raw.split(maxsplit=1)
+                    parts = raw.split(maxsplit=1)
+                    if len(parts) != 2:
+                        sys.exit(
+                            f"publish: malformed SHA256SUMS entry in {manifest}: {raw!r}"
+                        )
+                    recorded, name = parts
                     name = name.lstrip("*").strip()
                     lines.append(f"{recorded}  {renames.get(name, name)}")
             (release / "SHA256SUMS").write_text("\n".join(sorted(set(lines))) + "\n")
