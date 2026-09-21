@@ -240,7 +240,7 @@ def skopeo(arguments, arch, preserve_digests):
         if preserve_digests:
             command.append("--preserve-digests")
         subprocess.run([*command, *arguments],
-                       check=True, stderr=sys.stderr)
+                       check=True, stdout=sys.stderr, stderr=sys.stderr)
     except FileNotFoundError as error:
         raise OCIError("skopeo is required; install it on the host") from error
     except subprocess.CalledProcessError as error:
