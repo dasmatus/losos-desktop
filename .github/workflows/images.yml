@@ -735,7 +735,6 @@ jobs:
           path: ota-console.log
 
   ci:
-    if: always() && github.event_name == 'pull_request'
     needs: [gates, container, pinned, build, verify, ota]
     runs-on: ubuntu-24.04
     steps:
