@@ -17,6 +17,7 @@ case "${1:-}" in
     ;;
   *)
     echo "pm-toolchain: unknown command: $1" >&2
+    echo "pm-toolchain: run --help for the available commands" >&2
     exit 1
     ;;
 esac
