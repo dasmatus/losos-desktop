@@ -957,23 +957,39 @@ jobs:
           done
           if [ -n "$(find pulled -type f -print -quit 2>/dev/null)" ]; then
             echo "any=true" >> "$GITHUB_OUTPUT"
-            for arch in x86_64 aarch64; do
-              dir="pulled/$arch"
-              [ -d "$dir" ] || continue
-              while IFS= read -r file; do
-                name=${file##*/}
-                if [ -e "release/$name" ]; then
-                  if cmp -s "$file" "release/$name"; then
-                    continue
-                  fi
-                  echo "publish: duplicate release filename with different contents from $arch: $name" >&2
-                  exit 1
-                fi
-                cp "$file" "release/$name"
-              done < <(find "$dir" -maxdepth 1 -type f ! -name SHA256SUMS | sort)
-              cat "$dir/SHA256SUMS" >> release/SHA256SUMS
-            done
-            sort -u release/SHA256SUMS -o release/SHA256SUMS
+            python3 - <<'PY'
+            from pathlib import Path
+            import shutil
+            import sys
+
+            pulled = Path("pulled")
+            release = Path("release")
+            lines = []
+            for arch_dir in sorted(path for path in pulled.iterdir() if path.is_dir()):
+                renames = {}
+                for source in sorted(path for path in arch_dir.iterdir()
+                                     if path.is_file() and path.name != "SHA256SUMS"):
+                    target = release / source.name
+                    target_name = source.name
+                    if target.exists():
+                        if target.read_bytes() != source.read_bytes():
+                            sys.exit(
+                                f"publish: duplicate release filename with different contents "
+                                f"from {arch_dir.name}: {source.name}"
+                            )
+                        target_name = f"{arch_dir.name}-{source.name}"
+                        target = release / target_name
+                    shutil.copy2(source, target)
+                    renames[source.name] = target_name
+                manifest = arch_dir / "SHA256SUMS"
+                for raw in manifest.read_text().splitlines():
+                    if not raw.strip():
+                        continue
+                    recorded, name = raw.split(maxsplit=1)
+                    name = name.lstrip("*").strip()
+                    lines.append(f"{recorded}  {renames.get(name, name)}")
+            (release / "SHA256SUMS").write_text("\n".join(sorted(set(lines))) + "\n")
+            PY
             find release -type f | sort
           else
             echo "any=false" >> "$GITHUB_OUTPUT"

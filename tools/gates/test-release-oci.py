@@ -129,6 +129,7 @@ class ReleaseOCITransportTests(unittest.TestCase):
                 self.assertEqual(config["architecture"], oci.ARCHES[arch])
                 self.assertEqual(config["os"], "linux")
                 self.assertEqual(set(config["config"]), {"Labels"})
+                self.assertNotIn(oci.SOURCE_LABEL, config["config"]["Labels"])
                 listed = {
                     entry["name"]: self.files[entry["name"]]
                     for entry in self.assert_manifest(config["config"]["Labels"])
