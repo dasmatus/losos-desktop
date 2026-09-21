@@ -11,13 +11,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     # Nightly, off the hour: a cron on the hour competes with everyone else's.
     - cron: "17 3 * * *"
-  workflow_dispatch:
-
 # Read-only by default. This workflow runs on pull_request, which means it
 # checks out and executes branch code; a token that can write to the repository
 # has no business being in that job. Only the publishing jobs need more, and
@@ -77,7 +73,7 @@ jobs:
   # failed and publish (needs: [verify, ota]) never ran: the stable release
   # path could not complete at all. One output, referenced everywhere.
   channel:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     container: docker.io/library/archlinux:base
     outputs:
       name: ${{ steps.pick.outputs.name }}
@@ -98,7 +94,7 @@ jobs:
   # The gate that runs anywhere, on every event. No network to upstream, no
   # KVM, no nix. If this is red nothing below is worth running.
   gates:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     container:
       image: docker.io/library/archlinux:base
       # pm creates user/mount namespaces and a fresh procfs (C7); unmasking
@@ -209,11 +205,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
-            image: docker.io/library/archlinux:base
-          - runner: ubuntu-24.04-arm
-            image: docker.io/menci/archlinuxarm:base
-    runs-on: ${{ matrix.runner }}
+            - image: docker.io/library/archlinux:base
+            - image: docker.io/menci/archlinuxarm:base
+    runs-on: ubuntu-latest  
     container:
       image: ${{ matrix.image }}
       # Nested Podman builds and runs the Containerfile, not the VM's daemon.
