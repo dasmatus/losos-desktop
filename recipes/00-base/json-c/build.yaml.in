@@ -25,11 +25,33 @@ steps:
 # @CFLAGS_RSP@ gets the shared flags with the exemption written to disk and
 # read by nothing. Without it libjson-c installs empty and cryptsetup's
 # token handling is the first thing to say so.
+#
+# CMAKE_POLICY_VERSION_MINIMUM=3.5 is not because the top-level project is
+# old. CMakeLists.txt:6 asks for 3.9...3.12, which CMake 4 is happy with and
+# which is why libcbor's recipe counted json-c out of the pre-3.5 sweep.
+# apps/CMakeLists.txt:2 asks for 2.8 on its own, and that is a hard error on
+# CMake 4 (`Compatibility with CMake < 3.5 has been removed`) rather than the
+# deprecation Debian trixie's 3.31 still printed. The variable is CMake's
+# own suggested remedy and `versionadded:: 4.0`, so on a CMake 3.x it is an
+# unused cache variable. libqrencode carries why a tree-wide default would
+# hide which package still has the old declaration.
+#
+# DISABLE_WERROR is json-c's own switch (CMakeLists.txt:66, applied at :298)
+# and not a flag we can put in the response file. The layer's LDFLAGS include
+# -pie, CMAKE_SHARED_LINKER_FLAGS puts that on the libjson-c.so link, and
+# clang then says `argument unused during compilation: '-pie'`. json-c
+# appends -Werror to CMAKE_C_FLAGS after our flags, so the unused-argument
+# warning is fatal and the library never links. Autotools packages in this
+# layer already see the same warning -- libarchive's recipe names it -- and
+# survive because they do not compile with -Werror. Turning werror off is
+# narrower than inventing a second response file that omits -pie for shared
+# links, and it is the switch upstream put there for exactly "the flags the
+# caller passed are not the ones json-c's -Werror was written against".
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/json-c -B /build/b/json-c -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_JSON_C@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP_JSON_C@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_JSON_C@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_JSON_C@ -DBUILD_STATIC_LIBS=OFF
+  - cmake -S /build/src/json-c -B /build/b/json-c -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_JSON_C@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP_JSON_C@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_JSON_C@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_JSON_C@ -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_STATIC_LIBS=OFF -DDISABLE_WERROR=ON
 
 - stage: Build
   name: compile

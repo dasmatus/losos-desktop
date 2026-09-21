@@ -84,6 +84,11 @@
     - libgcrypt
     - json-c
     - popt
+    # libdevmapper. cryptsetup's first header check is a hard error without
+    # it, and systemd-cryptsetup reaches device-mapper only through that
+    # library. The LVM tools ride in the same tarball; the recipe builds the
+    # device-mapper half.
+    - lvm2
     - cryptsetup
     - tpm2-tss
     - libcbor

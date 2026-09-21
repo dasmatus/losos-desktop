@@ -152,6 +152,13 @@ POPT:
   version: '1.19'
   sha256: c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9
 
+# libdevmapper, which cryptsetup will not configure without. The LVM tools
+# come along because this is one tarball; the recipe builds the library first.
+LVM2:
+  url: https://mirrors.kernel.org/sourceware/lvm2/LVM2.2.03.42.tgz
+  version: '2.03.42'
+  sha256: 352703ef5b72ebb22d4f250284a29b89fe64d4049c6bf64c693f9af486c8081e
+
 CRYPTSETUP:
   url: https://www.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-2.7.5.tar.xz
   version: '2.7.5'

@@ -40,11 +40,15 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# @CFLAGS_RSP_UTIL_LINUX@ and not @CFLAGS_RSP@: an exception in
+# manifest/toolchain.yaml only reaches a package that names it, and left
+# spelling the shared file the entry would be inert with nothing to say so.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/util-linux /build/src/util-linux/configure --host=@ARCH_TRIPLE@ --prefix=/usr --sbindir=/usr/sbin --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-all-programs --enable-libmount --enable-libblkid --enable-libuuid --enable-libfdisk --enable-libsmartcols --enable-swapon
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/util-linux /build/src/util-linux/configure --host=@ARCH_TRIPLE@ --prefix=/usr --sbindir=/usr/sbin --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_UTIL_LINUX@ LDFLAGS=@LDFLAGS_RSP_UTIL_LINUX@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-all-programs --enable-libmount --enable-libblkid --enable-libuuid --enable-libfdisk --enable-libsmartcols --enable-swapon
 
 - stage: Build
   name: compile
@@ -62,6 +66,14 @@ steps:
   - make -C /build/b/util-linux install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# mnt_new_table is named first because it is the symbol the build actually
+# stopped on: swapon and swapoff link against the in-tree libmount, and with
+# the layer's -fvisibility=hidden that library exported nothing but
+# __cfi_check. The rest are ordinary API out of each library's own version
+# script, so an empty one fails here rather than at systemd four layers later.
+# __cfi_check is the separate assertion described in check-exports.sh: the
+# API symbols say the visibility exception took, and this one says it stayed
+# narrow and did not take CFI with it.
 - stage: Test
   name: staged
   dl_urls: null
@@ -70,3 +82,8 @@ steps:
   - test -x /dest/usr/sbin/mkswap
   - test -x /dest/usr/sbin/swapon
   - test -x /dest/usr/sbin/swapoff
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libmount.so mnt_new_table mnt_table_parse_fstab mnt_fs_is_swaparea __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libblkid.so blkid_new_probe_from_filename blkid_do_safeprobe blkid_get_cache __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libsmartcols.so scols_new_table scols_table_new_column scols_print_table __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libuuid.so uuid_generate uuid_parse uuid_unparse __cfi_check
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libfdisk.so fdisk_new_context fdisk_add_partition __cfi_check

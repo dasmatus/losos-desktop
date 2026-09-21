@@ -1,0 +1,40 @@
+Disable source-level .symver so ThinLTO can link libcryptsetup.
+
+ThinLTO plus the LLVM gold plugin does not keep the local definitions
+that inline-asm `.symver` -- and `__attribute__((symver))`, which emits
+the same directive -- aliases. The shared link dies with
+
+    mold: fatal: LLVM gold plugin: <inline asm>:1:1: default version
+    symbol crypt_format@@CRYPTSETUP_2.4 must be defined
+
+Dropping LTO to dodge that also drops CFI, and a non-CFI cryptsetup
+cannot even configure against this tree's CFI libuuid: mold then
+reports `--no-allow-shlib-undefined: undefined symbol:
+__ubsan_handle_cfi_check_fail`. The executable has to carry the
+sanitizer runtime the libraries call into, so CFI (and therefore LTO)
+has to stay.
+
+Versioning moves to the linker. The `#else` branch of this header names
+the new ABI `crypt_format` and leaves old compatible versions as unused
+static inlines. lib/libcryptsetup.sym still versions the public names
+at link time; nothing in this distribution is linked against a previous
+libcryptsetup.
+
+--- a/lib/libcryptsetup_symver.h
++++ b/lib/libcryptsetup_symver.h
+@@ -54,6 +54,7 @@
+  *   under CRYPT_SYMBOL_EXPORT_OLD(int, crypt_func_X, ...) macro
+  */
+ 
++#if 0 /* ThinLTO cannot keep .symver aliases; versioning is the linker script. */
+ #if HAVE_ATTRIBUTE_SYMVER
+ #  define _CRYPT_SYMVER(_local_sym, _public_sym, _ver_str, _maj, _min)     \
+      __attribute__((__symver__(#_public_sym _ver_str #_maj "." #_min)))
+@@ -63,6 +64,7 @@
+ #  define _CRYPT_SYMVER(_local_sym, _public_sym, _ver_str, _maj, _min)         \
+      __asm__(".symver " #_local_sym "," #_public_sym _ver_str #_maj "." #_min);
+ #endif
++#endif
+ 
+ #define _CRYPT_FUNC(_public_sym, _prefix_str, _maj, _min, _ret, ...)                                    \
+   _ret __##_public_sym##_v##_maj##_##_min(__VA_ARGS__);                                                 \

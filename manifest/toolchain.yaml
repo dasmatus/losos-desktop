@@ -401,6 +401,33 @@ exceptions:
       The narrow `visibility` drop libcap uses is therefore not available
       here: it keeps the schemes, and the schemes need the LTO this package
       cannot have.
+  - package: util-linux
+    drops: [visibility]
+    why: >
+      The one losos-10-base stopped on this run. `--enable-swapon` links
+      swapon and swapoff against the in-tree libmount, libblkid and
+      libsmartcols, and those libraries shipped empty: libmount.so.1.1.0 was
+      17 KB with `nm -D` naming only `__cfi_check`, and the link died with
+      `undefined symbol: mnt_new_table`, `scols_new_table`,
+      `blkid_new_probe_from_filename` -- the public API of all three, not
+      something private the tools should not have reached.
+
+      The API is bare. `extern struct libmnt_table *mnt_new_table(void)` is
+      the shape throughout libmount/src/libmount.h.in, and the same for
+      libblkid, libsmartcols, libuuid and libfdisk. No `visibility("default")`
+      anywhere in the pinned 2.40.2 tree, not in the sources and not in the
+      generated configure. Each library does ship a version script --
+      libmount.sym, libblkid.sym, libsmartcols.sym, libuuid.sym, libfdisk.sym
+      -- which is the trap rather than the reassurance: a `global:` list
+      cannot promote a symbol the compiler already made STV_HIDDEN. Same
+      shape as libfido2, which names 267 symbols in its own script and
+      exported none.
+
+      `visibility` and not `cfi`: at -fvisibility=default clang keeps every
+      scheme and cross-DSO, so this keeps indirect-call checking and loses
+      only interposition protection, which for libraries that have been
+      default-visible since before the attribute existed is the status quo
+      elsewhere rather than a new hole. See libcap above for the measurement.
   # The rest of losos-10-base, in member order. Eleven packages, one fault, and
   # one piece of evidence behind all of them: none declares a single
   # `visibility("default")` anywhere in its tree -- not in its sources, not in
@@ -500,41 +527,76 @@ exceptions:
       verify it; asserting it now, with nothing able to compile json-c against
       the musl sysroot, would be a guess in a file whose whole convention is
       that nothing is guessed. If the patch lands, this entry comes out.
+  - package: popt
+    drops: [visibility]
+    why: >
+      The recipe used to refuse this entry: 1.18 (the closest version then
+      reachable) was in the hidden-visibility class, but that was one release
+      short of the pin, and the check-exports line was left to settle 1.19 at
+      build time rather than guess. 1.19 is now measured. `make all` builds
+      tests/test1 and tests/tdict -- noinst_PROGRAMS, same shape as
+      libunistring's test-localcharset -- and both died with `undefined
+      symbol: poptGetContext`, `poptGetNextOpt`, `poptFreeContext`. libpopt.so
+      was 15 KB with the public API gone.
+
+      The API is still bare. `poptContext poptGetContext(const char * name,`
+      in src/popt.h:215, no export macro, and src/libpopt.vers reaches the
+      linker as -Wl,--version-script, which cannot promote STV_HIDDEN. Nothing
+      in configure.ac or src/Makefile.am mentions visibility in either
+      direction. The 1.18 reading was right; it was only waiting on the pinned
+      bytes.
+  - package: lvm2
+    drops: [cfi, lto]
+    why: >
+      The same two failures libxcrypt stacked, measured on the pinned 2.03.42
+      at `make device-mapper`. The loud one is LTO against symbol versioning:
+      libdm/misc/dmlib.h falls back to inline asm `.symver` when
+      `__has_attribute(symver)` is false, and ThinLTO does not keep the local
+      definitions those name. The shared link died with
+
+          mold: fatal: LLVM gold plugin: <inline asm>:1:1: default version
+          symbol dm_bitset_parse_list@@DM_1_02_138 must be defined
+          .symver dm_bitset_parse_list_v1_02_138, dm_bitset_parse_list@@DM_1_02_138
+
+      which is libxcrypt's crypt_r@@XCRYPT_2.0 word for word. The quiet one
+      is the hidden-visibility class: libdevmapper.h:142 is a bare
+      `int dm_task_set_name(...)`, configure.ac:844 passes
+      `-Wl,--version-script,.export.sym`, and a version script cannot export
+      a symbol the compiler already made STV_HIDDEN.
+
+      The narrow `visibility` drop is therefore not available: it keeps the
+      schemes, and the schemes need the LTO this package cannot have. CFI
+      goes with LTO. Dropping CFI also takes -fvisibility=hidden off, because
+      that flag is only on the line as CFI's precondition, which is what
+      restores the dynamic table.
   - package: cryptsetup
     drops: [visibility]
     why: >
       Bare declarations throughout libcryptsetup.h -- `int crypt_init(struct
       crypt_device **cd, const char *device);` -- with no export macro, and
-      the only __attribute__ in the public header is `deprecated`. Nothing in
-      configure.ac or the Makefile.am asks for visibility either way: the one
-      thing configure probes for near this is __symver__, which is symbol
-      versioning and a different mechanism.
+      the only __attribute__ in the public header is `deprecated`. It ships
+      lib/libcryptsetup.sym, a version script that cannot promote STV_HIDDEN.
 
-      It ships lib/libcryptsetup.sym, a `CRYPTSETUP_2.0 { global: ... }`
-      version script, which is the reassuring-looking case that is not.
-      Same shape as libfido2, which names 267 symbols in its own script and
-      exported none.
+      LTO cannot stay off. ThinLTO dies on the source-level `.symver`
+      aliases (`crypt_format@@CRYPTSETUP_2.4`), the same failure as lvm2 and
+      libxcrypt -- but dropping LTO takes CFI with it, and a non-CFI
+      cryptsetup cannot link this tree's CFI libuuid at all:
 
-      What an empty one costs is the reason this is not left to be discovered
-      later, and the cost is worse than "a library exports nothing" sounds.
+          mold: error: /build/sysroot/usr/lib/libuuid.so:
+          --no-allow-shlib-undefined: undefined symbol:
+          __ubsan_handle_cfi_check_fail
+
+      configure's uuid_clear probe is an executable; CFI libraries leave the
+      sanitizer runtime undefined for the executable to provide. So CFI (and
+      therefore LTO) stay, visibility is the remaining hole, and the `.symver`
+      aliases are patched out in the recipe -- versioning is the linker
+      script, which ThinLTO can see.
+
       systemd does not LINK against libcryptsetup. It dlopens it:
       dlopen_many_sym_or_warn(&cryptsetup_dl, "libcryptsetup.so.12", ...) at
-      src/shared/cryptsetup-util.c:286, resolving 51 symbols by name. Read at
-      v261, which for systemd is the pinned bytes -- sources.lock pins a tag
-      archive there, so the tag and the tarball are the same tree.
-
-      So an empty libcryptsetup fails no link anywhere in this tree. systemd
-      builds, the image builds, everything ships, and the first symptom is a
-      root volume that will not unlock. The check-exports line in the recipe
-      is not a nicety on this package; it is the only thing standing between
-      -fvisibility=hidden and a machine that does not start.
-
-      Read in the Debian orig tarball for 2.7.5 rather than the pinned bytes
-      -- Debian repacks it, so the hash does not match sources.lock and that
-      is expected rather than a mirror problem. The contents are upstream
-      2.7.5; the declaration style and the .sym file are not the kind of
-      thing a repack changes, but it is a weaker read than libunistring's
-      and says so here.
+      src/shared/cryptsetup-util.c:286, resolving 51 symbols by name. An
+      empty one fails no link in this tree and the first symptom is a root
+      volume that will not unlock. The check-exports line is not a nicety.
   - package: tpm2-tss
     drops: [visibility]
     why: >

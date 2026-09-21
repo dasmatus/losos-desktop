@@ -19,6 +19,15 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_CRYPTSETUP@ --no-same-owner -C /build/src/cryptsetup --strip-components=1
 
+# Source-level .symver cannot survive ThinLTO. The patch header is the
+# argument; CFI has to stay because a non-CFI cryptsetup cannot link the
+# CFI libuuid this layer just built.
+- stage: Build
+  name: patch
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/apply-patches.sh @RECIPE@/files/cryptsetup/patches /build/src/cryptsetup
+
 # ./configure has no -C and there is no `cd` in a build step (C1), so the one
 # permitted wrapper puts it in the build directory. configure takes VAR=value
 # as positional arguments, which is how the toolchain and the sysroot are
@@ -33,11 +42,17 @@ steps:
 # @CFLAGS_RSP_CRYPTSETUP@ and not @CFLAGS_RSP@: an exception in
 # manifest/toolchain.yaml only reaches a package that names it, and left
 # spelling the shared file the entry would be inert with nothing to say so.
+#
+# --disable-udev because libudev is systemd, four layers above, and the
+# default is enable_udev=yes. Without this, configure.ac:457 would see
+# DM_UDEV_DISABLE_DISK_RULES_FLAG in libdevmapper.h and define USE_UDEV
+# against a library this layer does not have. --disable-selinux for the
+# same reason: there is no libselinux in this tree and the default is on.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/cryptsetup /build/src/cryptsetup/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_CRYPTSETUP@ LDFLAGS=@LDFLAGS_RSP_CRYPTSETUP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-ssh-token --disable-asciidoc
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/cryptsetup /build/src/cryptsetup/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_CRYPTSETUP@ LDFLAGS=@LDFLAGS_RSP_CRYPTSETUP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-ssh-token --disable-asciidoc --disable-udev --disable-selinux
 
 - stage: Build
   name: compile
