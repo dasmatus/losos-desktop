@@ -928,7 +928,7 @@ jobs:
     steps:
       - *arch-bootstrap
       - name: Install publishing tools
-        run: pacman -Syu --needed --noconfirm github-cli python skopeo
+        run: pacman -Syu --needed --noconfirm github-cli python skopeo just
       - uses: actions/download-artifact@v4
         with: { pattern: "release-ref-*", path: refs, merge-multiple: true }
 
