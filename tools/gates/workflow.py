@@ -136,6 +136,8 @@ def check_package_handoff(doc):
         failures.append("images.yml: manifest/layers.yaml must define at least 2 layers (packages + image)")
         return failures
     archive = f"{layers[-2]['name']}-0.1.0.cpkg"
+    archive_ref = "${{ steps.closure.outputs.archive }}"
+    layer_ref = "${{ steps.closure.outputs.layer }}"
     uploads = [
         step.get("with") or {} for step in packages.get("steps", [])
         if str(step.get("uses", "")).startswith("actions/upload-artifact@")
@@ -145,16 +147,30 @@ def check_package_handoff(doc):
         if str(step.get("uses", "")).startswith("actions/download-artifact@")
     ]
     handoff = "packages-${{ matrix.arch }}"
+    for name, job in (("packages", packages), ("build", build)):
+        steps = job.get("steps", [])
+        if not any(step.get("id") == "closure"
+                   and "manifest/layers.yaml" in str(step.get("run", ""))
+                   and "archive=" in str(step.get("run", ""))
+                   and "layer=" in str(step.get("run", "")) for step in steps):
+            failures.append(
+                f"images.yml: {name} must derive the package closure layer and archive from manifest/layers.yaml"
+            )
     if not any(upload.get("name") == handoff
-               and str(upload.get("path", "")).endswith(archive)
+               and str(upload.get("path", "")).endswith(archive_ref)
                and upload.get("if-no-files-found") == "error" for upload in uploads):
         failures.append("images.yml: packages must upload the final closure and fail if missing")
     if not any(download.get("name") == handoff and "run-id" not in download
                and "github-token" not in download for download in downloads):
         failures.append("images.yml: build must download packages from this run")
     commands = "\n".join(str(step.get("run", "")) for step in build.get("steps", []))
-    if "--prebuilt-packages" not in commands or archive not in commands:
+    package_commands = "\n".join(str(step.get("run", "")) for step in packages.get("steps", []))
+    if layer_ref not in package_commands:
+        failures.append("images.yml: packages must build the final closure named in manifest/layers.yaml")
+    if "--prebuilt-packages" not in commands or archive_ref not in commands:
         failures.append("images.yml: image configuration must consume the package closure")
+    if archive in commands or archive in package_commands:
+        failures.append("images.yml: package closure archive names must come from manifest/layers.yaml, not a hard-coded layer")
 
     ci = jobs.get("ci") or {}
     required = {"gates", "container", "pinned", "packages", "build", "verify", "ota"}

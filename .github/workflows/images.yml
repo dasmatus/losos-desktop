@@ -445,6 +445,24 @@ jobs:
       - name: Disk before the build
         run: df -h / "$GITHUB_WORKSPACE"
 
+      - id: closure
+        name: Read the final package layer from the manifest
+        working-directory: losos-desktop
+        run: |
+          set -euo pipefail
+          previous=
+          current=
+          while IFS= read -r layer; do
+            previous=$current
+            current=$layer
+          done < <(sed -n 's/^- name: //p' manifest/layers.yaml)
+          [ -n "$previous" ] || {
+            echo "manifest/layers.yaml must define at least 2 layers" >&2
+            exit 1
+          }
+          echo "layer=$previous" >> "$GITHUB_OUTPUT"
+          echo "archive=${previous}-0.1.0.cpkg" >> "$GITHUB_OUTPUT"
+
       - name: Build the package closure
         working-directory: losos-desktop
         env:
@@ -466,7 +484,8 @@ jobs:
           # exists and why it is last.
           set +e
           LOSOS_CONTAINER_HOST_NETWORK=1 just container-run -- \
-            just build losos-40-gnome 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+            just build "${{ steps.closure.outputs.layer }}" 2>&1 \
+            | tee "$GITHUB_WORKSPACE/build.log"
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"
@@ -476,7 +495,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: packages-${{ matrix.arch }}
-          path: losos-desktop/out/pkgs/losos-40-gnome-0.1.0.cpkg
+          path: losos-desktop/out/pkgs/${{ steps.closure.outputs.archive }}
           if-no-files-found: error
           compression-level: 0
 
@@ -551,6 +570,24 @@ jobs:
           name: packages-${{ matrix.arch }}
           path: losos-desktop/out/pkgs
 
+      - id: closure
+        name: Read the final package layer from the manifest
+        working-directory: losos-desktop
+        run: |
+          set -euo pipefail
+          previous=
+          current=
+          while IFS= read -r layer; do
+            previous=$current
+            current=$layer
+          done < <(sed -n 's/^- name: //p' manifest/layers.yaml)
+          [ -n "$previous" ] || {
+            echo "manifest/layers.yaml must define at least 2 layers" >&2
+            exit 1
+          }
+          echo "layer=$previous" >> "$GITHUB_OUTPUT"
+          echo "archive=${previous}-0.1.0.cpkg" >> "$GITHUB_OUTPUT"
+
       - name: Assemble the image from the verified package closure
         working-directory: losos-desktop
         env:
@@ -558,7 +595,8 @@ jobs:
         run: |
           just configure -- --arch ${{ matrix.arch }} --channel "$CHANNEL" \
             --version "$LOSOS_VERSION" \
-            --prebuilt-packages "$PWD/out/pkgs/losos-40-gnome-0.1.0.cpkg"
+            --prebuilt-packages \
+            "$PWD/out/pkgs/${{ steps.closure.outputs.archive }}"
           # just build supplies the pinned image tools through its container
           # fallback; assembly has no source mirror or package rebuild to do.
           just build losos-90-image
