@@ -512,33 +512,6 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-      # Keep package publishing separate from the build: code compiled on a PR
-      # must never run with a registry write token. Signatures travel with the
-      # archives; a pulled package must still pass pm's own trust check.
-      - name: Sign the built packages and record their release version
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-        working-directory: losos-desktop
-        run: |
-          # pm build signs neither its top-level archive nor intermediate ones.
-          # Use the build's existing key, never a new key in the publish job.
-          export XDG_CONFIG_HOME="$PWD/.pm-config"
-          for package in out/pkgs/*.cpkg; do
-            "$GITHUB_WORKSPACE/pm/target/release/pm" sign "$package"
-          done
-          printf '%s\n' "$LOSOS_VERSION" > out/pkgs/package-version.txt
-
-      - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-        with:
-          name: packages-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
-          path: |
-            losos-desktop/out/pkgs/*.cpkg
-            losos-desktop/out/pkgs/*.cpkg.sig
-            losos-desktop/out/pkgs/package-version.txt
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 3
-
       # always(): the number is worth having most when the build died, since
       # a full disk is one of the things that kills it.
       # The per-directory lines say what is big; the workspace total says how
@@ -575,10 +548,126 @@ jobs:
           [ -s "$why" ] || tail -c 900 "$log" > "$why"
           head -c 1400 "$why"
 
+  # Assemble the image from the trusted package closure built above.
+  build:
+    needs: [packages, channel]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            image: docker.io/library/archlinux:base
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: docker.io/menci/archlinuxarm:base
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      options: --privileged
+    env:
+      CHANNEL: ${{ needs.channel.outputs.name }}
+      LOSOS_VERSION: ${{ needs.channel.outputs.version }}
+    steps:
+      - *arch-bootstrap
+      - uses: actions/checkout@v4
+        with: { path: losos-desktop }
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: losos-desktop/out/pkgs
+
+      - name: Install image assembly dependencies
+        uses: ./losos-desktop/.github/actions/arch-setup
+        with:
+          packages: just python-yaml python-jinja
+          rust: "true"
+          nested: "true"
+
+      - uses: ./losos-desktop/.github/actions/pm
+        with: { ref: "${{ env.PM_REF }}" }
+
+      - name: Disk before the build
+        run: df -h / "$GITHUB_WORKSPACE"
+
+      - name: Build the image
+        working-directory: losos-desktop
+        env:
+          PM: ${{ github.workspace }}/pm/target/release/pm
+        run: |
+          archive="$PWD/out/pkgs/losos-40-gnome-0.1.0.cpkg"
+          just configure -- --arch ${{ matrix.arch }} --channel "$CHANNEL" \
+            --version "$LOSOS_VERSION" --prebuilt-packages "$archive"
+          # Tee'd so the last step of this job can say what failed without
+          # anyone scrolling: see `Say what failed` below for why that step
+          # exists and why it is last.
+          set +e
+          just build losos-90-image 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
+
+      - name: Name the artifacts and write SHA256SUMS
+        working-directory: losos-desktop
+        run: |
+          just stage-release -- --arch ${{ matrix.arch }} \
+            --version "$LOSOS_VERSION" --out release
+          just release-manifest -- --arch ${{ matrix.arch }} \
+            --version "$LOSOS_VERSION" release
+
+      # always(): the number is worth having most when the build died, since
+      # a full disk is one of the things that kills it.
+      # The per-directory lines say what is big; the workspace total says how
+      # much the job used, and only the total survives someone adding a
+      # directory and never coming back here. It is $GITHUB_WORKSPACE rather
+      # than the checkout, because this job also builds pm beside it and
+      # pm/target is not small. release/ is its own entry because
+      # stage-release copies into it (shutil.copy2, tools/stage-release:154)
+      # rather than renaming, so on a successful run the disk holds the image
+      # twice.
+      - name: Disk after the build
+        if: always()
+        run: |
+          df -h / "$GITHUB_WORKSPACE"
+          du -sh losos-desktop/out/pkgs losos-desktop/out/tmp \
+            losos-desktop/release pm/target 2>/dev/null || true
+          du -sh "$GITHUB_WORKSPACE" 2>/dev/null || true
+
+      # always(): a build that stopped at some package never reached
+      # stage-release, but whatever the layers below it produced is still the
+      # only output this tree has ever made. if-no-files-found: warn keeps that
+      # from failing a job that already said what went wrong.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: losos-desktop/release/
+          if-no-files-found: warn
+
+      # Last in the job, so that the end of the log is the answer rather than
+      # the disk report, the artifact upload and post-job cleanup. A failed
+      # build here is ten thousand lines of compiler output with fifteen that
+      # matter at the bottom, and pm names the package, the step and the
+      # command in those fifteen. Repeated stripped of the frame pm draws
+      # around them, and capped, because a repeat long enough to need
+      # scrolling is the thing it was meant to save.
+      - name: Say what failed
+        if: failure()
+        run: |
+          log="$GITHUB_WORKSPACE/build.log"
+          why="$GITHUB_WORKSPACE/build-failure.log"
+          [ -f "$log" ] || { echo "the build step wrote no log"; exit 0; }
+          awk '/^Error:/{found = 1} found' "$log" | sed -e 's/^ *│ *//' -e '/^$/d' > "$why"
+          # No block means it died somewhere pm does not report from -- a
+          # killed process, a full disk -- and then the last lines are the
+          # only evidence there is.
+          [ -s "$why" ] || tail -c 900 "$log" > "$why"
+          head -c 1400 "$why"
+
   # These are package transport images, not boot-tested OS releases. Publishing
   # needs a successful build; the existing image release retains its VM gates.
   publish-packages:
-    needs: [build, channel]
+    needs: [packages, channel]
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-24.04
     container: docker.io/library/archlinux:base
