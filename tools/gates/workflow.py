@@ -135,7 +135,12 @@ def check_package_handoff(doc):
     if not isinstance(layers, list) or len(layers) < 2:
         failures.append("images.yml: manifest/layers.yaml must define at least 2 layers (packages + image)")
         return failures
-    archive = f"{layers[-2]['name']}-0.1.0.cpkg"
+    package_layer = layers[-2] or {}
+    package_name = str(package_layer.get("name") or "").strip() if isinstance(package_layer, dict) else ""
+    if not package_name:
+        failures.append("images.yml: manifest/layers.yaml penultimate layer must define a non-empty name")
+        return failures
+    archive = f"{package_name}-0.1.0.cpkg"
     archive_ref = "${{ steps.closure.outputs.archive }}"
     layer_ref = "${{ steps.closure.outputs.layer }}"
     uploads = [
