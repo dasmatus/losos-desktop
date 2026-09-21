@@ -1,0 +1,415 @@
+#!/usr/bin/env python3
+"""Carry a flat release directory in an OCI image.
+
+This is the same host-side transport pattern as tools/pm-oci, but for the
+named update artifacts produced by tools/stage-release and tools/release-manifest.
+Nothing here executes an image or unpacks a filesystem beyond restoring those
+opaque files back into a directory.
+"""
+
+import argparse
+import contextlib
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import urllib.parse
+import uuid
+
+REPO = Path(__file__).resolve().parent.parent
+ARCHES = {"x86_64": "amd64", "aarch64": "arm64"}
+MANIFEST = "application/vnd.oci.image.manifest.v1+json"
+CONFIG = "application/vnd.oci.image.config.v1+json"
+LAYER = "application/vnd.oci.image.layer.v1.tar"
+INDEX = "application/vnd.oci.image.index.v1+json"
+LABEL = "org.losos.release."
+SOURCE_LABEL = "org.opencontainers.image.source"
+CHUNK = 1024 * 1024
+COMPONENT = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
+DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
+
+
+class OCIError(Exception):
+    pass
+
+
+def require(condition, message):
+    if not condition:
+        raise OCIError(message)
+
+
+def repository(value):
+    require(isinstance(value, str) and len(value) <= 255,
+            "invalid registry repository")
+    host, separator, path = value.partition("/")
+    require(separator and re.fullmatch(
+        r"(?:localhost|[a-z0-9]+(?:[.-][a-z0-9]+)*)(?::[0-9]{1,5})?", host)
+        and (host == "localhost" or "." in host or ":" in host)
+        and all(re.fullmatch(COMPONENT, part) for part in path.split("/")),
+        "repository must be a lowercase registry host/path without a scheme or tag")
+    if ":" in host:
+        require(0 < int(host.rsplit(":", 1)[1]) <= 65535, "invalid registry port")
+    return value
+
+
+def reference(value):
+    repo, separator, digest = value.partition("@")
+    require(separator and DIGEST.fullmatch(digest),
+            "pull requires a registry repository@sha256:<64 lowercase hex digits>")
+    return repository(repo), digest
+
+
+def source_url(value):
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        valid = (parsed.scheme in ("http", "https") and parsed.hostname
+                 and not parsed.username and not parsed.password
+                 and not parsed.query and not parsed.fragment)
+    except ValueError:
+        valid = False
+    require(valid and len(value) <= 2048 and not any(c.isspace() or ord(c) < 32 for c in value),
+            "source URL must be an HTTP(S) repository URL without credentials, query, or fragment")
+    return value
+
+
+def release_name(value):
+    require(isinstance(value, str) and NAME.fullmatch(value)
+            and Path(value).name == value and value not in (".", ".."),
+            "release file name must be a flat OCI-compatible basename")
+    return value
+
+
+@contextlib.contextmanager
+def workspace(parent):
+    parent.mkdir(parents=True, exist_ok=True)
+    path = parent / (".release-oci-" + uuid.uuid4().hex)
+    path.mkdir(mode=0o700)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
+def regular_open(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        require(stat.S_ISREG(os.fstat(fd).st_mode), f"not a regular file: {path}")
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def hash_file(path):
+    digest = hashlib.sha256()
+    size = 0
+    with regular_open(path) as stream:
+        while block := stream.read(CHUNK):
+            digest.update(block)
+            size += len(block)
+    return "sha256:" + digest.hexdigest(), size
+
+
+def json_bytes(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+
+def read_json(path):
+    with regular_open(path) as stream:
+        raw = stream.read(CHUNK + 1)
+    require(len(raw) <= CHUNK, "OCI metadata is too large")
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, f"duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(raw, object_pairs_hook=unique)
+    except (ValueError, UnicodeError) as error:
+        raise OCIError(f"invalid OCI JSON: {error}") from error
+
+
+def descriptor(media, digest, size):
+    return {"mediaType": media, "digest": digest, "size": size}
+
+
+def put_json(layout, media, value):
+    raw = json_bytes(value)
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+    (layout / "blobs/sha256" / digest[7:]).write_bytes(raw)
+    return descriptor(media, digest, len(raw))
+
+
+def release_header(name, size):
+    member = tarfile.TarInfo("release/" + name)
+    member.size = size
+    member.mode = 0o644
+    member.mtime = 0
+    return member.tobuf(format=tarfile.PAX_FORMAT)
+
+
+def release_files(source):
+    require(source.is_dir(), f"source is not a directory: {source}")
+    files = []
+    for path in sorted(source.iterdir()):
+        require(not path.is_symlink(), f"symlinks are unsupported: {path}")
+        require(path.is_file(), f"source must contain only regular files: {path}")
+        files.append(path)
+    require(files, f"no release files in {source}")
+    return files
+
+
+def make_layout(source, layout, arch, source_repository=None):
+    files = release_files(source)
+    (layout / "blobs/sha256").mkdir(parents=True)
+    layer_path = layout / "layer"
+    layer_hash = hashlib.sha256()
+    layer_size = 0
+    manifest = []
+    with layer_path.open("xb") as target:
+        def write(block):
+            nonlocal layer_size
+            target.write(block)
+            layer_hash.update(block)
+            layer_size += len(block)
+
+        for path in files:
+            name = release_name(path.name)
+            file_hash = hashlib.sha256()
+            with regular_open(path) as source_file:
+                size = os.fstat(source_file.fileno()).st_size
+                write(release_header(name, size))
+                remaining = size
+                while remaining:
+                    block = source_file.read(min(CHUNK, remaining))
+                    require(block, f"file changed while reading: {path}")
+                    file_hash.update(block)
+                    write(block)
+                    remaining -= len(block)
+                require(not source_file.read(1), f"file changed while reading: {path}")
+                write(b"\0" * (-size % 512))
+            manifest.append({
+                "name": name,
+                "sha256": file_hash.hexdigest(),
+                "size": size,
+            })
+        write(b"\0" * 1024)
+    layer_digest = "sha256:" + layer_hash.hexdigest()
+    layer_path.rename(layout / "blobs/sha256" / layer_digest[7:])
+    labels = {
+        LABEL + "format": "release-v1",
+        LABEL + "manifest": json.dumps(manifest, separators=(",", ":")),
+    }
+    if source_repository is not None:
+        labels[SOURCE_LABEL] = source_url(source_repository)
+    config_desc = put_json(layout, CONFIG, {
+        "architecture": ARCHES[arch],
+        "os": "linux",
+        "config": {"Labels": labels},
+        "rootfs": {"type": "layers", "diff_ids": [layer_digest]},
+    })
+    manifest_desc = put_json(layout, MANIFEST, {
+        "schemaVersion": 2,
+        "mediaType": MANIFEST,
+        "config": config_desc,
+        "layers": [descriptor(LAYER, layer_digest, layer_size)],
+    })
+    (layout / "oci-layout").write_bytes(json_bytes({"imageLayoutVersion": "1.0.0"}))
+    (layout / "index.json").write_bytes(json_bytes({
+        "schemaVersion": 2,
+        "mediaType": INDEX,
+        "manifests": [{**manifest_desc, "annotations": {
+            "org.opencontainers.image.ref.name": "release"}}],
+    }))
+    return manifest_desc["digest"]
+
+
+def skopeo(arguments, arch):
+    try:
+        subprocess.run(["skopeo", "--override-arch", ARCHES[arch], "copy",
+                        "--preserve-digests", *arguments],
+                       check=True, stdout=sys.stderr)
+    except FileNotFoundError as error:
+        raise OCIError("skopeo is required; install it on the host") from error
+    except subprocess.CalledProcessError as error:
+        raise OCIError(f"skopeo copy failed (exit {error.returncode})") from error
+
+
+def publish(args):
+    repo = repository(args.repository)
+    if args.source_url is not None:
+        source_url(args.source_url)
+    require(re.fullmatch(r"[\w][\w.-]{0,127}", args.tag, flags=re.ASCII),
+            "invalid OCI tag")
+    with workspace(args.source) as work:
+        layout = work / "image"
+        digest = make_layout(args.source, layout, args.arch, args.source_url)
+        digest_file = work / "digest"
+        skopeo(["--digestfile", str(digest_file),
+                f"oci:{layout}:release", f"docker://{repo}:{args.tag}"],
+               args.arch)
+        with regular_open(digest_file) as stream:
+            copied = stream.read(128).decode("ascii").strip()
+        require(copied == digest, "registry copy did not preserve the manifest digest")
+        print(repo + "@" + digest, flush=True)
+
+
+def checked_blob(layout, desc, media):
+    require(isinstance(desc, dict) and desc.get("mediaType") == media,
+            f"expected descriptor media type {media}")
+    digest = desc.get("digest")
+    size = desc.get("size")
+    require(isinstance(digest, str) and DIGEST.fullmatch(digest)
+            and type(size) is int and size >= 0,
+            "invalid OCI blob descriptor")
+    require(not any(key in desc for key in ("urls", "data")),
+            "external or embedded OCI blobs are unsupported")
+    path = layout / "blobs/sha256" / digest[7:]
+    require(hash_file(path) == (digest, size), "OCI blob digest or size mismatch")
+    return path
+
+
+def restore(layout, digest, arch, work, output):
+    require(read_json(layout / "oci-layout") == {"imageLayoutVersion": "1.0.0"},
+            "unsupported OCI layout")
+    index = read_json(layout / "index.json")
+    require(isinstance(index, dict) and index.get("schemaVersion") == 2
+            and index.get("mediaType", INDEX) == INDEX
+            and isinstance(index.get("manifests"), list)
+            and len(index["manifests"]) == 1,
+            "expected a single OCI image")
+    manifest_desc = index["manifests"][0]
+    require(isinstance(manifest_desc, dict) and manifest_desc.get("digest") == digest,
+            "manifest does not match the requested digest")
+    manifest = read_json(checked_blob(layout, manifest_desc, MANIFEST))
+    require(isinstance(manifest, dict)
+            and set(manifest) == {"schemaVersion", "mediaType", "config", "layers"}
+            and manifest["schemaVersion"] == 2 and manifest["mediaType"] == MANIFEST
+            and isinstance(manifest["layers"], list) and len(manifest["layers"]) == 1,
+            "expected a single-layer release OCI manifest")
+    config = read_json(checked_blob(layout, manifest["config"], CONFIG))
+    layer = checked_blob(layout, manifest["layers"][0], LAYER)
+    require(isinstance(config, dict)
+            and set(config) == {"architecture", "os", "config", "rootfs"}
+            and config["architecture"] == ARCHES[arch] and config["os"] == "linux",
+            "unsupported release config or wrong architecture")
+    require(config["rootfs"] == {
+        "type": "layers", "diff_ids": [manifest["layers"][0]["digest"]]},
+        "invalid rootfs diff_ids")
+    settings = config["config"]
+    require(isinstance(settings, dict) and set(settings) == {"Labels"},
+            "release config must contain only Labels, never an executable")
+    labels = settings["Labels"]
+    required_labels = {LABEL + "format", LABEL + "manifest"}
+    require(isinstance(labels, dict)
+        and set(labels) in (required_labels, required_labels | {SOURCE_LABEL})
+        and all(isinstance(value, str) for value in labels.values())
+        and labels[LABEL + "format"] == "release-v1",
+        "unknown release label format")
+    if SOURCE_LABEL in labels:
+        source_url(labels[SOURCE_LABEL])
+    try:
+        files = json.loads(labels[LABEL + "manifest"])
+    except ValueError as error:
+        raise OCIError(f"invalid release manifest label: {error}") from error
+    require(isinstance(files, list) and files, "release manifest must list files")
+    total_size = 1024
+    planned = []
+    for file_info in files:
+        require(isinstance(file_info, dict) and set(file_info) == {"name", "sha256", "size"},
+                "release manifest entries must contain name, sha256 and size")
+        name = release_name(file_info["name"])
+        digest_hex = file_info["sha256"]
+        size = file_info["size"]
+        require(re.fullmatch(r"[0-9a-f]{64}", digest_hex), f"invalid SHA-256 for {name}")
+        require(type(size) is int and size >= 0, f"invalid size for {name}")
+        header = release_header(name, size)
+        total_size += len(header) + size + (-size % 512)
+        candidate = work / name
+        target = output / name
+        require(not os.path.lexists(target), f"refusing to overwrite {target}")
+        planned.append((header, digest_hex, size, candidate, target))
+    require(manifest["layers"][0]["size"] == total_size,
+            "layer must contain exactly the named release files")
+    with regular_open(layer) as source:
+        for header, digest_hex, size, candidate, _ in planned:
+            file_hash = hashlib.sha256()
+            with candidate.open("xb") as dest:
+                require(source.read(len(header)) == header,
+                        "unsupported tar header: expected matching regular release files")
+                remaining = size
+                while remaining:
+                    block = source.read(min(CHUNK, remaining))
+                    require(block, "truncated release layer")
+                    file_hash.update(block)
+                    dest.write(block)
+                    remaining -= len(block)
+                padding = -size % 512
+                require(source.read(padding) == b"\0" * padding, "invalid tar member padding")
+                require(file_hash.hexdigest() == digest_hex,
+                        f"SHA-256 mismatch for {candidate.name}")
+                dest.flush()
+                os.fsync(dest.fileno())
+        require(source.read(1024) == b"\0" * 1024 and not source.read(1),
+                "invalid tar trailer or extra members")
+    linked = []
+    try:
+        for _, _, _, candidate, target in planned:
+            os.link(candidate, target, follow_symlinks=False)
+            linked.append((candidate, target))
+    except BaseException as error:
+        for candidate, target in linked:
+            try:
+                if os.path.samestat(os.stat(target, follow_symlinks=False), os.stat(candidate)):
+                    target.unlink()
+            except FileNotFoundError:
+                pass
+        if isinstance(error, FileExistsError):
+            raise OCIError(f"refusing to overwrite {target}") from error
+        raise
+
+
+def pull(args):
+    _, digest = reference(args.reference)
+    args.output.mkdir(parents=True, exist_ok=True)
+    with workspace(args.output) as work:
+        layout = work / "image"
+        skopeo([f"docker://{args.reference}", f"oci:{layout}:release"], args.arch)
+        restore(layout, digest, args.arch, work, args.output)
+    print(args.output)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    push = commands.add_parser("publish", help="publish a release directory as one OCI image")
+    push.add_argument("--repository", required=True)
+    push.add_argument("--tag", required=True)
+    push.add_argument("--arch", required=True, choices=ARCHES)
+    push.add_argument("--source", type=Path, default=REPO / "release")
+    push.add_argument("--source-url", help="repository URL for the OCI source label")
+    fetch = commands.add_parser("pull", help="retrieve a digest-pinned release directory")
+    fetch.add_argument("reference")
+    fetch.add_argument("--arch", required=True, choices=ARCHES)
+    fetch.add_argument("--output", type=Path, default=REPO / "release")
+    args = parser.parse_args(argv)
+    try:
+        (publish if args.command == "publish" else pull)(args)
+    except (OCIError, OSError, UnicodeError, tarfile.TarError) as error:
+        print(f"release-oci: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

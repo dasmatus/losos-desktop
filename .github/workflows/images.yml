@@ -1,10 +1,12 @@
 # Build, verify and publish the sysupdate images.
 #
 # The matrix is architecture x channel. `nightly` is built on a schedule and
-# from main; `stable` only from a tag. Both publish to a GitHub release whose
-# tag IS the channel name and which is moved rather than recreated, because
-# systemd-sysupdate's Source Path= has to be a stable URL -- it fetches
-# SHA256SUMS from that directory to discover what versions exist.
+# from main; `stable` only from a tag. Each build first lands in GHCR as one
+# immutable release-directory OCI image per architecture, which the later jobs
+# pull back down. The publish job also updates the GitHub release whose tag IS
+# the channel name, because systemd-sysupdate's Source Path= has to be a stable
+# URL -- it fetches SHA256SUMS from that directory to discover what versions
+# exist.
 name: images
 
 on:
@@ -20,6 +22,7 @@ on:
 # each asks for it itself.
 permissions:
   contents: read
+  packages: read
 
 # GitHub has no native Arch hosted-runner label: Ubuntu supplies only the VM
 # and kernel; every job's userspace and dependencies come from its Arch container.
@@ -545,6 +548,9 @@ jobs:
   # Assemble the image from the trusted package closure built above.
   build:
     needs: [packages, channel]
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -574,7 +580,7 @@ jobs:
       - name: Install image assembly dependencies
         uses: ./losos-desktop/.github/actions/arch-setup
         with:
-          packages: just python-yaml python-jinja
+          packages: just python-yaml python-jinja skopeo
           rust: "true"
           nested: "true"
 
@@ -609,6 +615,37 @@ jobs:
           just release-manifest -- --arch ${{ matrix.arch }} \
             --version "$LOSOS_VERSION" release
 
+      - name: Publish built images to GHCR
+        id: release_image
+        if: github.event_name != 'pull_request'
+        working-directory: losos-desktop
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/release-auth.json
+        run: |
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$GHCR_TOKEN" | skopeo login \
+            --authfile "$REGISTRY_AUTH_FILE" --username "$GITHUB_ACTOR" \
+            --password-stdin ghcr.io
+          unset GHCR_TOKEN
+          ref=$(
+            just release-images -- publish \
+              --repository "ghcr.io/${GITHUB_REPOSITORY,,}/images" \
+              --tag "$CHANNEL-$LOSOS_VERSION-${{ matrix.arch }}" \
+              --arch "${{ matrix.arch }}" --source release \
+              --source-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          )
+          printf '%s\n' "$ref" | tee "release-ref-${{ matrix.arch }}.txt"
+          echo "reference=$ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.release_image.outputs.reference != ''
+        with:
+          name: release-ref-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: losos-desktop/release-ref-${{ matrix.arch }}.txt
+          if-no-files-found: error
+          retention-days: 3
+
       # always(): the number is worth having most when the build died, since
       # a full disk is one of the things that kills it.
       # The per-directory lines say what is big; the workspace total says how
@@ -626,17 +663,6 @@ jobs:
           du -sh losos-desktop/out/pkgs losos-desktop/out/tmp \
             losos-desktop/release pm/target 2>/dev/null || true
           du -sh "$GITHUB_WORKSPACE" 2>/dev/null || true
-
-      # always(): a build that stopped at some package never reached
-      # stage-release, but whatever the layers below it produced is still the
-      # only output this tree has ever made. if-no-files-found: warn keeps that
-      # from failing a job that already said what went wrong.
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
-          path: losos-desktop/release/
-          if-no-files-found: warn
 
       # Last in the job, so that the end of the log is the answer rather than
       # the disk report, the artifact upload and post-job cleanup. A failed
@@ -738,14 +764,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
-          path: release
+          name: release-ref-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: refs
 
       - name: Install QEMU and UEFI firmware
         uses: ./.github/actions/arch-setup
         with:
-          packages: just python-yaml qemu-img ${{ matrix.vm-packages }}
+          packages: just python-yaml qemu-img skopeo ${{ matrix.vm-packages }}
           kvm: "true"
+
+      - name: Pull the built release from GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/release-auth.json
+        run: |
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$GHCR_TOKEN" | skopeo login \
+            --authfile "$REGISTRY_AUTH_FILE" --username "$GITHUB_ACTOR" \
+            --password-stdin ghcr.io
+          unset GHCR_TOKEN
+          just release-images -- pull "$(cat refs/release-ref-${{ matrix.arch }}.txt)" \
+            --arch ${{ matrix.arch }} --output release
 
       - name: Boot the kernel image
         run: |
@@ -798,14 +837,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
-          path: release
+          name: release-ref-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: refs
 
       - name: Install QEMU and UEFI firmware
         uses: ./.github/actions/arch-setup
         with:
-          packages: just python-yaml qemu-img ${{ matrix.vm-packages }}
+          packages: just python-yaml qemu-img skopeo ${{ matrix.vm-packages }}
           kvm: "true"
+
+      - name: Pull the built release from GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/release-auth.json
+        run: |
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$GHCR_TOKEN" | skopeo login \
+            --authfile "$REGISTRY_AUTH_FILE" --username "$GITHUB_ACTOR" \
+            --password-stdin ghcr.io
+          unset GHCR_TOKEN
+          just release-images -- pull "$(cat refs/release-ref-${{ matrix.arch }}.txt)" \
+            --arch ${{ matrix.arch }} --output release
 
       - name: Apply an update inside the VM
         run: |
@@ -869,26 +921,45 @@ jobs:
     steps:
       - *arch-bootstrap
       - name: Install publishing tools
-        run: pacman -Syu --needed --noconfirm github-cli git-lfs
+        run: pacman -Syu --needed --noconfirm github-cli python skopeo
       - uses: actions/download-artifact@v4
-        with: { pattern: "losos-*", path: release, merge-multiple: true }
+        with: { pattern: "release-ref-*", path: refs, merge-multiple: true }
 
       # The release tag is the channel, and it is moved rather than recreated:
       # sysupdate's Path= must stay the same URL across releases, because it is
       # baked into the image that is trying to update itself.
-      # A build that stopped part-way uploads nothing, and there is then
-      # nothing to publish. That is not this job's failure -- the build job is
-      # already red and says where it stopped -- so this reports it and stops
-      # rather than adding a second red job that names no cause.
-      - name: See what the build produced
+      # A build that stopped part-way publishes only the successful architecture
+      # images to GHCR. Pull back whatever exists and report when nothing did.
+      - name: Pull the built releases from GHCR
         id: produced
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/release-auth.json
         run: |
-          if [ -n "$(find release -type f -print -quit 2>/dev/null)" ]; then
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$GHCR_TOKEN" | skopeo login \
+            --authfile "$REGISTRY_AUTH_FILE" --username "$GITHUB_ACTOR" \
+            --password-stdin ghcr.io
+          unset GHCR_TOKEN
+          mkdir -p pulled release
+          for arch in x86_64 aarch64; do
+            ref="refs/release-ref-${arch}.txt"
+            [ -f "$ref" ] || continue
+            just release-images -- pull "$(cat "$ref")" --arch "$arch" --output "pulled/$arch"
+          done
+          if [ -n "$(find pulled -type f -print -quit 2>/dev/null)" ]; then
             echo "any=true" >> "$GITHUB_OUTPUT"
+            for arch in x86_64 aarch64; do
+              dir="pulled/$arch"
+              [ -d "$dir" ] || continue
+              find "$dir" -maxdepth 1 -type f ! -name SHA256SUMS -exec cp {} release/ \;
+              cat "$dir/SHA256SUMS" >> release/SHA256SUMS
+            done
+            sort -u release/SHA256SUMS -o release/SHA256SUMS
             find release -type f | sort
           else
             echo "any=false" >> "$GITHUB_OUTPUT"
-            echo "The build uploaded no artifacts; nothing to publish."
+            echo "The build published no release images; nothing to publish."
           fi
 
       - name: Publish to the channel release
@@ -901,95 +972,3 @@ jobs:
           gh release create "$channel" --repo "$GITHUB_REPOSITORY" \
             --title "LosOS $channel" --notes "Rolling $channel channel." \
             --prerelease release/*
-
-      # The same files also live on a branch of their own, under Git LFS.
-      #
-      # A branch rather than a second release, because a release tag is moved
-      # on every publish and keeps no history: the branch records what each
-      # run produced and gives every build a path that does not change shape.
-      # LFS because these are a compressed root filesystem and a UKI -- tens of
-      # megabytes of incompressible binary that would otherwise be packed into
-      # the repository's own history forever, and be cloned by everyone who
-      # ever checks the source out.
-      #
-      # `images` is an ordinary branch and never merges into the default one.
-      # It is not created by hand: the first publish makes it, because a job
-      # that needs a human to have prepared a branch is a job that fails once
-      # and then never runs again.
-      #
-      # NOTE: raw.githubusercontent.com serves an LFS-tracked file as its
-      # pointer, not its contents, so this branch is storage, not an update
-      # server. The release above is what sysupdate's Path= is aimed at.
-      - name: Host the images on the images branch
-        if: steps.produced.outputs.any == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          channel="${{ needs.channel.outputs.name }}"
-          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-          # --skip-repo here only sets the global clean/smudge filters, so the
-          # clone below checks out real files rather than pointers. It
-          # deliberately does NOT touch a repository, and the repository is
-          # where it matters: `git lfs install` inside one also writes the
-          # pre-push hook, and that hook is what uploads the LFS objects. A
-          # push without it succeeds, writes the pointer files, and uploads
-          # nothing -- leaving a branch whose every image is a 130-byte stub
-          # pointing at an object no server has. The second call below, after
-          # the repository exists, is the one that makes the push real.
-          git lfs install --skip-repo
-
-          # --depth 1: the branch's history is every image ever published, and
-          # this job needs none of it. Without it each run would fetch every
-          # LFS object that has ever been on the branch.
-          if ! git clone --depth 1 --branch images "$remote" images; then
-            mkdir images
-            git -C images init -q -b images
-            git -C images remote add origin "$remote"
-          fi
-
-          cd images
-          # --local: hooks and config in this repository, not the runner's
-          # global state. This is the call that installs pre-push.
-          git lfs install --local
-          # Written before the files are staged: git consults the working
-          # tree's .gitattributes as it adds, so a tarball committed before
-          # this existed would go in as an ordinary blob and stay one.
-          # printf rather than a heredoc: the terminator of an unindented
-          # heredoc has to sit in column one, which it cannot inside a YAML
-          # block scalar, and an indented terminator never terminates.
-          #
-          # Every image format the release can carry, not only the two
-          # tools/stage-release copies today. losos.iso and losos.qcow2 are
-          # whole disks arriving with the mkosi image layer, and a pattern
-          # added after the first one is committed is a pattern that comes too
-          # late: that file is an ordinary blob in the history forever.
-          #
-          # SHA256SUMS is deliberately not tracked: it is small, it is text,
-          # and it is the one file worth reading in a diff.
-          printf '%s\n' \
-            '*.raw.xz filter=lfs diff=lfs merge=lfs -text' \
-            '*.raw filter=lfs diff=lfs merge=lfs -text' \
-            '*.efi filter=lfs diff=lfs merge=lfs -text' \
-            '*.iso filter=lfs diff=lfs merge=lfs -text' \
-            '*.qcow2 filter=lfs diff=lfs merge=lfs -text' \
-            '*.img filter=lfs diff=lfs merge=lfs -text' > .gitattributes
-
-          # Replaced, not added to: the channel directory mirrors what the
-          # channel release holds right now. Old versions stay reachable
-          # through this branch's history rather than piling up in a listing
-          # that SHA256SUMS does not mention.
-          rm -rf "$channel"
-          mkdir -p "$channel"
-          cp -a ../release/. "$channel"/
-
-          git add -A
-          if git diff --cached --quiet; then
-            echo "images branch already holds these files."
-            exit 0
-          fi
-          git commit -q -m "chore(images): $channel from run ${GITHUB_RUN_NUMBER}"
-          git push origin HEAD:images

@@ -204,6 +204,13 @@ revision and architecture. The filename alone does not prove provenance; CI's
 same-run artifact handoff supplies it. Without the option, local builds still
 compile the complete chain.
 
+The finished image artifacts then move a different way. Each build leg names its
+release directory and publishes that flat directory to GHCR as one OCI image,
+which later jobs pull back by immutable digest. That keeps the handoff exact,
+removes the large binary workflow-artifact upload/download pair, and leaves the
+GitHub release step to do the one thing GHCR cannot here: keep the stable
+`nightly`/`stable` URL shape systemd-sysupdate is already pointed at.
+
 The aggregate `ci` check requires the gates, both container checks, pinned
 sources, package compilation, assembly, boot verification and OTA verification
 to succeed. A skipped image build is not sufficient for automerge.
@@ -227,4 +234,5 @@ land on the default branch to receive `workflow_run` events.
 Merges made with `GITHUB_TOKEN` do not trigger `push` workflows. After a
 successful merge the handler explicitly dispatches `images` on `main`, keeping
 post-merge image publishing intact. Its job-local Actions write permission is
-needed for that dispatch; package and assembly jobs remain read-only.
+needed for that dispatch; package and assembly jobs remain read-only apart from
+the build leg's image upload to GHCR.
