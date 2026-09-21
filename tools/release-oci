@@ -251,7 +251,7 @@ def publish(args):
         source_url(args.source_url)
     require(re.fullmatch(r"[\w][\w.-]{0,127}", args.tag, flags=re.ASCII),
             "invalid OCI tag")
-    with workspace(args.source) as work:
+    with workspace(args.source.parent) as work:
         layout = work / "image"
         digest = make_layout(args.source, layout, args.arch, args.source_url)
         digest_file = work / "digest"
