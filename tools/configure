@@ -41,7 +41,7 @@ except ImportError:
 
 import compose as compose_lib
 from fnv import basename, download_path
-from toolchain import Toolchain
+from pm_toolchain import configured_toolchain
 
 UNRESOLVED = "TODO"
 
@@ -323,11 +323,10 @@ def main():
 
     # The toolchain: one manifest, every flag in the tree. A recipe that
     # spelled its own -O2 would be outside the CFI scheme with nothing saying
-    # so, which is what tools/gates/toolchain-report.py exists to catch.
-    toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
+    # so, which is what `tools/pm-toolchain report` exists to catch.
     # The triple is the architecture's, not the toolchain manifest's: writing
     # it in both places is how they come to disagree.
-    toolchain.target["triple"] = arch["triple"]
+    toolchain = configured_toolchain(repo=REPO, triple=arch["triple"])
     subs.update(toolchain.placeholders(tool_path))
 
     subs["@SRCDIR@"] = str(REPO)

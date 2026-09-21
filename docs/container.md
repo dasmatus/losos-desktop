@@ -199,7 +199,7 @@ its dependencies rather than their contents.
 distribution `rustc` cannot satisfy it, so rustup is installed and given a
 version. Both architectures' musl targets are in one image, so the same image
 builds both legs of the matrix, and `wasm32-unknown-unknown` is there for
-`plugins/build.sh`.
+`plugins/Justfile`.
 
 **mkosi**, by commit, and this one is not an optimisation — it is the only
 dependency whose version is part of this repository's source.

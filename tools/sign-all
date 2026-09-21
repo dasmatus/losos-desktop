@@ -1,64 +1,6 @@
 #!/usr/bin/env bash
-# Sign every generated build file with a repository-local key.
-#
-# pm verifies a detached <FILE>.sig against $XDG_CONFIG_HOME/pm/trusted/ BEFORE
-# it parses the file, and holds every dependency to the same standard all the
-# way down (C10). Any edit invalidates a signature, including a comment -- and
-# since every build file here is generated, every `tools/configure` run
-# invalidates all of them. So signing is not a release step, it is part of
-# generating.
-#
-# XDG_CONFIG_HOME is pointed at .pm-config inside the repo. That is deliberate:
-# the key exists only so this tree can verify itself, and it must never be
-# confused with, or overwrite, a developer's real ~/.config/pm signing key.
+# Compatibility wrapper for tools/Justfile's sign-all recipe.
 set -euo pipefail
 
-repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-pm=${PM:-$repo/../pm/target/release/pm}
-
-if [ ! -x "$pm" ]; then
-  echo "sign-all: no pm binary at $pm" >&2
-  echo "sign-all: build it with: cd ../pm && cargo build --release" >&2
-  exit 1
-fi
-
-export XDG_CONFIG_HOME="$repo/.pm-config"
-mkdir -p "$repo/out/pkgs"
-
-# `pm keygen` refuses to overwrite an existing key, which is the behaviour we
-# want: re-running this must not orphan everything signed so far.
-if [ ! -f "$XDG_CONFIG_HOME/pm/signing.key" ]; then
-  ( cd "$repo/out/pkgs" && "$pm" keygen ) >/dev/null
-  echo "sign-all: generated a repository-local signing key"
-fi
-
-# Install the plugin components into the same store, and sign them there.
-#
-# pm loads plugins from $XDG_CONFIG_HOME/pm/plugins/ and holds them to the same
-# trust store as a build file, because a plugin is code that runs inside pm and
-# helps decide what a jail allows. Nothing else copies them in, so without this
-# the store keeps whatever was installed by hand the first time: `./do check`
-# then validates the tree against a STALE plugin, and CI -- where .pm-config
-# does not exist at all, being gitignored -- validates it against no plugin.
-# Both were true until this loop existed, and the first symptom was pm
-# rejecting every recipe with "expected record of 7 fields, found 6" after the
-# contract gained a field.
-plugins=0
-if [ -d "$repo/plugins/dist" ]; then
-  mkdir -p "$XDG_CONFIG_HOME/pm/plugins"
-  for component in "$repo"/plugins/dist/*.wasm; do
-    [ -e "$component" ] || continue
-    install -m 0644 "$component" "$XDG_CONFIG_HOME/pm/plugins/"
-    ( cd "$repo/out/pkgs" && "$pm" sign "$XDG_CONFIG_HOME/pm/plugins/$(basename "$component")" ) >/dev/null
-    plugins=$((plugins + 1))
-  done
-fi
-
-count=0
-for recipe in "$repo"/out/recipes/*/build.yaml; do
-  [ -e "$recipe" ] || continue
-  ( cd "$repo/out/pkgs" && "$pm" sign "$recipe" ) >/dev/null
-  count=$((count + 1))
-done
-
-echo "sign-all: signed $count build file(s) and $plugins plugin component(s)"
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+exec just --justfile "$repo/tools/Justfile" --working-directory "$repo" sign-all

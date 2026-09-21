@@ -1,0 +1,42 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+set positional-arguments
+
+here := canonicalize(justfile_directory())
+repo := canonicalize(here + "/..")
+pm_root := env_var_or_default("PM_ROOT", repo + "/../pm")
+
+build *crates:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  target=wasm32-unknown-unknown
+  out="{{here}}/dist"
+  encoder="{{pm_root}}/plugins/target/release/encoder"
+
+  mkdir -p "$out"
+  if [ "$#" -eq 0 ]; then
+    set -- losos-image losos-mkosi losos-systemd
+  elif [ "${1:-}" = "--" ]; then
+    shift
+    if [ "$#" -eq 0 ]; then
+      set -- losos-image losos-mkosi losos-systemd
+    fi
+  fi
+
+  args=()
+  for crate in "$@"; do
+    args+=( -p "$crate" )
+  done
+  cargo build --release --target "$target" "${args[@]}"
+
+  if [ ! -x "$encoder" ]; then
+    echo "building pm's component encoder in {{pm_root}}/plugins" >&2
+    ( cd "{{pm_root}}/plugins" && cargo build --release -p encoder )
+  fi
+
+  for crate in "$@"; do
+    module="{{here}}/target/$target/release/$(echo "$crate" | tr - _)".wasm
+    "$encoder" "$module" "$out/$crate.wasm"
+  done
+
+  echo "built into $out"

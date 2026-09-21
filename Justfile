@@ -92,7 +92,7 @@ sign:
   #!/usr/bin/env bash
   set -euo pipefail
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
-  "{{repo}}/tools/sign-all"
+  just --justfile "{{repo}}/tools/Justfile" --working-directory "{{repo}}" sign-all
 
 digest:
   #!/usr/bin/env bash
@@ -139,7 +139,7 @@ lint:
   # turn into a gate that agrees with everything.
   python3 "{{repo}}/tools/gates/recipe-entrypoints.py" --self-test
   python3 "{{repo}}/tools/check-latest" --self-test >/dev/null
-  "{{repo}}/tools/gates/explain-all"
+  just --justfile "{{repo}}/tools/gates/Justfile" --working-directory "{{repo}}" explain-all
 
 check *args:
   #!/usr/bin/env bash
@@ -308,7 +308,7 @@ plugins *args:
   set -euo pipefail
   if [ "${1:-}" = "--" ]; then shift; fi
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"
-  "{{repo}}/plugins/build.sh" "$@"
+  just --justfile "{{repo}}/plugins/Justfile" --working-directory "{{repo}}" build "$@"
 
 clean:
   rm -rf "{{repo}}/out/recipes" "{{repo}}/out/pkgs" "{{repo}}/out/tmp"
@@ -389,7 +389,7 @@ toolchain-report *args:
   #!/usr/bin/env bash
   set -euo pipefail
   if [ "${1:-}" = "--" ]; then shift; fi
-  python3 "{{repo}}/tools/gates/toolchain-report.py" "$@"
+  just --justfile "{{repo}}/tools/Justfile" --working-directory "{{repo}}" toolchain-report -- "$@"
 
 vm-test *args:
   #!/usr/bin/env bash

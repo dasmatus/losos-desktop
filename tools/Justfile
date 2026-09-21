@@ -1,0 +1,48 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+set positional-arguments
+
+repo := canonicalize(justfile_directory() + "/..")
+pm := env_var_or_default("PM", repo + "/../pm/target/release/pm")
+
+sign-all:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  export XDG_CONFIG_HOME="{{repo}}/.pm-config"
+  mkdir -p "{{repo}}/out/pkgs"
+
+  if [ ! -x "{{pm}}" ]; then
+    echo "sign-all: no pm binary at {{pm}}" >&2
+    echo "sign-all: build it with: cd ../pm && cargo build --release" >&2
+    exit 1
+  fi
+
+  if [ ! -f "$XDG_CONFIG_HOME/pm/signing.key" ]; then
+    ( cd "{{repo}}/out/pkgs" && "{{pm}}" keygen ) >/dev/null
+    echo "sign-all: generated a repository-local signing key"
+  fi
+
+  plugins=0
+  if [ -d "{{repo}}/plugins/dist" ]; then
+    mkdir -p "$XDG_CONFIG_HOME/pm/plugins"
+    for component in "{{repo}}"/plugins/dist/*.wasm; do
+      [ -e "$component" ] || continue
+      install -m 0644 "$component" "$XDG_CONFIG_HOME/pm/plugins/"
+      ( cd "{{repo}}/out/pkgs" && "{{pm}}" sign "$XDG_CONFIG_HOME/pm/plugins/$(basename "$component")" ) >/dev/null
+      plugins=$((plugins + 1))
+    done
+  fi
+
+  count=0
+  for recipe in "{{repo}}"/out/recipes/*/build.yaml; do
+    [ -e "$recipe" ] || continue
+    ( cd "{{repo}}/out/pkgs" && "{{pm}}" sign "$recipe" ) >/dev/null
+    count=$((count + 1))
+  done
+
+  echo "sign-all: signed $count build file(s) and $plugins plugin component(s)"
+
+toolchain-report *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
+  python3 "{{repo}}/tools/pm-toolchain" report "$@"

@@ -11,7 +11,7 @@ from pm's side a plugin built against an older contract is simply a plugin.
 
 There is deliberately **no staleness check**, because there is nothing to go
 stale. `plugins/dist/` is build output and is not tracked: `./do plugins`
-produces it from the sources beside it, and `tools/sign-all` installs whatever
+produces it from the sources beside it, and the sign-all recipe installs whatever
 is there into pm's trust store. An earlier version of this file compared the
 component's mtime against `src/lib.rs`'s, which was wrong twice over -- git
 does not record mtimes, so in a fresh clone the comparison decided by whichever

@@ -260,7 +260,7 @@ rust:
   # in the same checks -- but only if both were built with it.
   #
   # -Zsanitizer needs nightly. On stable these are dropped and the Rust
-  # packages are built with LTO alone; tools/gates/toolchain-report.py says so
+  # packages are built with LTO alone; tools/pm-toolchain report says so
   # rather than letting it pass unnoticed.
   #
   # Note what is NOT here: a linker. `compiler.linker` above reaches a package
@@ -285,7 +285,7 @@ rust:
 # This list is the honest part of the CFI claim. A scheme that is "on" for a
 # distribution always has exceptions; the difference between a real one and a
 # marketing one is whether the exceptions are written down and counted.
-# tools/gates/toolchain-report.py prints them every run, and tools/configure
+# tools/pm-toolchain report prints them every run, and tools/configure
 # emits a separate response file per exception so a package cannot silently
 # take the default set.
 exceptions:

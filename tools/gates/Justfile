@@ -1,0 +1,50 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+repo := canonicalize(justfile_directory() + "/../..")
+pm := env_var_or_default("PM", repo + "/../pm/target/release/pm")
+
+explain-all:
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  if [ ! -x "{{pm}}" ]; then
+    echo "explain-all: no pm binary at {{pm}}" >&2
+    exit 1
+  fi
+
+  export XDG_CONFIG_HOME="{{repo}}/.pm-config"
+
+  missing=()
+  for component in losos-image losos-mkosi; do
+    [ -f "$XDG_CONFIG_HOME/pm/plugins/$component.wasm" ] || missing+=("$component")
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "explain-all: plugin component(s) missing: ${missing[*]}" >&2
+    echo "explain-all: run just plugins ${missing[*]}" >&2
+    echo "explain-all: without them pm cannot explain the image layer, and reports" >&2
+    echo "explain-all: an unexpandable command or an underivable policy rather" >&2
+    echo "explain-all: than a missing plugin" >&2
+  fi
+
+  failed=0
+  count=0
+  for recipe in "{{repo}}"/out/recipes/*/build.yaml; do
+    [ -e "$recipe" ] || continue
+    count=$((count + 1))
+    name=$(basename "$(dirname "$recipe")")
+    if output=$( cd "{{repo}}/out/pkgs" && "{{pm}}" explain "$recipe" 2>&1 ); then
+      grants=$(printf '%s\n' "$output" | sed -n 's/^grants: *//p')
+      printf '  %-28s %s\n' "$name" "$grants"
+    else
+      failed=$((failed + 1))
+      printf '  %-28s FAILED\n' "$name"
+      printf '%s\n' "$output" | sed 's/^/      /'
+    fi
+  done
+
+  if [ "$failed" -gt 0 ]; then
+    echo "explain-all: $failed of $count recipe(s) rejected by pm" >&2
+    exit 1
+  fi
+
+  echo "explain-all: all $count recipe(s) accepted by pm"

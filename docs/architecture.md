@@ -148,4 +148,4 @@ committed, so a clone that skipped it has no `%{losos-mkosi:esp}` to expand.
 | `tools/check-digest` | pm really does put a download where `tools/configure` said — proved against a real `pm build` over loopback, not against our own arithmetic. |
 | `tools/gates/fingerprint-lint.py` | `env` is absent, no shell metacharacters, and pm's own table re-applied past the one permitted wrapper. |
 | `tools/gates/test-image.py` | The cpio and PE writers behave, checked with an independent parser. |
-| `tools/gates/explain-all` | pm itself accepts every command in every layer, and each layer's capability set is what it should be — notably, the image layer has no `Network` at all. |
+| `tools/gates/Justfile` `explain-all` | pm itself accepts every command in every layer, and each layer's capability set is what it should be — notably, the image layer has no `Network` at all. |

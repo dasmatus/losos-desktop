@@ -147,14 +147,14 @@ jobs:
       # stays an exact hit across a Rust pin bump and goes on serving
       # components the installed compiler never produced.
       #
-      # Nothing reads plugins/dist out of the tree -- tools/sign-all installs
+      # Nothing reads plugins/dist out of the tree -- the sign-all recipe installs
       # whatever is there into pm's trust store -- so a restore is
       # indistinguishable from having just built them.
       - id: components
         uses: actions/cache/restore@v4
         with:
           path: losos-desktop/plugins/dist
-          key: plugins-arch-${{ runner.arch }}-${{ env.PM_REF }}-${{ steps.pm.outputs.rustc }}-${{ hashFiles('losos-desktop/plugins/**/*.rs', 'losos-desktop/plugins/**/Cargo.toml', 'losos-desktop/plugins/Cargo.lock', 'losos-desktop/plugins/wit/*.wit', 'losos-desktop/plugins/build.sh') }}
+          key: plugins-arch-${{ runner.arch }}-${{ env.PM_REF }}-${{ steps.pm.outputs.rustc }}-${{ hashFiles('losos-desktop/plugins/**/*.rs', 'losos-desktop/plugins/**/Cargo.toml', 'losos-desktop/plugins/Cargo.lock', 'losos-desktop/plugins/wit/*.wit', 'losos-desktop/plugins/Justfile', 'losos-desktop/plugins/build.sh') }}
 
       - name: Build the plugin components
         if: steps.components.outputs.cache-hit != 'true'
