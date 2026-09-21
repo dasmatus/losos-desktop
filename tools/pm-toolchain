@@ -10,7 +10,7 @@ case "${1:-}" in
     if command -v just >/dev/null 2>&1; then
       exec just --justfile "$repo/tools/gates/Justfile" --working-directory "$repo" toolchain-report -- "$@"
     fi
-    exec "$repo/tools/gates/toolchain-report.py" "$@"
+    exec "$repo/tools/gates/toolchain-report.sh" "$@"
     ;;
   ""|-h|--help|help)
     printf '%s\n' \
