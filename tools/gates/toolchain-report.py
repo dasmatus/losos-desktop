@@ -121,6 +121,7 @@ host_flags() {
 
 mapfile -t host_cflags < <(host_flags "${cflags[@]}")
 mapfile -t host_ldflags < <(host_flags "${ldflags[@]}")
+compile_cmd=("$cc" "${host_cflags[@]}" "${host_ldflags[@]}")
 
 printf 'toolchain-report\n'
 printf '  compiler     %s / %s\n' "$cc" "$linker"
@@ -200,8 +201,8 @@ int main(void) {
 }
 EOF
 
-if "$cc" "${host_cflags[@]}" "${host_ldflags[@]}" -shared -o "$work/libprobe.so" "$work/lib.c" >"$work/lib.err" 2>&1; then
-  if "$cc" "${host_cflags[@]}" "${host_ldflags[@]}" -o "$work/probe" "$work/main.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/probe.err" 2>&1; then
+if "${compile_cmd[@]}" -shared -o "$work/libprobe.so" "$work/lib.c" >"$work/lib.err" 2>&1; then
+  if "${compile_cmd[@]}" -o "$work/probe" "$work/main.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/probe.err" 2>&1; then
     set +e
     probe_out=$(
       cd "$work" && ./probe
@@ -235,7 +236,7 @@ else
 fi
 
 if [ "$ok" -eq 1 ] && [ "$verify" -eq 1 ]; then
-  if "$cc" "${host_cflags[@]}" "${host_ldflags[@]}" -o "$work/violation" "$work/violation.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/violation-build.err" 2>&1; then
+  if "${compile_cmd[@]}" -o "$work/violation" "$work/violation.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/violation-build.err" 2>&1; then
     set +e
     violation_combined=$(cd "$work" && ./violation 2>&1)
     violation_status=$?

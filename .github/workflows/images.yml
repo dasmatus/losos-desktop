@@ -741,6 +741,7 @@ jobs:
     steps:
       - name: Keep the historic aggregate PR status
         env:
+          PINNED_READY: ${{ needs.pinned.outputs.ready }}
           GATES_RESULT: ${{ needs.gates.result }}
           CONTAINER_RESULT: ${{ needs.container.result }}
           PINNED_RESULT: ${{ needs.pinned.result }}
@@ -752,15 +753,23 @@ jobs:
           for result in \
             "$GATES_RESULT" \
             "$CONTAINER_RESULT" \
-            "$PINNED_RESULT" \
-            "$BUILD_RESULT" \
-            "$VERIFY_RESULT" \
-            "$OTA_RESULT"; do
+            "$PINNED_RESULT"; do
             [ "$result" = success ] || {
               echo "ci: dependent job finished with $result" >&2
               exit 1
             }
           done
+          if [ "$PINNED_READY" = true ]; then
+            for result in \
+              "$BUILD_RESULT" \
+              "$VERIFY_RESULT" \
+              "$OTA_RESULT"; do
+              [ "$result" = success ] || {
+                echo "ci: build-dependent job finished with $result" >&2
+                exit 1
+              }
+            done
+          fi
 
   publish:
     needs: [build, verify, ota, channel]
