@@ -31,7 +31,7 @@ inputs:
 outputs:
   rustc:
     description: >
-      The runner's rustc identity, in the form this action keys its own caches
+      The job container's rustc identity, in the form this action keys its own caches
       on. Exposed rather than kept private because anything else in the same
       job that is cached across runs and comes out of a cargo build has the
       same input, and a key that leaves it out goes on serving artefacts built
@@ -63,11 +63,13 @@ runs:
           echo "pm is checked out at $have, not the pinned ${{ inputs.ref }}" >&2
           exit 1
         fi
-        # The compiler is as much an input to the binary as the source is, and
-        # the runner image's Rust is bumped without anything here changing.
-        # Left out of the key, a toolchain bump is invisible and the cache goes
-        # on serving a binary built by a compiler that is no longer installed.
+        # Rust is pinned by arch-setup; its identity still belongs in the key
+        # so moving that pin cannot restore an older compiler's output.
         echo "rustc=$(rustc --version | tr ' /()' '----')" >> "$GITHUB_OUTPUT"
+        # runner.os only says Linux, not Arch versus the former Ubuntu jobs.
+        # Rolling glibc can also change without a source or compiler change;
+        # never restore a binary linked against a different runtime.
+        echo "glibc=$(pacman -Q glibc | tr ' ' '-')" >> "$GITHUB_OUTPUT"
 
     # restore/save rather than plain `actions/cache`, here and at every other
     # cache in this repository's CI. `actions/cache` writes its entry from a
@@ -92,12 +94,14 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: pm/target/release/pm
-        key: pm-bin-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.rustc }}-${{ inputs.ref }}
+        key: pm-bin-arch-${{ runner.arch }}-${{ steps.pin.outputs.glibc }}-${{ steps.pin.outputs.rustc }}-${{ inputs.ref }}
 
     - name: Build pm
       if: steps.binary.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo build --release --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
+      # pmd is currently a worker entrypoint, not the build service. Build only
+      # the CLI we cache and run, from the dependency graph upstream locked.
+      run: cargo build --locked --release --bin pm --manifest-path "$GITHUB_WORKSPACE/pm/Cargo.toml"
 
     - name: Keep the pm binary
       if: steps.binary.outputs.cache-hit != 'true'
@@ -122,7 +126,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: pm/plugins/target/release/encoder
-        key: pm-enc-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.rustc }}-${{ inputs.ref }}
+        key: pm-enc-arch-${{ runner.arch }}-${{ steps.pin.outputs.glibc }}-${{ steps.pin.outputs.rustc }}-${{ inputs.ref }}
 
     - name: Build pm's component encoder
       if: inputs.encoder == 'true' && steps.encoder.outputs.cache-hit != 'true'

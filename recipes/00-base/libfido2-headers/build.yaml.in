@@ -1,0 +1,83 @@
+# libfido2's public headers and its .pc file, with nothing compiled.
+#
+# This is half of the answer to a cycle that looked unbreakable. libfido2
+# hard-requires libudev on Linux -- CMakeLists.txt calls
+# `pkg_search_module(UDEV libudev REQUIRED)` and src/hid_linux.c makes fourteen
+# udev_* calls to enumerate hidraw at all -- and the only libudev in this
+# distribution comes from systemd, a layer above. systemd in turn is built
+# -Dlibfido2=enabled. Each appeared to need the other finished first.
+#
+# It is not symmetric. systemd never links libfido2: meson.build:1236 takes the
+# dependency and line 1238 keeps only
+# `partial_dependency(includes: true, compile_args: true)` from it, nothing
+# else in the file touches the full object, and at runtime it dlopens
+# "libfido2.so.1" and resolves 48 symbols by dlsym
+# (src/shared/libfido2-util.c:93). So systemd needs these headers and this .pc
+# at configure time and the shared object never -- while libfido2 needs libudev
+# to compile at all. The arrow points one way, so the two halves are ordered
+# rather than iterated: this member here, below systemd, and the real libfido2
+# in losos-20-systemd after it.
+#
+# Nothing is compiled, so nothing is needed from udev, and that is the whole
+# trick. src/CMakeLists.txt:151-152 installs fido.h and the fido/ directory as
+# plain files straight out of the source tree; line 154 generates libfido2.pc
+# from libfido2.pc.in with an @ONLY substitution of four cmake variables. The
+# staging script reproduces exactly that and reads the version back out of the
+# source so it is not written down a second time.
+#
+# It shares the LIBFIDO2 source key with the real recipe, the same way
+# linux-headers shares LINUX with the kernel, so both come from one tarball and
+# one hash and the headers can never describe a different version from the
+# library. The `version:` list below is checked against manifest/sources.lock
+# by tools/gates/versions.py independently of the other recipe's, so a
+# `tools/check-latest --apply` that moved only one of the two turns the gate
+# red instead of letting the pair drift apart quietly.
+#
+# Tombstone for the options this replaces: a two-pass systemd was the earlier
+# recommendation and is not coming back unless this fails, because pass one
+# leaves files behind that pass two may not overwrite, and it pays for a second
+# full systemd compile -- pm has no build cache (C5, C6). eudev would put a
+# systemd fork in a systemd-native distribution. Patching hid_linux.c would be
+# carried forever. docs/yubikey.md and the recipe in losos-20-systemd carry the
+# full list.
+name: libfido2-headers
+version:
+- '1'
+- '15'
+- '0'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBFIDO2@: '@SHA256_LIBFIDO2@'
+  run:
+  - mkdir -p /build/src/libfido2-headers
+  - tar -xf @DL_LIBFIDO2@ --no-same-owner -C /build/src/libfido2-headers --strip-components=1
+
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  # Both roots, because /dest is what this member contributes to the layer's
+  # archive and /build/sysroot is what the members after it -- systemd, two
+  # layers up -- actually configure against.
+  - /bin/sh @RECIPE@/files/libfido2-headers/stage-headers.sh /build/src/libfido2-headers /dest /build/sysroot
+
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  # fido.h is the umbrella header and fido/param.h is one of the ones behind
+  # it, so a copy that silently took only the top level fails here.
+  - test -e /dest/usr/include/fido.h
+  - test -e /dest/usr/include/fido/param.h
+  - test -e /dest/usr/lib/pkgconfig/libfido2.pc
+  # The .pc's Version: line is not asserted here, and deliberately so. A pm
+  # step has no shell -- pm splits the line itself -- so a grep for an anchored
+  # pattern would arrive with its quotes attached and match nothing while
+  # passing. The check lives in stage-headers.sh instead, which does have a
+  # shell: it refuses to write the file at all if FIDO_MAJOR, FIDO_MINOR or
+  # FIDO_PATCH came back empty from the source's CMakeLists.txt. Same
+  # guarantee, in the one place that can express it.

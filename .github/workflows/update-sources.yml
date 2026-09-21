@@ -51,6 +51,12 @@ on:
 permissions:
   contents: read
 
+# GitHub supplies Ubuntu VM hosts, not a native Arch runner label. All job
+# commands run in Arch userspace, with Bash rather than containers' default sh.
+defaults:
+  run:
+    shell: bash
+
 # One run at a time: two overlapping runs would each rewrite the proposal
 # branch from its own survey, and the second would land on top of the first
 # with no relation to it. Queued rather than cancelled -- a run that has
@@ -63,22 +69,35 @@ env:
   # The same commit images.yml pins, and for the same reason: two gates that
   # follow pm's tip are two gates that can disagree with each other and with
   # whatever this repository's own CI approved.
-  PM_REF: 145bae94bf170a9779029abdb41777ea380dc9f0
+  PM_REF: 47a32e3f74a99f3fe21b7af2d73ab1446da8bacc
 
 jobs:
   # What upstream says, turned into a matrix. Nothing here writes to the tree.
   survey:
     runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
     outputs:
       matrix: ${{ steps.ask.outputs.matrix }}
       any: ${{ steps.ask.outputs.any }}
     steps:
+      # Before checkout: a local action does not exist yet, and checkout needs
+      # git to avoid its REST-archive fallback. Match Containerfile's handling
+      # of both pacman sandbox directive names, then perform a full upgrade.
+      - &arch-bootstrap
+        name: Bootstrap Arch before checkout
+        run: |
+          if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf
+          elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          else
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          fi
+          pacman -Syu --needed --noconfirm git ca-certificates tar gzip zstd
       - uses: actions/checkout@v4
 
       - name: Install what check-latest needs
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends just python3-yaml
+        uses: ./.github/actions/arch-setup
 
       # Every dispatch input reaches this step as an environment variable and
       # none is spliced into a command line or into Python source: an input is
@@ -154,12 +173,18 @@ jobs:
   # let twenty legs gate against twenty separately built binaries.
   toolchain:
     runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
     steps:
+      - *arch-bootstrap
       - uses: actions/checkout@v4
-        with: { repository: dichhead/pm, ref: "${{ env.PM_REF }}" }
-      - run: cargo build --release
+        with: { path: losos-desktop }
+      - uses: ./losos-desktop/.github/actions/arch-setup
+        with:
+          rust: "true"
+      - uses: ./losos-desktop/.github/actions/pm
+        with: { ref: "${{ env.PM_REF }}" }
       - uses: actions/upload-artifact@v4
-        with: { name: pm-binary, path: target/release/pm }
+        with: { name: pm-binary, path: pm/target/release/pm }
 
   # One candidate, alone, all the way through.
   try:
@@ -174,7 +199,13 @@ jobs:
       matrix:
         key: ${{ fromJSON(needs.survey.outputs.matrix) }}
     runs-on: ubuntu-24.04
+    container:
+      image: docker.io/library/archlinux:base
+      # The digest gate runs pm's jail: allow its namespaces and procfs without
+      # mutating the Ubuntu host's sysctls or granting full privilege.
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
     steps:
+      - *arch-bootstrap
       # The layout the gates assume: tools/gates/fingerprint-lint.py reads
       # ../pm/src/policy.rs and tools/gates/plugins.py reads ../pm/wit, and
       # both DOWNGRADE SILENTLY when pm is not there -- the run still prints
@@ -185,17 +216,10 @@ jobs:
         with: { repository: dichhead/pm, path: pm, ref: "${{ env.PM_REF }}" }
 
       - name: Install what the gates need
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev just python3-yaml
-
-      # pm's jail is a user namespace, and Ubuntu 24.04 ships
-      # kernel.apparmor_restrict_unprivileged_userns=1, which denies the
-      # uid_map write hakoniwa needs. Without this every pm invocation fails
-      # with "Operation not permitted" from inside the sandbox.
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        uses: ./losos-desktop/.github/actions/arch-setup
+        with:
+          packages: clang lld mold llvm compiler-rt just python-yaml
+          rust: "true"
 
       - uses: actions/download-artifact@v4
         with: { name: pm-binary, path: pm-bin }
@@ -346,23 +370,24 @@ jobs:
     needs: [survey, try]
     if: always() && needs.survey.outputs.any == 'true'
     runs-on: ubuntu-24.04
+    container:
+      image: docker.io/library/archlinux:base
+      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
     permissions:
       contents: write
       pull-requests: write
     steps:
+      - *arch-bootstrap
       - uses: actions/checkout@v4
         with: { path: losos-desktop, fetch-depth: 0 }
       - uses: actions/checkout@v4
         with: { repository: dichhead/pm, path: pm, ref: "${{ env.PM_REF }}" }
 
       - name: Install what the gates need
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang lld llvm libclang-rt-18-dev just python3-yaml
-
-      - name: Allow unprivileged user namespaces
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        uses: ./losos-desktop/.github/actions/arch-setup
+        with:
+          packages: clang lld mold llvm compiler-rt just python-yaml github-cli
+          rust: "true"
 
       - uses: actions/download-artifact@v4
         with: { name: pm-binary, path: pm-bin }

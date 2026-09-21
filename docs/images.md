@@ -75,6 +75,48 @@ not stored, and it leaves the GPT backup header short of the new end — which
 repart relocates on its first run, exactly as it does for every cloud image
 shipped this way.
 
+## Swap and zswap
+
+The kernel enables zswap by default, using the software **842** compressor on
+both architectures. zswap is a compressed RAM cache in front of disk swap, not
+a replacement for it. Its RAM pool retains the kernel's default limit; the
+RAM-sized allocation below is **disk space**, not the zswap pool.
+
+Before repart runs, `losos-swap` writes
+`/sysroot/run/repart.d/25-swap.conf` with equal minimum and maximum sizes
+derived from the running machine's total usable RAM (`sysinfo.totalram *
+mem_unit`, equivalent to `/proc/meminfo`'s `MemTotal`). It does not use
+fluctuating free/available memory or the image builder's RAM. The size is
+rounded up only to repart's 4096-byte alignment. The swap header uses one
+page, so the usable capacity reported by `swapon` is slightly smaller than the
+partition's disk allocation.
+
+The initrd carries this helper, its repart drop-in, and the util-linux swap
+tools. repart formats the partition with `mkswap`; after switch-root,
+`systemd-gpt-auto-generator` discovers its swap GPT type and activates it
+without an fstab entry. No swap partition is baked into the build artifacts.
+The installer generates the same definition under `/run/repart.sysinstall.d`
+before checking the selected disk's capacity. Boot-time repart is skipped on
+installer media so it cannot allocate swap on the live USB/DVD instead.
+
+The target needs unallocated space for RAM-sized swap **in addition to** the
+existing root, ESP and home requirements. In particular, the QCOW2's default
+12 GiB expansion is not enough for every guest RAM size; grow its virtual disk
+before first boot when necessary. Insufficient space is an error, not a reason
+to silently provision smaller swap.
+
+This sizes a new installation or first-boot partition, not an already occupied
+disk. repart never shrinks or moves existing partitions: an older installation
+without free space needs manual repartitioning, and changing RAM after
+provisioning does not guarantee a matching swap size. A/B updates and factory
+reset leave the swap partition intact. Swap is not encrypted by this policy;
+842 compression is not encryption, and this does not configure hibernation.
+Administrators can override the kernel defaults with `zswap.enabled=0` or
+`zswap.compressor=...`. At runtime, check `/sys/module/zswap/parameters/enabled`,
+`/sys/module/zswap/parameters/compressor`, and `/proc/swaps`.
+
+## The ESPs
+
 The two ESPs are not the same. The disk's carries systemd-boot at the
 removable-media path with the UKI beside it in `EFI/Linux`, because an installed
 system needs a loader to offer the previous kernel after a failed update. The

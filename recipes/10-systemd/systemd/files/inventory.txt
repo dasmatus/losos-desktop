@@ -139,6 +139,16 @@ usr/lib/systemd/systemd-oomd
 usr/bin/oomctl
 usr/lib/systemd/systemd-udevd
 usr/bin/udevadm
+# A security token reaches an unprivileged process -- a browser doing WebAuthn
+# -- only if udev tags its hidraw node for the logged-in seat. systemd does all
+# of that itself and this OS ships no rules of its own for it: fido_id reads
+# the HID report descriptor and sets ID_SECURITY_TOKEN, 60-fido-id.rules runs
+# it, and 70-uaccess.rules turns that property into an ACL. The last of those
+# is generated only when logind AND acl are both enabled, which is the kind of
+# pair that goes quiet rather than red, so all three are named here.
+usr/lib/udev/fido_id
+usr/lib/udev/rules.d/60-fido-id.rules
+usr/lib/udev/rules.d/70-uaccess.rules
 usr/bin/systemd-hwdb|usr/lib/systemd/systemd-hwdb
 usr/lib/systemd/systemd-modules-load
 usr/lib/systemd/systemd-binfmt

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and run the build host described by the repository's Containerfile.
+"""Pull, build and run the build host described by the repository's Containerfile.
 
 `docs/host-requirements.md` says what a build host must provide; the
 Containerfile provides it; this puts the repository inside it. The point is that
@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-IMAGE = "localhost/losos-build"
+IMAGE = "ghcr.io/dasmatus/losos-desktop/build-host:latest"
 
 # Which base image the Containerfile is built from, per host architecture.
 #
@@ -62,6 +62,11 @@ IMAGE = "localhost/losos-build"
 BASE_IMAGES = {
     "x86_64": "docker.io/library/archlinux:base",
     "aarch64": "docker.io/menci/archlinuxarm:base",
+}
+
+MACHINE_ALIASES = {
+    "amd64": "x86_64",
+    "arm64": "aarch64",
 }
 
 
@@ -120,7 +125,8 @@ def base_image():
     programs in it have to run here. `tools/configure --arch` is the other
     question and is unrelated.
     """
-    machine = platform.machine()
+    raw_machine = platform.machine()
+    machine = MACHINE_ALIASES.get(raw_machine, raw_machine)
     try:
         return BASE_IMAGES[machine]
     except KeyError:
@@ -131,11 +137,102 @@ def base_image():
         )
 
 
+def image():
+    """Allow a digest pin or a locally built tag without changing every caller."""
+    return os.environ.get("LOSOS_CONTAINER_IMAGE", IMAGE)
+
+
+def pull(engine, args):
+    return subprocess.call([engine, "pull", image()])
+
+
+def ensure_image(engine):
+    """Reuse the local copy; an unavailable registry must not trigger a rebuild."""
+    if subprocess.call(
+        [engine, "image", "inspect", image()],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ) == 0:
+        return 0
+    return pull(engine, None)
+
+# Where a distribution puts its dynamic loader. Anything else in an ELF's
+# PT_INTERP came from a private toolchain prefix -- Homebrew, Nix, conda -- and
+# is a directory this image has never heard of.
+SYSTEM_LOADER_DIRS = ("/lib/", "/lib64/", "/usr/lib/", "/usr/lib64/")
+
+
+def elf_interpreter(binary):
+    """The PT_INTERP of a 64-bit ELF, or None if there is not one to read.
+
+    None covers every uninteresting case at once: a static binary, a file that
+    is not an ELF, a 32-bit or big-endian one, a short read. This is advice
+    about a confusing error message, so anything unparsed is simply no advice.
+    """
+    try:
+        blob = binary.read_bytes()
+    except OSError:
+        return None
+    if blob[:4] != b"\x7fELF" or blob[4:6] != b"\x02\x01":
+        return None
+    phoff = int.from_bytes(blob[0x20:0x28], "little")
+    phentsize = int.from_bytes(blob[0x36:0x38], "little")
+    phnum = int.from_bytes(blob[0x38:0x3A], "little")
+    for index in range(phnum):
+        header = blob[phoff + index * phentsize:][:phentsize]
+        if len(header) < 40 or int.from_bytes(header[:4], "little") != 3:
+            continue
+        offset = int.from_bytes(header[8:16], "little")
+        size = int.from_bytes(header[32:40], "little")
+        return blob[offset:offset + size].split(b"\x00")[0].decode(errors="replace")
+    return None
+
+
+def warn_if_unrunnable(pm_binary, pm, mounts):
+    """Say so when the pm binary cannot possibly execute inside the image.
+
+    pm is mounted in rather than installed, so the binary the host built is the
+    binary the container runs -- and a host whose toolchain lives in its own
+    prefix produces one whose ELF interpreter is a path in that prefix. Nothing
+    mounts it, so the loader is absent and the kernel's refusal names the
+    program rather than the loader:
+
+      .../pm: cannot execute: required file not found
+
+    which reads as a missing pm, and pm is right there. The answer is the one
+    CI already takes -- build pm inside the image -- so this names it.
+
+    A warning rather than a refusal, because `container run cargo build` is
+    exactly how that is fixed, and a hard failure here would block the fix.
+    """
+    interpreter = elf_interpreter(pm_binary)
+    if interpreter is None:
+        return
+    if interpreter.startswith(SYSTEM_LOADER_DIRS):
+        return
+    if any(Path(interpreter).is_relative_to(mount) for mount in mounts):
+        return
+    print(
+        f"container: warning: {pm_binary} needs the loader at {interpreter},\n"
+        "  which is a path from the host's own toolchain prefix and is not in\n"
+        "  this image. Anything that runs pm inside the container will fail\n"
+        "  with `cannot execute: required file not found`. Build pm in the\n"
+        "  image first, as CI does:\n"
+        f"    ./do container-run -- cargo build --release --manifest-path {pm / 'Cargo.toml'}",
+        file=sys.stderr,
+    )
+
+
 def build(engine, args):
-    command = [engine, "build", "-t", IMAGE, "-f", str(REPO / "Containerfile")]
+    target_image = image()
+    if "@" in target_image:
+        sys.exit(
+            "container: build needs a tag target, but LOSOS_CONTAINER_IMAGE is a digest reference.\n"
+            "  Use a tag (for example ghcr.io/dasmatus/losos-desktop/build-host:dev) for local builds."
+        )
+    command = [engine, "build", "-t", target_image, "-f", str(REPO / "Containerfile")]
     # An explicit --build-arg wins, so overriding the base stays possible and
     # this does not quietly pass it twice with the caller's copy losing.
-    if not any(pin.startswith("BASE_IMAGE=") for pin in args.build_arg):
+    if not any(pin == "BASE_IMAGE" or pin.startswith("BASE_IMAGE=") for pin in args.build_arg):
         command += ["--build-arg", f"BASE_IMAGE={base_image()}"]
     for pin in args.build_arg:
         command += ["--build-arg", pin]
@@ -153,6 +250,10 @@ def run(engine, args):
             "  tools/gates/plugins.py and fingerprint-lint.py read pm's source,\n"
             "  and both downgrade to a pass when they cannot find it."
         )
+
+    status = ensure_image(engine)
+    if status:
+        return status
 
     command = [
         engine, "run", "--rm", "--init",
@@ -194,8 +295,11 @@ def run(engine, args):
         "-e", f"PM_ROOT={pm}",
         "-e", f"PM={pm_binary}",
     ]
+    mounts = [REPO, pm]
     if not pm_binary.is_relative_to(pm):
         command += ["-v", f"{pm_binary.parent}:{pm_binary.parent}"]
+        mounts.append(pm_binary.parent)
+    warn_if_unrunnable(pm_binary, pm, mounts)
     # The image-build fallback serves mirrored sources on the host loopback, so
     # that path can opt into host networking without changing the default runner.
     if os.environ.get("LOSOS_CONTAINER_HOST_NETWORK") == "1":
@@ -203,7 +307,7 @@ def run(engine, args):
     if sys.stdin.isatty() and sys.stdout.isatty():
         command.append("-t")
         command.append("-i")
-    command.append(IMAGE)
+    command.append(image())
 
     # `just container-run -- cargo build ...` forwards that `--` as a literal
     # first argument rather than consuming it: it is just's own end-of-options
@@ -237,6 +341,9 @@ def main():
         help="override a pin, e.g. BASE_IMAGE=<image> or MKOSI_COMMIT=<sha>",
     )
     builder.set_defaults(handler=build)
+
+    puller = sub.add_parser("pull", help="download or refresh the published image")
+    puller.set_defaults(handler=pull)
 
     runner = sub.add_parser("run", help="run a command in the image")
     runner.add_argument("command", nargs=argparse.REMAINDER)

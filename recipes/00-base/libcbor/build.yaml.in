@@ -104,3 +104,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libcbor.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libcbor.so cbor_load cbor_serialize __cfi_check

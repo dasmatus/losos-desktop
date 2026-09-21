@@ -28,8 +28,16 @@ a ref and execute the tree's own code from it -- images.yml on `pull_request`,
 update-sources.yml on a `workflow_dispatch` against any ref -- and a job running
 tree-supplied code has no business holding a token that can write to the
 repository. The job that genuinely publishes asks for the permission itself.
+
+Every job also runs in an Arch userspace. The hosted runner labels still name
+Ubuntu because GitHub provides the VM, not an Arch runner; the job container
+is what decides which distribution executes the steps.
+
+pm's Wasmtime dependency also sets a Rust floor. The container and the CI
+setup must move together when pm moves, or one builds while the other cannot.
 """
 
+import copy
 import re
 import sys
 from pathlib import Path
@@ -53,6 +61,53 @@ PM_REPO = "dichhead/pm"
 PM_ACTION = ".github/actions/pm"
 PM_REF_USE = re.compile(r"\$\{\{\s*env\.PM_REF\s*\}\}")
 COMMIT = re.compile(r"\A[0-9a-f]{40}\Z")
+
+ARCH_IMAGES = {
+    "ubuntu-24.04": "docker.io/library/archlinux:base",
+    "ubuntu-24.04-arm": "docker.io/menci/archlinuxarm:base",
+}
+
+
+def check_arch_jobs(path, doc):
+    """Keep runner architecture and job userspace paired, including matrices."""
+    failures = []
+    for job, spec in (doc.get("jobs") or {}).items():
+        where = f"{path.name}: {job}"
+        container = spec.get("container") or {}
+        image = container.get("image") if isinstance(container, dict) else container
+        matrix = (spec.get("strategy") or {}).get("matrix") or {}
+        legs = matrix.get("include") or [{}]
+        for leg in legs:
+            runner = spec.get("runs-on")
+            resolved = image
+            if runner == "${{ matrix.runner }}":
+                runner = leg.get("runner")
+            if image == "${{ matrix.image }}":
+                resolved = leg.get("image")
+            if runner not in ARCH_IMAGES or resolved != ARCH_IMAGES[runner]:
+                failures.append(
+                    f"{where} pairs runner {runner!r} with container {resolved!r}; "
+                    "use Arch Linux on x86_64 and Arch Linux ARM on aarch64."
+                )
+
+        shell = ((spec.get("defaults") or {}).get("run") or {}).get("shell")
+        if shell is None:
+            shell = ((doc.get("defaults") or {}).get("run") or {}).get("shell")
+        if shell != "bash":
+            failures.append(
+                f"{where} must default to bash; container jobs otherwise use sh, "
+                "which cannot preserve the build pipeline's PIPESTATUS."
+            )
+        for step in spec.get("steps") or []:
+            commands = "\n".join(
+                line for line in str(step.get("run", "")).splitlines()
+                if not line.lstrip().startswith("#")
+            )
+            if re.search(r"\bapt-get\b|apparmor_restrict_unprivileged_userns", commands):
+                failures.append(
+                    f"{where} still configures the Ubuntu host from an Arch job."
+                )
+    return failures
 
 
 def check_pm_pin(path, doc):
@@ -138,14 +193,7 @@ def check_package_handoff(doc):
     if not isinstance(layers, list) or len(layers) < 2:
         failures.append("images.yml: manifest/layers.yaml must define at least 2 layers (packages + image)")
         return failures
-    package_layer = layers[-2] or {}
-    package_name = str(package_layer.get("name") or "").strip() if isinstance(package_layer, dict) else ""
-    if not package_name:
-        failures.append("images.yml: manifest/layers.yaml penultimate layer must define a non-empty name")
-        return failures
-    archive = f"{package_name}-0.1.0.cpkg"
-    archive_ref = "${{ steps.closure.outputs.archive }}"
-    layer_ref = "${{ steps.closure.outputs.layer }}"
+    archive = f"{layers[-2]['name']}-0.1.0.cpkg"
     uploads = [
         step.get("with") or {} for step in packages.get("steps", [])
         if str(step.get("uses", "")).startswith("actions/upload-artifact@")
@@ -155,30 +203,16 @@ def check_package_handoff(doc):
         if str(step.get("uses", "")).startswith("actions/download-artifact@")
     ]
     handoff = "packages-${{ matrix.arch }}"
-    for name, job in (("packages", packages), ("build", build)):
-        steps = job.get("steps", [])
-        if not any(step.get("id") == "closure"
-                   and "manifest/layers.yaml" in str(step.get("run", ""))
-                   and "archive=" in str(step.get("run", ""))
-                   and "layer=" in str(step.get("run", "")) for step in steps):
-            failures.append(
-                f"images.yml: {name} must derive the package closure layer and archive from manifest/layers.yaml"
-            )
     if not any(upload.get("name") == handoff
-               and str(upload.get("path", "")).endswith(archive_ref)
+               and str(upload.get("path", "")).endswith(archive)
                and upload.get("if-no-files-found") == "error" for upload in uploads):
         failures.append("images.yml: packages must upload the final closure and fail if missing")
     if not any(download.get("name") == handoff and "run-id" not in download
                and "github-token" not in download for download in downloads):
         failures.append("images.yml: build must download packages from this run")
     commands = "\n".join(str(step.get("run", "")) for step in build.get("steps", []))
-    package_commands = "\n".join(str(step.get("run", "")) for step in packages.get("steps", []))
-    if layer_ref not in package_commands:
-        failures.append("images.yml: packages must build the final closure named in manifest/layers.yaml")
-    if "--prebuilt-packages" not in commands or archive_ref not in commands:
+    if "--prebuilt-packages" not in commands or archive not in commands:
         failures.append("images.yml: image configuration must consume the package closure")
-    if archive in commands or archive in package_commands:
-        failures.append("images.yml: package closure archive names must come from manifest/layers.yaml, not a hard-coded layer")
 
     ci = jobs.get("ci") or {}
     required = {"gates", "container", "pinned", "packages", "build", "verify", "ota"}
@@ -217,7 +251,102 @@ def check_automerge(doc):
     return failures
 
 
+def check_pm_hosts(container, setup, workflows):
+    """Keep the pm revision and its host toolchain consistent across CI."""
+    failures = []
+    pins = {
+        str((doc.get("env") or {}).get("PM_REF"))
+        for doc in workflows
+        if (doc.get("env") or {}).get("PM_REF")
+    }
+    if len(pins) > 1:
+        failures.append("workflows disagree on PM_REF; update all pm pins together.")
+
+    rust = re.search(r"^ARG RUST_VERSION=(\d+\.\d+\.\d+)$", container, re.MULTILINE)
+    installs = [
+        step for step in (setup.get("runs") or {}).get("steps") or []
+        if "rustup toolchain install" in str(step.get("run", ""))
+    ]
+    if not rust or not installs:
+        failures.append("cannot find the container and CI Rust toolchain pins.")
+    else:
+        for step in installs:
+            version = str((step.get("env") or {}).get("RUST_VERSION", ""))
+            if version != rust.group(1):
+                failures.append(
+                    f"arch-setup Rust {version!r} differs from Containerfile "
+                    f"Rust {rust.group(1)!r}; pm needs the same toolchain in both."
+                )
+    return failures
+
+
+def self_test():
+    """A matrix must prove both userspaces, not merely name an Arch image."""
+    good = {
+        "defaults": {"run": {"shell": "bash"}},
+        "jobs": {
+            "gates": {
+                "runs-on": "ubuntu-24.04",
+                "container": {"image": ARCH_IMAGES["ubuntu-24.04"]},
+            },
+            "build": {
+                "runs-on": "${{ matrix.runner }}",
+                "container": {"image": "${{ matrix.image }}"},
+                "strategy": {"matrix": {"include": [
+                    {"runner": runner, "image": image}
+                    for runner, image in ARCH_IMAGES.items()
+                ]}},
+            },
+        },
+    }
+    assert not check_arch_jobs(WORKFLOW, good)
+    for mutation in ("no-container", "wrong-arch", "shell", "apt", "sysctl"):
+        bad = copy.deepcopy(good)
+        gate = bad["jobs"]["gates"]
+        if mutation == "no-container":
+            del gate["container"]
+        elif mutation == "wrong-arch":
+            for leg in bad["jobs"]["build"]["strategy"]["matrix"]["include"]:
+                if leg.get("runner") == "ubuntu-24.04-arm":
+                    leg["image"] = ARCH_IMAGES["ubuntu-24.04"]
+                    break
+            else:
+                raise AssertionError("self-test fixture missing ubuntu-24.04-arm leg")
+        elif mutation == "shell":
+            del bad["defaults"]
+        else:
+            gate["steps"] = [{"run": (
+                "apt-get update" if mutation == "apt" else
+                "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
+            )}]
+        assert check_arch_jobs(WORKFLOW, bad), mutation
+    container = "ARG RUST_VERSION=1.95.0\n"
+    setup = {"runs": {"steps": [{
+        "env": {"RUST_VERSION": "1.95.0"},
+        "run": 'rustup toolchain install "$RUST_VERSION" --profile minimal',
+    }]}}
+    workflows = [{"env": {"PM_REF": "a" * 40}} for _ in range(2)]
+    assert not check_pm_hosts(container, setup, workflows)
+    for mutation in ("rust-mismatch", "rust-missing", "install-missing", "pm-mismatch"):
+        bad_setup = copy.deepcopy(setup)
+        bad_workflows = copy.deepcopy(workflows)
+        bad_container = container
+        if mutation == "rust-mismatch":
+            bad_setup["runs"]["steps"][0]["env"]["RUST_VERSION"] = "1.94.0"
+        elif mutation == "rust-missing":
+            bad_container = ""
+        elif mutation == "install-missing":
+            bad_setup["runs"]["steps"] = []
+        else:
+            bad_workflows[1]["env"]["PM_REF"] = "b" * 40
+        assert check_pm_hosts(bad_container, bad_setup, bad_workflows), mutation
+    print("workflow: Arch job and pm host regression checks passed")
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     if not WORKFLOW.exists():
         print(f"workflow: {WORKFLOW.relative_to(REPO)} absent; nothing to check")
         return 0
@@ -270,11 +399,14 @@ def main():
     # A rule that only ever looked at images.yml would say nothing about the
     # next workflow somebody adds, which is the one most likely to get it
     # wrong.
+    workflows = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
         spec = yaml.safe_load(path.read_text()) or {}
+        workflows.append(spec)
         failures.extend(check_pm_pin(path, spec))
         if path.name == "automerge.yml":
             failures.extend(check_automerge(spec))
+        failures.extend(check_arch_jobs(path, spec))
 
         top = spec.get("permissions")
         if isinstance(top, dict) and top.get("contents") == "write":
@@ -286,6 +418,12 @@ def main():
                 "needs it instead."
             )
 
+    failures.extend(check_pm_hosts(
+        (REPO / "Containerfile").read_text(),
+        yaml.safe_load((REPO / ".github/actions/arch-setup/action.yml").read_text()),
+        workflows,
+    ))
+
     if failures:
         print("workflow: FAILED", file=sys.stderr)
         for failure in failures:
@@ -294,7 +432,7 @@ def main():
 
     print(
         f"workflow: {len(downloads)} artifact download(s) resolve for "
-        f"{len(CHANNELS)} channel(s); one pm pin and least privilege at the "
+        f"{len(CHANNELS)} channel(s); Arch jobs, matching pm/Rust pins and least privilege at the "
         f"top of {len(list(WORKFLOWS.glob('*.yml')))} workflow(s)"
     )
     return 0

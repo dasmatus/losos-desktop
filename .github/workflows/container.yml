@@ -1,0 +1,121 @@
+name: container
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Containerfile
+      - tools/container
+      - .github/actions/arch-setup/action.yml
+      - .github/workflows/container.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only a complete pair may replace latest; serialize manual and push releases.
+concurrency:
+  group: publish-build-host
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            image: docker.io/library/archlinux:base
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            image: docker.io/menci/archlinuxarm:base
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+      options: --privileged
+    steps:
+      - name: Bootstrap Arch before checkout
+        run: |
+          if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf
+          elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          else
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          fi
+          pacman -Syu --needed --noconfirm git ca-certificates tar gzip zstd
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/arch-setup
+        with:
+          nested: "true"
+      - name: Name the native image
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          echo "LOSOS_CONTAINER_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/build-host:run-${GITHUB_RUN_ID}-${ARCH}" >> "$GITHUB_ENV"
+      - name: Build the build host
+        run: python3 tools/container build
+      - name: Smoke test the build tools
+        run: |
+          podman run --rm "$LOSOS_CONTAINER_IMAGE" /bin/sh -ec '
+            clang --version
+            rustc --version
+            cargo --version
+            just --version
+            mkosi --version
+            qemu-img --version
+            xorriso -version
+            python3 -c "import yaml, jinja2"
+          '
+      - name: Push the native image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          trap 'podman logout ghcr.io' EXIT
+          printf '%s' "$GHCR_TOKEN" | podman login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          podman push "$LOSOS_CONTAINER_IMAGE"
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    container:
+      image: docker.io/library/archlinux:base
+      options: --privileged
+    permissions:
+      packages: write
+    steps:
+      - name: Install the registry client
+        run: |
+          if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf
+          elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          else
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          fi
+          pacman -Syu --needed --noconfirm podman
+      - name: Publish the multi-architecture image
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          trap 'podman --storage-driver=vfs logout ghcr.io' EXIT
+          printf '%s' "$GHCR_TOKEN" | podman --storage-driver=vfs login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/build-host"
+          # Assemble only registry metadata; the build layers stay in GHCR.
+          podman --storage-driver=vfs manifest create build-host \
+            "docker://${image}:run-${GITHUB_RUN_ID}-amd64" \
+            "docker://${image}:run-${GITHUB_RUN_ID}-arm64"
+          podman --storage-driver=vfs manifest push --all build-host "docker://${image}:sha-${GITHUB_SHA}"
+          podman --storage-driver=vfs manifest push --all build-host "docker://${image}:latest"

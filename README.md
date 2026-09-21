@@ -74,11 +74,64 @@ with the SHA-256 pins unchanged.
 
 Run `just` with no arguments for the full list. A legacy wrapper remains for compatibility.
 
-What the build host itself has to provide — `just`, clang, python3 with `jinja2`,
-cargo with the musl target, and working user namespaces among them — is in
+What the build host itself has to provide — `just`, clang, python3 with `jinja2`
+and `basedpyright`, cargo with the musl target, and working user namespaces
+among them — is in
 [`docs/host-requirements.md`](docs/host-requirements.md). It is short, and it
 is a list rather than a bootstrap step because pm resolves a step's first word
 on the host: a tool that installs a tool would have the same problem.
+
+The build host is also published as
+`ghcr.io/dasmatus/losos-desktop/build-host:latest` for amd64 and arm64.
+Use `just container pull` and `just container-check` to reuse it without
+rebuilding the Containerfile. See [container usage](docs/container.md) for
+digest pinning, local builds and the pm checkout still required.
+
+## Package containers
+
+`tools/pm-oci` is a host-side pm extension for transporting built packages
+through an OCI registry. Install `skopeo` alongside Python 3; no container daemon
+or root is needed. Each image carries one unchanged `.cpkg` and its detached
+`.cpkg.sig`, not an extracted root filesystem or a runnable container.
+
+```sh
+skopeo login ghcr.io
+# Sign each archive you intend to publish with your chosen pm signing key.
+../pm/target/release/pm sign out/pkgs/PACKAGE.cpkg
+just packages -- publish --repository ghcr.io/OWNER/losos-desktop/packages \
+  --tag nightly-20260920.1-x86_64 --arch x86_64 \
+  --source-url https://github.com/OWNER/losos-desktop
+just packages -- pull ghcr.io/OWNER/losos-desktop/packages/PACKAGE@sha256:DIGEST \
+  --arch x86_64
+```
+
+Replace `OWNER` with the lowercase registry owner and use the complete
+digest-pinned reference printed by publish for pull. Publish reads `out/pkgs`
+(`--source` overrides it); the image name is the archive basename without
+`.cpkg`. Pull writes the archive and signature into `out/pkgs` (`--output`
+overrides it), refuses existing files and checks the requested architecture,
+OCI digests, package checksum and container layout before installing either.
+It never runs an image or extracts the package itself. Authentication uses
+skopeo's normal login store or `REGISTRY_AUTH_FILE`; TLS verification stays on.
+
+Successful main/tag builds publish to
+`ghcr.io/<owner>/losos-desktop/packages/<archive-stem>:<channel>-<version>-<arch>`
+and list immutable references in the workflow summary. PRs never publish or
+receive registry write permission. These are built packages, **not** the
+boot-tested image releases; the existing VM gates still control those releases.
+GHCR package visibility is controlled by the repository owner.
+
+The extension is deliberately **not** a WASM plugin or a new `pm pull`
+subcommand: pm's plugin contract provides neither network nor filesystem access.
+Use the restored archive with pm as usual. Pulling does not make `pm build`
+cache-aware (C6), install packages into the OS, or alter pm's trusted keys.
+A digest proves integrity, not publisher identity: obtain the reference and the
+publisher's public signing key through a trusted channel. pm still authenticates
+the detached signature before running a package. CI currently uses the
+throwaway repo-local signing key; its packages are not automatically trusted by
+other pm installations, and pulling must not silently confer that trust.
+The public signer is carried in `.cpkg.sig`; after independently verifying it,
+`pm trust <package>.cpkg.sig` is pm's explicit opt-in to trusting that signer.
 
 ## What has actually been built
 
@@ -131,6 +184,15 @@ Read `docs/limits.md` before trusting anything here. The short version:
   into the dependent at `/dest/deps/`, and nothing unpacks it. The sysroot
   pattern in `tools/lib/sysroot.sh` is this repo's workaround, not a `pm`
   feature.
+- **Nothing in the image can authenticate anyone.** The only PAM service file
+  in the tree is systemd's `systemd-user`; there is no `login` and no
+  `gdm-password`, and `pam_systemd_home` is built and referenced by nothing.
+  A user here is a LUKS volume rather than a passwd line, so the stack cannot
+  be copied from another distribution. `docs/limits.md` has the detail.
+- **There is no web browser.** Not in any layer. Both candidates are very
+  large builds whose toolchain demands do not fit this tree's shape, and
+  neither has been priced. `docs/limits.md` says what it costs the FIDO2
+  support in `docs/yubikey.md`.
 - **Nothing here has booted.** No VM and no EFI firmware in the environment
   this was developed in. The UKI is verified structurally — it is a PE carrying
   the six sections systemd-stub looks for — and the ISO and QCOW2 are checked

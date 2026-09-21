@@ -57,6 +57,9 @@
 ARG BASE_IMAGE=docker.io/library/archlinux:base
 FROM ${BASE_IMAGE}
 
+LABEL org.opencontainers.image.source="https://github.com/dasmatus/losos-desktop" \
+      org.opencontainers.image.description="losos-desktop build host, not the desktop OS"
+
 # Tombstone: this file used to be `FROM debian:trixie-slim` with a
 # `DEBIAN_SNAPSHOT=<timestamp>` argument pointing apt at snapshot.debian.org,
 # and that snapshot was the only reason the base was Debian -- it is the one
@@ -87,12 +90,12 @@ FROM ${BASE_IMAGE}
 # docs/host-requirements.md) and a distribution rustc cannot satisfy it.
 #
 # It also has to be new enough to build pm, which is a constraint from another
-# repository: pm depends on wasmtime for the plugin sandbox, and wasmtime 47
-# requires 1.94.0. Too old and the failure is forty lines of
-# "wasmtime-internal-<thing> requires rustc 1.94.0", which names the crate
+# repository: pm depends on wasmtime for the plugin sandbox, and wasmtime 48
+# requires 1.95.0. Too old and the failure is forty lines of
+# "wasmtime-internal-<thing> requires rustc 1.95.0", which names the crate
 # that noticed rather than the pin that is wrong. Raise this when pm's tree
-# raises its floor; there is nothing here that can detect it.
-ARG RUST_VERSION=1.94.0
+# raises its floor; the workflow gate keeps the CI toolchain in step with this.
+ARG RUST_VERSION=1.95.0
 
 # Tombstone: an `LLVM_VERSION` argument used to be here, naming the LLVM the
 # image installs. It existed only because Debian versions its LLVM package
@@ -217,6 +220,7 @@ RUN pacman -Syu --noconfirm --needed \
       `# reached for it first.` \
       diffutils \
       \
+      \
       `# meson is vendored and run as python3 .../meson.py, so meson itself is` \
       `# deliberately absent -- but ninja and cmake are invoked as first words.` \
       ninja cmake \
@@ -225,7 +229,7 @@ RUN pacman -Syu --noconfirm --needed \
       `# python3 -c 'import jinja2' and a pm step can set no PYTHONPATH.` \
       `# Arch's python provides /usr/bin/python3, which is the name every` \
       `# recipe and every meson invocation in this tree uses.` \
-      python python-yaml python-jinja \
+      python python-pip python-yaml python-jinja \
       \
       `# Build systems reach for these for themselves during configure.` \
       `# rsync is the odd one: no recipe names it, but the kernel's` \
@@ -265,6 +269,11 @@ RUN pacman -Syu --noconfirm --needed \
       `# pm's own downloader cannot.` \
       ca-certificates curl git \
  && pacman -Scc --noconfirm
+
+# basedpyright is part of `just check`, but Arch ships it outside the main
+# repositories. Installing it here keeps the container host aligned with the gate.
+RUN python3 -m pip install --no-cache-dir basedpyright==1.40.1 nodejs-wheel-binaries==24.19.0 \
+ && python3 -m basedpyright --version >/dev/null
 
 # What the package list above cannot state, asserted here, because each of
 # these fails late and in someone else's name if it is missing.

@@ -53,6 +53,9 @@ def check(arch, failures):
         failures.append(f"{arch}: {message}")
 
     os_element = domain.find("os")
+    if os_element is None:
+        fail("no <os> element, so the document is not a bootable libvirt domain")
+        return
     for tag in FORBIDDEN:
         if os_element.find(tag) is not None:
             fail(f"<os> carries <{tag}>, so the guest is not booting its own disk")
@@ -71,7 +74,7 @@ def check(arch, failures):
         fail(f"{len(disks)} disks, expected exactly the image under test")
     else:
         driver = disks[0].find("driver")
-        if driver.get("type") != "qcow2":
+        if driver is None or driver.get("type") != "qcow2":
             fail("the disk is not attached as qcow2, so the guest sees its header")
 
     if domain.find("devices/rng") is None:

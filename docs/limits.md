@@ -513,3 +513,49 @@ component of the graphics stack outside the CFI scheme.
 Open kernel modules cover Turing and later. Nothing older has one, and this
 tree has nothing to offer those cards beyond nouveau's reverse-engineered
 support.
+
+## Nothing in the image can authenticate anyone
+
+There is exactly one PAM service file in the whole tree, and it is not a login.
+`Linux-PAM-1.6.1.tar.xz` ships no `conf/pam.d` at all -- a man page for the
+format and nothing else -- so `make install` writes no service files. systemd
+installs one, `/usr/lib/pam.d/systemd-user`, which is the stack the *user
+manager* runs under. gdm would have been the only other source and it installs
+none: its recipe passes `-Ddefault-pam-config=none` (see
+`recipes/30-gnome/gdm`), which disables GDM's distro PAM autodetection even in
+the current Arch container. Nothing under `overlay/` supplies any.
+
+So there is no `login`, no `gdm-password`, no `other`. `pam_systemd.so` and
+`pam_systemd_home.so` are both built, both in the systemd inventory, and both
+referenced by nothing.
+
+This is the largest single gap between "the session is wired" and "a person can
+use this machine", and it sits underneath several things that otherwise look
+finished. It is also not a stack that can be copied from another distribution,
+because the shape of a user here is not the usual one: **a user is a LUKS
+volume**, a `systemd-homed` record plus an encrypted home image rather than a
+line in `/etc/passwd`. Whatever stack this OS ships has to run
+`pam_systemd_home` in `auth`, `account`, `password` and `session`, or logging
+in succeeds and the user's home never opens. That is also what would make a
+hardware token unlock a lock screen; `docs/yubikey.md` has the rest of that
+thread.
+
+## There is no web browser
+
+`manifest/layers.yaml` names twenty-seven packages in `recipes/30-gnome` and
+none of them is a browser; neither is anything in the other six layers. A
+desktop with no way to open a web page is a strange thing to ship, and it is
+worth stating rather than leaving to be discovered by someone looking for
+Epiphany.
+
+It is not an oversight so much as an unpriced item. Both realistic candidates
+are very large builds with build systems that do not fit this tree's shape:
+Firefox wants its own rust toolchain, cbindgen, nasm, a Python environment and
+a vendored NSS; Chromium wants GN, its own clang pin and a source tree in the
+tens of gigabytes. Each also carries a second, deeper problem — both link a
+great deal of C++, and this tree's CFI and LTO settings have never been asked
+to survive a codebase that size.
+
+What follows from it here: the FIDO2 device access in `docs/yubikey.md` is
+complete and cannot be demonstrated, because demonstrating it means a browser
+doing WebAuthn and there is none to run.

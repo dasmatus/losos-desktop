@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   merge:
     if: >-
@@ -17,11 +21,22 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.path == '.github/workflows/images.yml'
     runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
     permissions:
       actions: write
       contents: write
       pull-requests: write
     steps:
+      - name: Bootstrap the merge toolchain
+        run: |
+          if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf
+          elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          else
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          fi
+          pacman -Syu --needed --noconfirm github-cli jq
       - name: Merge only the verified eligible head
         env:
           GH_TOKEN: ${{ github.token }}
