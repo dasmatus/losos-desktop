@@ -35,7 +35,8 @@ build *crates:
   fi
 
   for crate in "$@"; do
-    module="{{here}}/target/$target/release/$(echo "$crate" | tr - _)".wasm
+    filename=${crate//-/_}
+    module="{{here}}/target/$target/release/$filename.wasm"
     "$encoder" "$module" "$out/$crate.wasm"
   done
 

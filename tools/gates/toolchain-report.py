@@ -88,7 +88,19 @@ def host_flags(flags):
 
 
 def linker_in_use(tc, notes):
-    """Ask the driver which linker `-fuse-ld=` actually resolved to."""
+    """Ask the driver which linker `-fuse-ld=` actually resolved to.
+
+    The manifest names a linker and the report line above it echoes that name;
+    this asks the one clang found to identify itself. The two are different
+    claims, and the distance between them grew when the default moved from lld
+    to mold: lld is built into clang's driver knowledge and needs nothing
+    installed beyond itself, while mold is a separate program reached through
+    the GNU linker-plugin path and needs LLVMgold.so with it (see
+    manifest/toolchain.yaml). `-Wl,--version` makes the linker print its banner
+    and exit before it opens an input, so this costs one exec and works on a
+    host with no compiler-rt -- unlike the probe below, which is why it is
+    reported separately rather than folded into it.
+    """
     cc = tc.compiler.get("cc", "clang")
     result = run(
         [
@@ -181,6 +193,12 @@ def verify_cfi_live(tc, work, notes):
 
 def audit_recipes(notes):
     """No recipe may spell its own optimisation or sanitizer flags."""
+    # A recipe setting -O3 or -fsanitize= locally is how a package ends up
+    # outside the scheme while the manifest still claims it is inside.
+    # The character class must not contain a space: `-O <dir>` is an output
+    # directory for several tools (merge_config.sh among them) and is not an
+    # optimisation level. An earlier spelling included one and flagged the
+    # kernel's config merge.
     forbidden = re.compile(r"(?:^|\s)-(?:O[0-9zs]|flto|fsanitize|fvisibility)\b")
     offenders = []
     for template in sorted((REPO / "recipes").glob("*/*/build.yaml.in")):
@@ -211,6 +229,9 @@ def main():
     )
     print(f"  schemes      {', '.join(tc.cfi.get('schemes') or []) or 'none'}")
 
+    # Printed every run, because the exceptions ARE the honest part of a CFI
+    # claim. A scheme applied to a distribution always has them; the difference
+    # between a real claim and a marketing one is whether they are counted.
     if tc.exceptions:
         print(f"  exceptions   {len(tc.exceptions)} package(s) outside the full set:")
         for name, entry in tc.exceptions.items():
