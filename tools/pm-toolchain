@@ -7,7 +7,10 @@ repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 case "${1:-}" in
   report)
     shift
-    exec python3 "$repo/tools/gates/toolchain-report.py" "$@"
+    if command -v just >/dev/null 2>&1; then
+      exec just --justfile "$repo/tools/gates/Justfile" --working-directory "$repo" toolchain-report -- "$@"
+    fi
+    exec "$repo/tools/gates/toolchain-report.py" "$@"
     ;;
   ""|-h|--help|help)
     printf '%s\n' \

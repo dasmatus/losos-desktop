@@ -1,4 +1,5 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
+set positional-arguments
 
 repo := canonicalize(justfile_directory() + "/../..")
 pm := env_var_or_default("PM", repo + "/../pm/target/release/pm")
@@ -49,3 +50,10 @@ explain-all:
   fi
 
   echo "explain-all: all $count recipe(s) accepted by pm"
+
+
+toolchain-report *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
+  exec "{{repo}}/tools/gates/toolchain-report.py" "$@"
