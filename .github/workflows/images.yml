@@ -166,7 +166,7 @@ jobs:
         if: steps.components.outputs.cache-hit != 'true'
         run: |
           rustup target add wasm32-unknown-unknown
-          cd losos-desktop && PM_ROOT=$GITHUB_WORKSPACE/pm just plugins
+          PM_ROOT=$GITHUB_WORKSPACE/pm just --justfile losos-desktop/Justfile --working-directory losos-desktop plugins
 
       # Saved here rather than from a post step, for the reason
       # .github/actions/pm gives at length: `actions/cache` writes its entry
