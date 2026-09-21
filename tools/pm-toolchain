@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Host-side pm extension entrypoint for the repository's toolchain checks.
+set -euo pipefail
+
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+
+case "${1:-}" in
+  report)
+    shift
+    if command -v just >/dev/null 2>&1; then
+      exec just --justfile "$repo/tools/gates/Justfile" --working-directory "$repo" toolchain-report -- "$@"
+    fi
+    exec "$repo/tools/gates/toolchain-report.py" "$@"
+    ;;
+  ""|-h|--help|help)
+    printf '%s\n' \
+      'pm-toolchain <command>' \
+      '' \
+      '  report [args...]   compile and audit the configured toolchain'
+    ;;
+  *)
+    echo "pm-toolchain: unknown command: $1" >&2
+    echo "pm-toolchain: run --help for the available commands" >&2
+    exit 1
+    ;;
+esac

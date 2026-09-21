@@ -19,7 +19,7 @@
 # `['-I/build/sysroot/usr/include', '-O2']` -- no --target, no --sysroot, no
 # LTO, no CFI, no -fvisibility. So systemd, the point of the whole repository,
 # was the one package that would have been built against none of
-# manifest/toolchain.yaml, and nothing said so: tools/gates/toolchain-report.py
+# manifest/toolchain.yaml, and nothing said so: tools/pm-toolchain report
 # reads the generated flag files, and this recipe did not use them. A second
 # copy of a generated file is a second answer to a question with one answer.
 name: systemd

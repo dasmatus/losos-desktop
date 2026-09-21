@@ -8,7 +8,7 @@
 # pm-built gperf or bpftool reaches a build.
 #
 # [built-in options] is where manifest/toolchain.yaml lands. No recipe spells a
-# compiler flag; tools/gates/toolchain-report.py fails the build if one tries.
+# compiler flag; tools/pm-toolchain report fails the build if one tries.
 #
 # [host_machine] is what makes meson agree with the rest of this tree that
 # these are cross builds. The build host runs glibc and everything above

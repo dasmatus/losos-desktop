@@ -2,7 +2,7 @@
 """Every toolchain exception must be named by the recipe it is written for.
 
 manifest/toolchain.yaml's `exceptions:` list is the honest part of this tree's
-CFI claim, and tools/gates/toolchain-report.py prints it on every run so the
+CFI claim, and tools/pm-toolchain report prints it on every run so the
 holes are counted rather than implied away. That is worth nothing if an entry
 can be written, reviewed, argued for in a `why:` paragraph -- and then apply to
 nothing at all.
@@ -44,7 +44,7 @@ REPO = Path(__file__).resolve().parent.parent.parent
 # with LLVM=1 and the kernel's own Kbuild flags, and passes neither @CFLAGS_RSP@
 # nor a native file. There is no line in that recipe on which a per-package
 # token would mean anything, so requiring one would only produce a decorative
-# argument nothing reads. The manifest entry stays because toolchain-report.py
+# argument nothing reads. The manifest entry stays because pm-toolchain report
 # counting the kernel among the packages outside the full scheme set is correct
 # and is the point of the list.
 EXEMPT = {

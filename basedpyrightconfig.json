@@ -6,6 +6,7 @@
     "recipes/90-image/losos-image/files"
   ],
   "exclude": [
+    "tools/gates/toolchain-report.py",
     "out",
     "**/__pycache__"
   ],

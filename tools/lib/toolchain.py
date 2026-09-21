@@ -6,7 +6,7 @@ checked when the *caller* was built with it and a cross-DSO call only when both
 sides were. Letting a recipe spell its own -O2 is how a package quietly ends up
 outside the scheme with nothing reporting it.
 
-`tools/gates/toolchain-report.py` re-derives these from the same file and
+`tools/pm-toolchain report` re-derives these from the same file and
 checks that no recipe has gone its own way.
 """
 

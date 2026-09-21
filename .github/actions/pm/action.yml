@@ -22,7 +22,7 @@ inputs:
     required: true
   encoder:
     description: >
-      Also build pm's wasm component encoder, which plugins/build.sh needs to
+      Also build pm's wasm component encoder, which `plugins/Justfile`'s `build` recipe needs to
       wrap this repository's plugin modules into components. Only the gates job
       builds plugins, so it is off by default and the image builds, which never
       touch it, do not pay for it.
@@ -118,7 +118,7 @@ runs:
 
     # Keyed separately from the pm binary so the image builds, which pass
     # `encoder: false`, neither build it nor carry it in their entry. Built
-    # here rather than left to plugins/build.sh, which builds it on demand --
+    # here rather than left to `plugins/Justfile`, which builds it on demand --
     # inside the step whose output is itself cached, so a hit on the components
     # would skip the encoder and a miss would rebuild it every time.
     - id: encoder

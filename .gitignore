@@ -2,9 +2,10 @@
 # are the tracked truth; out/ is reproducible from them and is never committed.
 /out/
 
-# The repo-local pm trust store `tools/sign-all` creates. It holds a throwaway
-# signing key that exists only so `pm explain` and `pm build` can verify this
-# tree; it must never be confused with the developer's real ~/.config/pm.
+# The repo-local pm trust store the top-level `just sign` recipe creates, via
+# `tools/Justfile`'s `sign-all` recipe. It holds a throwaway signing key that
+# exists only so `pm explain` and `pm build` can verify this tree; it must
+# never be confused with the developer's real ~/.config/pm.
 /.pm-config/
 
 # pm writes archives and detached signatures into its process working

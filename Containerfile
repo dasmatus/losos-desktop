@@ -299,7 +299,7 @@ RUN clang --version && llvm-ar --version >/dev/null && ld.lld --version \
 
 # Rust from rustup rather than the distribution, for the musl targets. Both
 # architectures are installed in one image so the same image builds the x86_64
-# and the aarch64 matrix leg; wasm32 is here for plugins/build.sh, which
+# and the aarch64 matrix leg; wasm32 is here for `plugins/Justfile`'s `build` recipe, which
 # compiles this distribution's pm plugins to components.
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \

@@ -1,47 +1,182 @@
-#!/usr/bin/env python3
-"""Compile something with the real flag set, and report what is actually on.
+#!/usr/bin/env bash
+# Compile something with the real flag set, and report what is actually on.
+#
+# "The build is LTO and CFI" is the kind of claim that is almost always partly
+# false, because both are properties of a whole link unit rather than of a
+# compiler invocation:
+#
+#   * an indirect call is only checked if the caller was built with CFI;
+#   * a call across a shared-library boundary is only checked if both sides
+#     were, and only with -fsanitize-cfi-cross-dso;
+#   * CFI silently needs LTO, and LTO silently needs llvm-ar rather than GNU ar,
+#     or archive members become invisible to the linker;
+#   * one package that opts out is a hole nothing reports.
+#
+# So this does not read the manifest and pronounce. It builds a shared library
+# and an executable with the exact flags manifest/toolchain.yaml declares,
+# links them, runs the result, and then checks that no recipe has quietly
+# introduced optimisation or sanitizer flags of its own.
+set -euo pipefail
 
-"The build is LTO and CFI" is the kind of claim that is almost always partly
-false, because both are properties of a whole link unit rather than of a
-compiler invocation:
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
+manifest="$repo/manifest/toolchain.yaml"
+verify=0
+case "${1:-}" in
+  --verify-cfi) verify=1 ;;
+  "") ;;
+  *) echo "toolchain-report: unknown argument: $1" >&2; exit 1 ;;
+esac
 
-  * an indirect call is only checked if the **caller** was built with CFI;
-  * a call across a shared-library boundary is only checked if **both** sides
-    were, and only with -fsanitize-cfi-cross-dso;
-  * CFI silently needs LTO, and LTO silently needs llvm-ar rather than GNU ar,
-    or archive members become invisible to the linker;
-  * one package that opts out is a hole nothing reports.
-
-So this does not read the manifest and pronounce. It builds a shared library
-and an executable with the exact flags `tools/configure` will hand the tree,
-links them, runs the result, and then checks that no recipe has quietly
-introduced optimisation or sanitizer flags of its own.
-
-`--verify-cfi` additionally proves the checks are *live* rather than merely
-compiled in, by making an indirect call through a deliberately wrong function
-type and requiring the runtime to complain.
-"""
-
-import re
-import subprocess
+# The harness moved out of Python, but the manifest is still YAML and the tree
+# already has one parser for it. Keep using a real YAML loader here rather than
+# reimplementing indentation-sensitive parsing in shell.
+eval "$(
+  python3 - "$manifest" <<'PY'
+import shlex
 import sys
-import tempfile
-from pathlib import Path
+import yaml
 
-REPO = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(REPO / "tools" / "lib"))
+doc = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 
-import yaml  # noqa: E402
+def scalar(name, value):
+    if value is None:
+        rendered = ""
+    elif isinstance(value, bool):
+        rendered = "true" if value else "false"
+    else:
+        rendered = str(value)
+    print(f"{name}={shlex.quote(rendered)}")
 
-from toolchain import Toolchain  # noqa: E402
+def array(name, values):
+    items = " ".join(shlex.quote(str(value)) for value in (values or []))
+    print(f"{name}=({items})")
 
-LIB_C = """
+compiler = doc["compiler"]
+target = doc["target"]
+lto = doc["lto"]
+cfi = doc["cfi"]
+hardening = doc["hardening"]
+
+scalar("cc", compiler["cc"])
+scalar("linker", compiler["linker"])
+scalar("triple", target["triple"])
+scalar("sysroot", target["sysroot"])
+scalar("rtlib", target["rtlib"])
+scalar("unwindlib", target["unwindlib"])
+scalar("resource_dir", target["resource_dir"])
+scalar("lto_mode", lto["mode"])
+scalar("cfi_enable", cfi["enable"])
+scalar("cross_dso", cfi["cross_dso"])
+scalar("trap_mode", cfi["trap"])
+scalar("visibility", cfi["visibility"])
+array("cfi_schemes", cfi["schemes"])
+array("hardening_cflags", hardening["cflags"])
+array("hardening_ldflags", hardening["ldflags"])
+array(
+    "exception_lines",
+    [
+        f'{entry["package"]}|{", ".join(entry.get("drops") or [])}'
+        for entry in (doc.get("exceptions") or [])
+    ],
+)
+PY
+)"
+
+cfi_flags=()
+if [ "$cfi_enable" = true ] && [ "${#cfi_schemes[@]}" -gt 0 ]; then
+  cfi_flags+=("-fvisibility=$visibility")
+  for scheme in "${cfi_schemes[@]}"; do
+    cfi_flags+=("-fsanitize=$scheme")
+  done
+  if [ "$cross_dso" = true ]; then
+    cfi_flags+=("-fsanitize-cfi-cross-dso")
+  fi
+  if [ "$trap_mode" != true ]; then
+    cfi_flags+=("-fno-sanitize-trap=cfi" "-fsanitize-recover=cfi")
+  fi
+fi
+
+cflags=("--target=$triple" "--sysroot=$sysroot" "-resource-dir=$resource_dir")
+cflags+=("${hardening_cflags[@]}")
+[ -n "$lto_mode" ] && cflags+=("-flto=$lto_mode")
+cflags+=("${cfi_flags[@]}")
+
+ldflags=("--target=$triple" "--sysroot=$sysroot" "-resource-dir=$resource_dir")
+[ -n "$rtlib" ] && ldflags+=("--rtlib=$rtlib")
+[ -n "$unwindlib" ] && ldflags+=("--unwindlib=$unwindlib")
+[ -n "$linker" ] && ldflags+=("-fuse-ld=$linker")
+[ -n "$lto_mode" ] && ldflags+=("-flto=$lto_mode")
+ldflags+=("${cfi_flags[@]}")
+ldflags+=("${hardening_ldflags[@]}")
+
+host_flags() {
+  local flag
+  for flag in "$@"; do
+    case "$flag" in
+      --target=*|--sysroot=*|-resource-dir=*|--unwindlib=*) ;;
+      *) printf '%s\n' "$flag" ;;
+    esac
+  done
+}
+
+mapfile -t host_cflags < <(host_flags "${cflags[@]}")
+mapfile -t host_ldflags < <(host_flags "${ldflags[@]}")
+compile_cmd=("$cc" "${host_cflags[@]}" "${host_ldflags[@]}")
+
+printf 'toolchain-report\n'
+printf '  compiler     %s / %s\n' "$cc" "$linker"
+printf '  target       %s\n' "$triple"
+printf '  LTO          %s\n' "$lto_mode"
+printf '  CFI          %s  cross-DSO=%s  trap=%s\n' \
+  "$([ "$cfi_enable" = true ] && echo on || echo off)" "$cross_dso" "$trap_mode"
+printf '  schemes      %s\n' "$(IFS=', '; echo "${cfi_schemes[*]:-none}")"
+
+# Printed every run, because the exceptions ARE the honest part of a CFI
+# claim. A scheme applied to a distribution always has them; the difference
+# between a real claim and a marketing one is whether they are counted.
+if [ "${#exception_lines[@]}" -gt 0 ]; then
+  printf '  exceptions   %s package(s) outside the full set:\n' "${#exception_lines[@]}"
+  for line in "${exception_lines[@]}"; do
+    pkg=${line%%|*}
+    drops=${line#*|}
+    printf '    %-12s drops %s\n' "$pkg" "$drops"
+  done
+else
+  printf '  exceptions   none\n'
+fi
+
+notes=()
+if linker_output=$(
+  printf 'int x;\n' | "$cc" "${host_ldflags[@]}" -nostdlib -shared -x c - -Wl,--version -o /dev/null 2>&1
+); then
+  banner=$(printf '%s\n' "$linker_output" | sed -n '1{s/[[:space:]]*$//;p;q;}')
+  if [ -n "$banner" ]; then
+    printf '  linker       %s\n' "$banner"
+  else
+    echo '  linker       FAILED' >&2
+    echo '    the linker printed no version banner' >&2
+    linker_failed=1
+  fi
+else
+  echo '  linker       FAILED' >&2
+  printf '    the driver could not start its linker:\n    %s\n' "$(printf '%s' "$linker_output" | sed 's/^/    /')" >&2
+  linker_failed=1
+fi
+
+ok=1
+: "${linker_failed:=0}"
+[ "$linker_failed" -eq 0 ] || ok=0
+
+work=$(mktemp -d -t losos-toolchain-XXXXXX)
+cleanup() { rm -rf "$work"; }
+trap cleanup EXIT
+
+cat > "$work/lib.c" <<'EOF'
 #include <stdio.h>
 __attribute__((visibility("default"))) int lib_add(int a, int b) { return a + b; }
 __attribute__((visibility("default"))) void lib_say(void) { puts("lib"); }
-"""
-
-MAIN_C = """
+EOF
+cat > "$work/main.c" <<'EOF'
 #include <stdio.h>
 extern int lib_add(int, int);
 extern void lib_say(void);
@@ -49,15 +184,11 @@ extern void lib_say(void);
 int main(void) {
     int (*fp)(int, int) = lib_add;
     lib_say();
-    printf("%d\\n", fp(2, 3));
+    printf("%d\n", fp(2, 3));
     return 0;
 }
-"""
-
-# An indirect call through an incompatible type. With cfi-icall live, the
-# runtime must object; without it, this returns whatever happens to be in the
-# register and the program says nothing.
-VIOLATION_C = """
+EOF
+cat > "$work/violation.c" <<'EOF'
 #include <stdio.h>
 extern int lib_add(int, int);
 
@@ -65,250 +196,109 @@ typedef long (*wrong_t)(long, long, long);
 
 int main(void) {
     wrong_t bad = (wrong_t)(void *)lib_add;
-    printf("%ld\\n", bad(1, 2, 3));
+    printf("%ld\n", bad(1, 2, 3));
     return 0;
 }
-"""
+EOF
 
-
-def run(cmd, **kwargs):
-    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
-
-
-def host_flags(flags):
-    """The flag set minus the cross-target parts.
-
-    A musl --target/--sysroot cannot be exercised without a musl sysroot, which
-    only exists once losos-00-toolchain has been built. Two others point into
-    that same sysroot and have to go with them: -resource-dir, without which
-    clang finds neither its builtin headers nor a runtime, and --unwindlib,
-    which names a libunwind this tree builds and no build host installs
-    (`ld.lld: error: unable to find library -lunwind`). Dropping exactly those
-    four and keeping everything else means this still tests the LTO and CFI
-    machinery -- diagnose mode included, against whatever unwinder the host
-    has -- and the report says plainly which part went unverified.
-    """
-    dropped = ("--target=", "--sysroot=", "-resource-dir=", "--unwindlib=")
-    return [f for f in flags if not f.startswith(dropped)]
-
-
-def linker_in_use(tc, notes):
-    """Ask the driver which linker `-fuse-ld=` actually resolved to.
-
-    The manifest names a linker and the report line above it echoes that name;
-    this asks the one clang found to identify itself. The two are different
-    claims, and
-    the distance between them grew when the default moved from lld to mold:
-    lld is built into clang's driver knowledge and needs nothing installed
-    beyond itself, while mold is a separate program reached through the GNU
-    linker-plugin path and needs LLVMgold.so with it (see
-    manifest/toolchain.yaml). `-Wl,--version` makes the linker print its banner
-    and exit before it opens an input, so this costs one exec and works on a
-    host with no compiler-rt -- unlike the probe below, which is why it is
-    reported separately rather than folded into it.
-    """
-    cc = tc.compiler.get("cc", "clang")
-    result = run(
-        [
-            cc,
-            *host_flags(tc.ldflags()),
-            "-nostdlib",
-            "-shared",
-            "-x",
-            "c",
-            "-",
-            "-Wl,--version",
-            "-o",
-            "/dev/null",
-        ],
-        input="int x;\n",
+if "${compile_cmd[@]}" -shared -o "$work/libprobe.so" "$work/lib.c" >"$work/lib.err" 2>&1; then
+  if "${compile_cmd[@]}" -o "$work/probe" "$work/main.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/probe.err" 2>&1; then
+    set +e
+    probe_out=$(
+      cd "$work" && ./probe
     )
-    if result.returncode != 0:
-        notes.append(
-            "the driver could not start its linker:\n" + result.stderr.strip()
-        )
-        return None
-    # A linker that exits 0 and says nothing is not a linker that answered.
-    banner = (result.stdout.splitlines() or [""])[0].strip()
-    if not banner:
-        notes.append("the linker printed no version banner")
-        return None
-    return banner
+    probe_status=$?
+    set -e
+    if [ "$probe_status" -ne 0 ]; then
+      echo '  build        FAILED' >&2
+      printf '    probe ran wrong: rc=%s out=%q\n' "$probe_status" "$probe_out" >&2
+      ok=0
+    elif [ "$ok" -eq 1 ]; then
+      if [ "$probe_out" = $'lib\n5' ]; then
+        echo '  build        lib + exe compiled, linked and ran with the real flags'
+      else
+        echo '  build        FAILED' >&2
+        printf '    probe ran wrong: out=%q\n' "$probe_out" >&2
+        ok=0
+      fi
+    fi
+  else
+    echo '  build        FAILED' >&2
+    printf '    executable did not link:\n' >&2
+    sed 's/^/    /' "$work/probe.err" >&2
+    ok=0
+  fi
+else
+  echo '  build        FAILED' >&2
+  printf '    shared library did not build:\n' >&2
+  sed 's/^/    /' "$work/lib.err" >&2
+  ok=0
+fi
 
+if [ "$ok" -eq 1 ] && [ "$verify" -eq 1 ]; then
+  if "${compile_cmd[@]}" -o "$work/violation" "$work/violation.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/violation-build.err" 2>&1; then
+    set +e
+    violation_combined=$(cd "$work" && ./violation 2>&1)
+    violation_status=$?
+    set -e
+    lower=$(printf '%s' "$violation_combined" | tr '[:upper:]' '[:lower:]')
+    if printf '%s' "$lower" | grep -Eq 'control flow integrity|cfi'; then
+      echo '  cfi-live     a mistyped indirect call was caught'
+    elif [ "$violation_status" -gt 128 ]; then
+      printf '  cfi-live     a mistyped indirect call was caught (trapped with signal %s)\n' "$((violation_status - 128))"
+    else
+      echo '  cfi-live     FAILED' >&2
+      printf "    the bad indirect call was NOT caught -- CFI compiled in but is not checking (rc=%s, output=%q)\n" "$violation_status" "$violation_combined" >&2
+      ok=0
+    fi
+  else
+    echo '  cfi-live     FAILED' >&2
+    printf '    violation probe did not build:\n' >&2
+    sed 's/^/    /' "$work/violation-build.err" >&2
+    ok=0
+  fi
+elif [ "$ok" -eq 1 ]; then
+  echo '  cfi-live     not checked (pass --verify-cfi)'
+fi
 
-def compile_probe(tc, work, notes):
-    """Build lib + exe with the real flags. Returns True on success."""
-    cc = tc.compiler.get("cc", "clang")
-    cflags = host_flags(tc.cflags())
-    ldflags = host_flags(tc.ldflags())
+# A recipe setting -O3 or -fsanitize= locally is how a package ends up
+# outside the scheme while the manifest still claims it is inside.
+# The character class must not contain a space: `-O <dir>` is an output
+# directory for several tools (merge_config.sh among them) and is not an
+# optimisation level. An earlier spelling included one and flagged the
+# kernel's config merge.
+offenders=()
+while IFS= read -r -d '' template; do
+  number=0
+  while IFS= read -r line || [ -n "$line" ]; do
+    number=$((number + 1))
+    stripped=${line#"${line%%[![:space:]]*}"}
+    case "$stripped" in
+      \#*|'') continue ;;
+    esac
+    if [[ "$line" =~ (^|[[:space:]])-(O[0-9zs]|flto|fsanitize|fvisibility)($|[[:space:]=,:;]) ]]; then
+      offenders+=("${template#$repo/}:$number: $stripped")
+    fi
+  done < "$template"
+done < <(find "$repo/recipes" -mindepth 3 -maxdepth 3 -path '*/build.yaml.in' -print0 | sort -z)
 
-    (work / "lib.c").write_text(LIB_C)
-    (work / "main.c").write_text(MAIN_C)
+if [ "${#offenders[@]}" -eq 0 ]; then
+  echo '  recipes      no recipe sets its own -O/-flto/-fsanitize/-fvisibility'
+else
+  echo '  recipes      FAILED -- these bypass manifest/toolchain.yaml:' >&2
+  printf '    %s\n' "${offenders[@]}" >&2
+  ok=0
+fi
 
-    result = run(
-        [cc, *cflags, *ldflags, "-shared", "-o", str(work / "libprobe.so"),
-         str(work / "lib.c")]
-    )
-    if result.returncode != 0:
-        notes.append("shared library did not build:\n" + result.stderr.strip())
-        return False
+echo
+printf '  NOT verified here:\n'
+printf '    --target=%s, --sysroot, -resource-dir\n' "$triple"
+printf '    and --unwindlib:\n'
+printf '    no musl sysroot exists until losos-00-toolchain is built, and the\n'
+printf '    resource directory and the unwinder both live inside it. The probe\n'
+printf '    above drops exactly those four flags and keeps every other one, so\n'
+printf '    what it proves is the flag set against the HOST\047s runtimes and\n'
+printf '    unwinder, not the staged ones.\n'
+printf '    See docs/limits.md for what remains outside the scheme.\n'
 
-    result = run(
-        [cc, *cflags, *ldflags, "-o", str(work / "probe"), str(work / "main.c"),
-         "-L", str(work), "-lprobe", "-Wl,-rpath," + str(work)]
-    )
-    if result.returncode != 0:
-        notes.append("executable did not link:\n" + result.stderr.strip())
-        return False
-
-    result = run([str(work / "probe")])
-    if result.returncode != 0 or result.stdout.strip() != "lib\n5".strip():
-        notes.append(f"probe ran wrong: rc={result.returncode} out={result.stdout!r}")
-        return False
-    return True
-
-
-def verify_cfi_live(tc, work, notes):
-    """Prove the CFI checks actually fire, not merely that they compiled."""
-    cc = tc.compiler.get("cc", "clang")
-    cflags = host_flags(tc.cflags())
-    ldflags = host_flags(tc.ldflags())
-
-    (work / "violation.c").write_text(VIOLATION_C)
-    result = run(
-        [cc, *cflags, *ldflags, "-o", str(work / "violation"),
-         str(work / "violation.c"), "-L", str(work), "-lprobe",
-         "-Wl,-rpath," + str(work)]
-    )
-    if result.returncode != 0:
-        notes.append("violation probe did not build:\n" + result.stderr.strip())
-        return False
-
-    result = run([str(work / "violation")])
-    combined = (result.stdout + result.stderr).lower()
-    # In diagnose mode the runtime prints and (with -fsanitize-recover) carries
-    # on; in trap mode the process dies on SIGILL. Either is a live check.
-    if "control flow integrity" in combined or "cfi" in combined:
-        return True
-    if result.returncode < 0:
-        notes.append(f"trapped with signal {-result.returncode} (trap mode)")
-        return True
-    notes.append(
-        "the bad indirect call was NOT caught -- CFI compiled in but is not "
-        f"checking (rc={result.returncode}, output={result.stdout.strip()!r})"
-    )
-    return False
-
-
-def audit_recipes(notes):
-    """No recipe may spell its own optimisation or sanitizer flags."""
-    # A recipe setting -O3 or -fsanitize= locally is how a package ends up
-    # outside the scheme while the manifest still claims it is inside.
-    # The character class must not contain a space: `-O <dir>` is an output
-    # directory for several tools (merge_config.sh among them) and is not an
-    # optimisation level. An earlier spelling included one and flagged the
-    # kernel's config merge.
-    forbidden = re.compile(r"(?:^|\s)-(?:O[0-9zs]|flto|fsanitize|fvisibility)\b")
-    offenders = []
-    for template in sorted((REPO / "recipes").glob("*/*/build.yaml.in")):
-        for number, line in enumerate(template.read_text().splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("#"):
-                continue
-            if forbidden.search(line):
-                offenders.append(f"{template.relative_to(REPO)}:{number}: {stripped}")
-    if offenders:
-        notes.extend(offenders)
-        return False
-    return True
-
-
-def main():
-    tc = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
-    verify = "--verify-cfi" in sys.argv
-
-    print("toolchain-report")
-    print(f"  compiler     {tc.compiler.get('cc')} / {tc.compiler.get('linker')}")
-    print(f"  target       {tc.target.get('triple')}")
-    print(f"  LTO          {tc.lto.get('mode')}")
-    print(
-        f"  CFI          {'on' if tc.cfi.get('enable') else 'off'}"
-        f"  cross-DSO={tc.cfi.get('cross_dso')}"
-        f"  trap={tc.cfi.get('trap')}"
-    )
-    print(f"  schemes      {', '.join(tc.cfi.get('schemes') or []) or 'none'}")
-
-    # Printed every run, because the exceptions ARE the honest part of a CFI
-    # claim. A scheme applied to a distribution always has them; the difference
-    # between a real claim and a marketing one is whether they are counted.
-    if tc.exceptions:
-        print(f"  exceptions   {len(tc.exceptions)} package(s) outside the full set:")
-        for name, entry in tc.exceptions.items():
-            print(f"    {name:12} drops {', '.join(entry.get('drops') or [])}")
-    else:
-        print("  exceptions   none")
-
-    ok = True
-
-    notes = []
-    banner = linker_in_use(tc, notes)
-    if banner:
-        print(f"  linker       {banner}")
-    else:
-        print("  linker       FAILED", file=sys.stderr)
-        for note in notes:
-            print("    " + note.replace("\n", "\n    "), file=sys.stderr)
-        ok = False
-
-    with tempfile.TemporaryDirectory(prefix="losos-toolchain-") as tmp:
-        work = Path(tmp)
-
-        notes = []
-        if compile_probe(tc, work, notes):
-            print("  build        lib + exe compiled, linked and ran with the real flags")
-        else:
-            print("  build        FAILED", file=sys.stderr)
-            for note in notes:
-                print("    " + note.replace("\n", "\n    "), file=sys.stderr)
-            ok = False
-
-        if ok and verify:
-            notes = []
-            if verify_cfi_live(tc, work, notes):
-                detail = f" ({notes[0]})" if notes else ""
-                print(f"  cfi-live     a mistyped indirect call was caught{detail}")
-            else:
-                print("  cfi-live     FAILED", file=sys.stderr)
-                for note in notes:
-                    print("    " + note, file=sys.stderr)
-                ok = False
-        elif ok:
-            print("  cfi-live     not checked (pass --verify-cfi)")
-
-    notes = []
-    if audit_recipes(notes):
-        print("  recipes      no recipe sets its own -O/-flto/-fsanitize/-fvisibility")
-    else:
-        print("  recipes      FAILED -- these bypass manifest/toolchain.yaml:",
-              file=sys.stderr)
-        for note in notes:
-            print("    " + note, file=sys.stderr)
-        ok = False
-
-    # State the gap rather than let the green line imply it away.
-    print()
-    print("  NOT verified here:")
-    print(f"    --target={tc.target.get('triple')}, --sysroot, -resource-dir")
-    print("    and --unwindlib:")
-    print("    no musl sysroot exists until losos-00-toolchain is built, and the")
-    print("    resource directory and the unwinder both live inside it. The probe")
-    print("    above drops exactly those four flags and keeps every other one, so")
-    print("    what it proves is the flag set against the HOST's runtimes and")
-    print("    unwinder, not the staged ones.")
-    print("    See docs/limits.md for what remains outside the scheme.")
-
-    return 0 if ok else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+exit "$((ok ? 0 : 1))"

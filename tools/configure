@@ -349,10 +349,10 @@ def main():
 
     # The toolchain: one manifest, every flag in the tree. A recipe that
     # spelled its own -O2 would be outside the CFI scheme with nothing saying
-    # so, which is what tools/gates/toolchain-report.py exists to catch.
-    toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
+    # so, which is what `tools/pm-toolchain report` exists to catch.
     # The triple is the architecture's, not the toolchain manifest's: writing
     # it in both places is how they come to disagree.
+    toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
     toolchain.target["triple"] = arch["triple"]
     subs.update(toolchain.placeholders(tool_path))
 

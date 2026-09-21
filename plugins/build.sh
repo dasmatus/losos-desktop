@@ -1,34 +1,17 @@
 #!/bin/sh
-# Build this distribution's pm plugins and encode them as components.
-#
-# Two steps, because `cargo build --target wasm32-unknown-unknown` stops at a
-# core module: wit-bindgen's canonical-ABI shims are in it, but nothing has
-# wrapped it in a component yet. pm's own plugins/encoder does that, so this
-# needs no `cargo install` and no wasm-tools -- only a Rust toolchain with the
-# wasm32 target:
-#
-#   rustup target add wasm32-unknown-unknown
-#
-#   ./build.sh                 everything, into dist/
-#   ./build.sh losos-image     just one
-#
-# The components then have to be signed before pm will load them. A plugin is
-# code that runs inside pm and helps decide what a jail allows, so pm holds it
-# to the same trust store as a build file:
-#
-#   pm sign  <config>/pm/plugins/losos-image.wasm
+# Compatibility wrapper for plugins/Justfile's build recipe.
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-cd "$here"
-
+repo=$(CDPATH= cd -- "$here/.." && pwd -P)
 target=wasm32-unknown-unknown
 out="$here/dist"
-
-# pm's encoder, from the sibling checkout this repository already assumes for
-# the pm binary itself.
-pm_root=${PM_ROOT:-$here/../../pm}
+pm_root=${PM_ROOT:-$repo/../pm}
 encoder="$pm_root/plugins/target/release/encoder"
+
+if command -v just >/dev/null 2>&1; then
+    exec just --justfile "$here/Justfile" --working-directory "$repo" build "$@"
+fi
 
 crates=${*:-"losos-image losos-mkosi losos-systemd"}
 
@@ -41,7 +24,8 @@ if [ ! -x "$encoder" ]; then
 fi
 
 for crate in $crates; do
-    module="$here/target/$target/release/$(echo "$crate" | tr - _).wasm"
+    filename=$(printf '%s' "$crate" | tr '-' '_')
+    module="$here/target/$target/release/$filename.wasm"
     "$encoder" "$module" "$out/$crate.wasm"
 done
 
