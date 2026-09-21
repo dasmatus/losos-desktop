@@ -163,29 +163,29 @@ def verify_cfi_live(tc, work, notes):
     return False
 
 
-def audit_recipes(notes):
+def audit_recipes(repo, notes):
     """No recipe may spell its own optimisation or sanitizer flags."""
     forbidden = re.compile(r"(?:^|\s)-(?:O[0-9zs]|flto|fsanitize|fvisibility)\b")
     offenders = []
-    for template in sorted((REPO / "recipes").glob("*/*/build.yaml.in")):
+    for template in sorted((repo / "recipes").glob("*/*/build.yaml.in")):
         for number, line in enumerate(template.read_text().splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
                 continue
             if forbidden.search(line):
-                offenders.append(f"{template.relative_to(REPO)}:{number}: {stripped}")
+                offenders.append(f"{template.relative_to(repo)}:{number}: {stripped}")
     if offenders:
         notes.extend(offenders)
         return False
     return True
 
 
-def report(argv):
+def report(argv, *, repo=REPO):
     parser = argparse.ArgumentParser(prog="pm-toolchain report")
     parser.add_argument("--verify-cfi", action="store_true")
     args = parser.parse_args(argv)
 
-    tc = configured_toolchain()
+    tc = configured_toolchain(repo=repo)
 
     print("toolchain-report")
     print(f"  compiler     {tc.compiler.get('cc')} / {tc.compiler.get('linker')}")
@@ -243,7 +243,7 @@ def report(argv):
             print("  cfi-live     not checked (pass --verify-cfi)")
 
     notes = []
-    if audit_recipes(notes):
+    if audit_recipes(repo, notes):
         print("  recipes      no recipe sets its own -O/-flto/-fsanitize/-fvisibility")
     else:
         print("  recipes      FAILED -- these bypass manifest/toolchain.yaml:",
@@ -266,7 +266,7 @@ def report(argv):
     return 0 if ok else 1
 
 
-def show(argv):
+def show(argv, *, repo=REPO):
     parser = argparse.ArgumentParser(prog="pm-toolchain show")
     parser.add_argument("--triple", help="override the target triple")
     parser.add_argument("--package", help="show the flags for one exempt package")
@@ -274,6 +274,7 @@ def show(argv):
     args = parser.parse_args(argv)
 
     tc = configured_toolchain(
+        repo=repo,
         triple=args.triple,
         cfi_export_map=args.cfi_export_map,
     )
@@ -299,18 +300,18 @@ def show(argv):
     return 0
 
 
-def cli_main(argv=None):
+def cli_main(argv=None, *, repo=REPO):
     parser = argparse.ArgumentParser(prog="pm-toolchain")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("report", help="compile and audit the declared toolchain")
     sub.add_parser("show", help="print the resolved toolchain configuration as JSON")
     args, rest = parser.parse_known_args(argv)
     if args.command == "report":
-        return report(rest)
+        return report(rest, repo=repo)
     if args.command == "show":
-        return show(rest)
+        return show(rest, repo=repo)
     parser.error(f"unknown command: {args.command}")
 
 
-def main(argv=None):
-    return cli_main(argv)
+def main(argv=None, *, repo=REPO):
+    return cli_main(argv, repo=repo)
