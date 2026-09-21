@@ -203,9 +203,8 @@ jobs:
     # platform.machine(): Arch's own image on x86_64, Arch Linux ARM on
     # aarch64, since Arch publishes no arm64 image. Two separate distributions
     # with separate package sets, so an image proved on one says nothing about
-    # the other. The package and assembly jobs use these same hosts; this job
-    # tests the complete Containerfile on both even when unresolved source pins
-    # skip those builds. See docs/container.md.
+    # the other. This job tests the complete Containerfile on both even when
+    # the image-build jobs are skipped for unresolved pins. See docs/container.md.
     strategy:
       fail-fast: false
       matrix:
@@ -513,6 +512,33 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # Keep package publishing separate from the build: code compiled on a PR
+      # must never run with a registry write token. Signatures travel with the
+      # archives; a pulled package must still pass pm's own trust check.
+      - name: Sign the built packages and record their release version
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        working-directory: losos-desktop
+        run: |
+          # pm build signs neither its top-level archive nor intermediate ones.
+          # Use the build's existing key, never a new key in the publish job.
+          export XDG_CONFIG_HOME="$PWD/.pm-config"
+          for package in out/pkgs/*.cpkg; do
+            "$GITHUB_WORKSPACE/pm/target/release/pm" sign "$package"
+          done
+          printf '%s\n' "$LOSOS_VERSION" > out/pkgs/package-version.txt
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        with:
+          name: packages-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: |
+            losos-desktop/out/pkgs/*.cpkg
+            losos-desktop/out/pkgs/*.cpkg.sig
+            losos-desktop/out/pkgs/package-version.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+
       # always(): the number is worth having most when the build died, since
       # a full disk is one of the things that kills it.
       # The per-directory lines say what is big; the workspace total says how
@@ -600,77 +626,6 @@ jobs:
             cat package-containers.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-  # This job cannot start until BOTH package matrix legs succeeded. The
-  # same-run closure is input, not a pm cache: configure removes the image's
-  # dependency edge so pm cannot silently compile the packages a second time.
-  build:
-    needs: [packages, channel, gates, pinned]
-    if: needs.pinned.outputs.ready == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-            image: docker.io/library/archlinux:base
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-            image: docker.io/menci/archlinuxarm:base
-    runs-on: ${{ matrix.runner }}
-    container:
-      image: ${{ matrix.image }}
-      # Justfile's image-host fallback uses nested Podman when the pinned tools
-      # are absent from the job container; only those nested-container jobs need
-      # full privilege.
-      options: --privileged
-    env:
-      CHANNEL: ${{ needs.channel.outputs.name }}
-      LOSOS_VERSION: ${{ needs.channel.outputs.version }}
-    steps:
-      - *arch-bootstrap
-      - uses: actions/checkout@v4
-        with: { path: losos-desktop }
-
-      - name: Install assembly prerequisites
-        uses: ./losos-desktop/.github/actions/arch-setup
-        with:
-          packages: just python-yaml
-          nested: "true"
-
-      - uses: ./losos-desktop/.github/actions/pm
-        with: { ref: "${{ env.PM_REF }}" }
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: packages-${{ matrix.arch }}
-          path: losos-desktop/out/pkgs
-
-      - name: Assemble the image from the verified package closure
-        working-directory: losos-desktop
-        env:
-          PM: ${{ github.workspace }}/pm/target/release/pm
-        run: |
-          just configure -- --arch ${{ matrix.arch }} --channel "$CHANNEL" \
-            --version "$LOSOS_VERSION" \
-            --prebuilt-packages "$PWD/out/pkgs/losos-40-gnome-0.1.0.cpkg"
-          # just build supplies the pinned image tools through its container
-          # fallback; assembly has no source mirror or package rebuild to do.
-          just build losos-90-image
-
-      - name: Name the artifacts and write SHA256SUMS
-        working-directory: losos-desktop
-        run: |
-          just stage-release -- --arch ${{ matrix.arch }} \
-            --version "$LOSOS_VERSION" --out release
-          just release-manifest -- --arch ${{ matrix.arch }} \
-            --version "$LOSOS_VERSION" release
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
-          path: losos-desktop/release/
-          if-no-files-found: error
 
   # Boot what was built. A build that produces an unbootable image is a build
   # that passed, so this is the job that makes the others mean anything.
