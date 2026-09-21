@@ -131,7 +131,10 @@ def check_package_handoff(doc):
         if arches != {"x86_64", "aarch64"}:
             failures.append(f"images.yml: {name} must cover both native architectures")
 
-    layers = yaml.safe_load((REPO / "manifest/layers.yaml").read_text())
+    layers = yaml.safe_load((REPO / "manifest/layers.yaml").read_text()) or []
+    if not isinstance(layers, list) or len(layers) < 2:
+        failures.append("images.yml: manifest/layers.yaml must define at least 2 layers (packages + image)")
+        return failures
     archive = f"{layers[-2]['name']}-0.1.0.cpkg"
     uploads = [
         step.get("with") or {} for step in packages.get("steps", [])
