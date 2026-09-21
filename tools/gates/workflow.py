@@ -123,7 +123,10 @@ def check_package_handoff(doc):
     failures = []
     packages = jobs.get("packages") or {}
     build = jobs.get("build") or {}
-    if "packages" not in (build.get("needs") or []):
+    build_needs = build.get("needs") or []
+    if isinstance(build_needs, str):
+        build_needs = [build_needs]
+    if "packages" not in build_needs:
         failures.append("images.yml: build must need the packages matrix")
     for name, job in (("packages", packages), ("build", build)):
         matrix = (job.get("strategy") or {}).get("matrix") or {}
