@@ -89,6 +89,18 @@ def runtime():
     )
 
 
+def builder():
+    """buildah if it is here, else fall back to the runtime engine.
+
+    `run` needs a full container runtime, but the image build itself does not.
+    Prefer buildah when available so CI and local explicit rebuilds use the OCI
+    builder directly; fall back to podman or docker on hosts that do not have it.
+    """
+    if shutil.which("buildah"):
+        return "buildah"
+    return runtime()
+
+
 def ensure_tmpdir():
     """Make TMPDIR exist before the container engine is handed it.
 
@@ -229,7 +241,8 @@ def build(engine, args):
             "container: build needs a tag target, but LOSOS_CONTAINER_IMAGE is a digest reference.\n"
             "  Use a tag (for example ghcr.io/dasmatus/losos-desktop/build-host:dev) for local builds."
         )
-    command = [engine, "build", "-t", target_image, "-f", str(REPO / "Containerfile")]
+    verb = "bud" if engine == "buildah" else "build"
+    command = [engine, verb, "-t", target_image, "-f", str(REPO / "Containerfile")]
     # An explicit --build-arg wins, so overriding the base stays possible and
     # this does not quietly pass it twice with the caller's copy losing.
     if not any(pin == "BASE_IMAGE" or pin.startswith("BASE_IMAGE=") for pin in args.build_arg):
@@ -351,7 +364,8 @@ def main():
 
     args = parser.parse_args()
     ensure_tmpdir()
-    return args.handler(runtime(), args)
+    engine = builder() if args.verb == "build" else runtime()
+    return args.handler(engine, args)
 
 
 if __name__ == "__main__":
