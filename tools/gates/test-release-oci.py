@@ -52,13 +52,15 @@ class ReleaseOCITransportTests(unittest.TestCase):
         self.calls.append(command)
         self.assertEqual(command[:2], ["skopeo", "--override-arch"])
         self.assertIn(command[2], ("amd64", "arm64"))
-        self.assertEqual(command[3:5], ["copy", "--preserve-digests"])
+        self.assertEqual(command[3], "copy")
+        preserve = "--preserve-digests" in command
         self.assertTrue(kwargs["check"])
         self.assertNotIn("shell", kwargs)
         self.assertNotIn("env", kwargs)
         self.assertFalse(any("tls-verify" in part for part in command))
         source, target = command[-2:]
         if source.startswith("oci:"):
+            self.assertTrue(preserve)
             layout = Path(source[4:].rsplit(":", 1)[0])
             digest = oci.read_json(layout / "index.json")["manifests"][0]["digest"]
             ref = target.removeprefix("docker://").rsplit(":", 1)[0] + "@" + digest
@@ -67,6 +69,7 @@ class ReleaseOCITransportTests(unittest.TestCase):
             self.registry[ref] = stored
             Path(command[command.index("--digestfile") + 1]).write_text(digest)
         else:
+            self.assertFalse(preserve)
             layout = Path(target[4:].rsplit(":", 1)[0])
             shutil.copytree(self.registry[source.removeprefix("docker://")], layout)
         return subprocess.CompletedProcess(command, 0)

@@ -234,10 +234,12 @@ def make_layout(source, layout, arch, source_repository=None):
     return manifest_desc["digest"]
 
 
-def skopeo(arguments, arch):
+def skopeo(arguments, arch, preserve_digests):
     try:
-        subprocess.run(["skopeo", "--override-arch", ARCHES[arch], "copy",
-                        "--preserve-digests", *arguments],
+        command = ["skopeo", "--override-arch", ARCHES[arch], "copy"]
+        if preserve_digests:
+            command.append("--preserve-digests")
+        subprocess.run([*command, *arguments],
                        check=True, stderr=sys.stderr)
     except FileNotFoundError as error:
         raise OCIError("skopeo is required; install it on the host") from error
@@ -257,7 +259,7 @@ def publish(args):
         digest_file = work / "digest"
         skopeo(["--digestfile", str(digest_file),
                 f"oci:{layout}:release", f"docker://{repo}:{args.tag}"],
-               args.arch)
+               args.arch, preserve_digests=True)
         with regular_open(digest_file) as stream:
             copied = stream.read(128).decode("ascii").strip()
         require(copied == digest, "registry copy did not preserve the manifest digest")
@@ -392,7 +394,8 @@ def pull(args):
     args.output.mkdir(parents=True, exist_ok=True)
     with workspace(args.output) as work:
         layout = work / "image"
-        skopeo([f"docker://{args.reference}", f"oci:{layout}:release"], args.arch)
+        skopeo([f"docker://{args.reference}", f"oci:{layout}:release"],
+               args.arch, preserve_digests=False)
         restore(layout, digest, args.arch, work, args.output)
     print(args.output)
 
