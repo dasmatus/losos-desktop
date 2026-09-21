@@ -68,6 +68,24 @@ ARCH_IMAGES = {
 }
 
 
+def check_package_handoff(doc):
+    """Reject `needs` references GitHub would treat as an invalid workflow."""
+    jobs = doc.get("jobs") or {}
+    names = set(jobs)
+    failures = []
+    for job, spec in jobs.items():
+        needs = (spec or {}).get("needs") or []
+        if isinstance(needs, str):
+            needs = [needs]
+        for need in needs:
+            if need not in names:
+                failures.append(
+                    f"images.yml: {job} needs {need!r}, which is not a job.\n"
+                    "    GitHub rejects the whole workflow before any job starts."
+                )
+    return failures
+
+
 def check_arch_jobs(path, doc):
     """Keep runner architecture and job userspace paired, including matrices."""
     failures = []
@@ -210,7 +228,12 @@ def self_test():
                 "runs-on": "ubuntu-24.04",
                 "container": {"image": ARCH_IMAGES["ubuntu-24.04"]},
             },
+            "packages": {
+                "runs-on": "ubuntu-24.04",
+                "container": {"image": ARCH_IMAGES["ubuntu-24.04"]},
+            },
             "build": {
+                "needs": ["packages"],
                 "runs-on": "${{ matrix.runner }}",
                 "container": {"image": "${{ matrix.image }}"},
                 "strategy": {"matrix": {"include": [
@@ -221,6 +244,7 @@ def self_test():
         },
     }
     assert not check_arch_jobs(WORKFLOW, good)
+    assert not check_package_handoff(good)
     for mutation in ("no-container", "wrong-arch", "shell", "apt", "sysctl"):
         bad = copy.deepcopy(good)
         gate = bad["jobs"]["gates"]
@@ -241,6 +265,9 @@ def self_test():
                 "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0"
             )}]
         assert check_arch_jobs(WORKFLOW, bad), mutation
+    bad = copy.deepcopy(good)
+    bad["jobs"]["build"]["needs"] = ["missing"]
+    assert check_package_handoff(bad)
     container = "ARG RUST_VERSION=1.95.0\n"
     setup = {"runs": {"steps": [{
         "env": {"RUST_VERSION": "1.95.0"},
