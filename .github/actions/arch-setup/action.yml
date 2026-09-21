@@ -35,7 +35,11 @@ runs:
 
     - name: Install BasedPyright
       shell: bash
-      run: python3 -m pip install basedpyright==1.40.1 nodejs-wheel-binaries==24.19.0
+      run: |
+        venv=/opt/basedpyright
+        python3 -m venv "$venv"
+        "$venv/bin/pip" install basedpyright==1.40.1 nodejs-wheel-binaries==24.19.0
+        printf '%s\n' "$venv/bin" >> "$GITHUB_PATH"
 
     - name: Install the pinned Rust toolchain
       if: inputs.rust == 'true'
