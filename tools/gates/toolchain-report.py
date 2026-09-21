@@ -27,68 +27,60 @@ case "${1:-}" in
   *) echo "toolchain-report: unknown argument: $1" >&2; exit 1 ;;
 esac
 
-manifest_value() {
-  local section=$1 key=$2
-  awk -v section="$section" -v key="$key" '
-    $0 ~ "^" section ":$" { in_section=1; next }
-    in_section && /^[^ ]/ { exit }
-    in_section && $0 ~ "^  " key ":" {
-      sub("^  " key ": *", "")
-      sub(/[[:space:]]+#.*/, "")
-      print
-      exit
-    }
-  ' "$manifest"
-}
+# The harness moved out of Python, but the manifest is still YAML and the tree
+# already has one parser for it. Keep using a real YAML loader here rather than
+# reimplementing indentation-sensitive parsing in shell.
+eval "$(
+  python3 - "$manifest" <<'PY'
+import shlex
+import sys
+import yaml
 
-manifest_list() {
-  local section=$1 key=$2
-  awk -v section="$section" -v key="$key" '
-    $0 ~ "^" section ":$" { in_section=1; next }
-    in_section && /^[^ ]/ { exit }
-    in_section && $0 ~ "^  " key ":$" { in_list=1; next }
-    in_list && $0 ~ /^  [^ ]/ { exit }
-    in_list && $0 ~ /^    - / {
-      sub(/^    - /, "")
-      sub(/[[:space:]]+#.*/, "")
-      print
-    }
-  ' "$manifest"
-}
+doc = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 
-mapfile -t cfi_schemes < <(manifest_list cfi schemes)
-mapfile -t hardening_cflags < <(manifest_list hardening cflags)
-mapfile -t hardening_ldflags < <(manifest_list hardening ldflags)
-mapfile -t exception_lines < <(
-  awk '
-    /^exceptions:$/ { in_exceptions=1; next }
-    in_exceptions && /^[^ ]/ { exit }
-    in_exceptions && /^  - package: / {
-      pkg=$4
-      next
-    }
-    in_exceptions && pkg != "" && /^    drops: \[/ {
-      drops=$0
-      sub(/^    drops: \[/, "", drops)
-      sub(/\][[:space:]]*$/, "", drops)
-      print pkg "|" drops
-      pkg=""
-    }
-  ' "$manifest"
+def scalar(name, value):
+    if value is None:
+        rendered = ""
+    elif isinstance(value, bool):
+        rendered = "true" if value else "false"
+    else:
+        rendered = str(value)
+    print(f"{name}={shlex.quote(rendered)}")
+
+def array(name, values):
+    items = " ".join(shlex.quote(str(value)) for value in (values or []))
+    print(f"{name}=({items})")
+
+compiler = doc["compiler"]
+target = doc["target"]
+lto = doc["lto"]
+cfi = doc["cfi"]
+hardening = doc["hardening"]
+
+scalar("cc", compiler["cc"])
+scalar("linker", compiler["linker"])
+scalar("triple", target["triple"])
+scalar("sysroot", target["sysroot"])
+scalar("rtlib", target["rtlib"])
+scalar("unwindlib", target["unwindlib"])
+scalar("resource_dir", target["resource_dir"])
+scalar("lto_mode", lto["mode"])
+scalar("cfi_enable", cfi["enable"])
+scalar("cross_dso", cfi["cross_dso"])
+scalar("trap_mode", cfi["trap"])
+scalar("visibility", cfi["visibility"])
+array("cfi_schemes", cfi["schemes"])
+array("hardening_cflags", hardening["cflags"])
+array("hardening_ldflags", hardening["ldflags"])
+array(
+    "exception_lines",
+    [
+        f'{entry["package"]}|{", ".join(entry.get("drops") or [])}'
+        for entry in (doc.get("exceptions") or [])
+    ],
 )
-
-cc=$(manifest_value compiler cc)
-linker=$(manifest_value compiler linker)
-triple=$(manifest_value target triple)
-sysroot=$(manifest_value target sysroot)
-rtlib=$(manifest_value target rtlib)
-unwindlib=$(manifest_value target unwindlib)
-resource_dir=$(manifest_value target resource_dir)
-lto_mode=$(manifest_value lto mode)
-cfi_enable=$(manifest_value cfi enable)
-cross_dso=$(manifest_value cfi cross_dso)
-trap_mode=$(manifest_value cfi trap)
-visibility=$(manifest_value cfi visibility)
+PY
+)"
 
 cfi_flags=()
 if [ "$cfi_enable" = true ] && [ "${#cfi_schemes[@]}" -gt 0 ]; then
@@ -208,33 +200,37 @@ int main(void) {
 }
 EOF
 
-if "$cc" "${host_cflags[@]}" "${host_ldflags[@]}" -shared -o "$work/libprobe.so" "$work/lib.c" >"$work/lib.err" 2>&1 \
-  && "$cc" "${host_cflags[@]}" "${host_ldflags[@]}" -o "$work/probe" "$work/main.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/probe.err" 2>&1; then
-  probe_out=$(
-    cd "$work" && ./probe
-  ) || {
-    echo '  build        FAILED' >&2
-    printf '    probe ran wrong: rc=%s out=%q\n' "$?" "$probe_out" >&2
-    ok=0
-  }
-  if [ "$ok" -eq 1 ]; then
-    if [ "$probe_out" = $'lib\n5' ]; then
-      echo '  build        lib + exe compiled, linked and ran with the real flags'
-    else
+if "$cc" "${host_cflags[@]}" "${host_ldflags[@]}" -shared -o "$work/libprobe.so" "$work/lib.c" >"$work/lib.err" 2>&1; then
+  if "$cc" "${host_cflags[@]}" "${host_ldflags[@]}" -o "$work/probe" "$work/main.c" -L "$work" -lprobe "-Wl,-rpath,$work" >"$work/probe.err" 2>&1; then
+    set +e
+    probe_out=$(
+      cd "$work" && ./probe
+    )
+    probe_status=$?
+    set -e
+    if [ "$probe_status" -ne 0 ]; then
       echo '  build        FAILED' >&2
-      printf '    probe ran wrong: out=%q\n' "$probe_out" >&2
+      printf '    probe ran wrong: rc=%s out=%q\n' "$probe_status" "$probe_out" >&2
       ok=0
+    elif [ "$ok" -eq 1 ]; then
+      if [ "$probe_out" = $'lib\n5' ]; then
+        echo '  build        lib + exe compiled, linked and ran with the real flags'
+      else
+        echo '  build        FAILED' >&2
+        printf '    probe ran wrong: out=%q\n' "$probe_out" >&2
+        ok=0
+      fi
     fi
+  else
+    echo '  build        FAILED' >&2
+    printf '    executable did not link:\n' >&2
+    sed 's/^/    /' "$work/probe.err" >&2
+    ok=0
   fi
 else
   echo '  build        FAILED' >&2
-  if [ -s "$work/lib.err" ]; then
-    printf '    shared library did not build:\n' >&2
-    sed 's/^/    /' "$work/lib.err" >&2
-  else
-    printf '    executable did not link:\n' >&2
-    sed 's/^/    /' "$work/probe.err" >&2
-  fi
+  printf '    shared library did not build:\n' >&2
+  sed 's/^/    /' "$work/lib.err" >&2
   ok=0
 fi
 
@@ -247,8 +243,8 @@ if [ "$ok" -eq 1 ] && [ "$verify" -eq 1 ]; then
     lower=$(printf '%s' "$violation_combined" | tr '[:upper:]' '[:lower:]')
     if printf '%s' "$lower" | grep -Eq 'control flow integrity|cfi'; then
       echo '  cfi-live     a mistyped indirect call was caught'
-    elif [ "$violation_status" -lt 0 ]; then
-      printf '  cfi-live     a mistyped indirect call was caught (trapped with signal %s)\n' "$((-violation_status))"
+    elif [ "$violation_status" -gt 128 ]; then
+      printf '  cfi-live     a mistyped indirect call was caught (trapped with signal %s)\n' "$((violation_status - 128))"
     else
       echo '  cfi-live     FAILED' >&2
       printf "    the bad indirect call was NOT caught -- CFI compiled in but is not checking (rc=%s, output=%q)\n" "$violation_status" "$violation_combined" >&2

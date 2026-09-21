@@ -734,6 +734,34 @@ jobs:
           name: ota-console-${{ matrix.arch }}
           path: ota-console.log
 
+  ci:
+    if: always() && github.event_name == 'pull_request'
+    needs: [gates, container, pinned, build, verify, ota]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Keep the historic aggregate PR status
+        env:
+          GATES_RESULT: ${{ needs.gates.result }}
+          CONTAINER_RESULT: ${{ needs.container.result }}
+          PINNED_RESULT: ${{ needs.pinned.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          OTA_RESULT: ${{ needs.ota.result }}
+        run: |
+          set -euo pipefail
+          for result in \
+            "$GATES_RESULT" \
+            "$CONTAINER_RESULT" \
+            "$PINNED_RESULT" \
+            "$BUILD_RESULT" \
+            "$VERIFY_RESULT" \
+            "$OTA_RESULT"; do
+            [ "$result" = success ] || {
+              echo "ci: dependent job finished with $result" >&2
+              exit 1
+            }
+          done
+
   publish:
     needs: [build, verify, ota, channel]
     # A dispatched run publishes what the build produced even if the image did
