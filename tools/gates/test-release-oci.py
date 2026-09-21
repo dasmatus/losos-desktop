@@ -240,6 +240,12 @@ class ReleaseOCITransportTests(unittest.TestCase):
         (self.output / "SHA256SUMS").write_text("existing")
         self.pull(ref, success=False)
 
+    def test_pull_rejects_non_directory_output(self):
+        ref = self.publish()
+        target = self.root / "not-a-directory"
+        target.write_text("nope")
+        self.cli("pull", ref, "--arch", "x86_64", "--output", target, success=False)
+
     def test_restore_cleans_partial_candidates_on_failure(self):
         ref = self.publish()
         layout, _, manifest = self.image(ref)

@@ -391,7 +391,10 @@ def restore(layout, digest, arch, work, output):
 
 def pull(args):
     _, digest = reference(args.reference)
-    args.output.mkdir(parents=True, exist_ok=True)
+    if args.output.exists():
+        require(args.output.is_dir(), f"output is not a directory: {args.output}")
+    else:
+        args.output.mkdir(parents=True)
     with workspace(args.output) as work:
         layout = work / "image"
         skopeo([f"docker://{args.reference}", f"oci:{layout}:release"],
