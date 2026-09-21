@@ -20,7 +20,7 @@ explain-all:
   done
   if [ "${#missing[@]}" -gt 0 ]; then
     echo "explain-all: plugin component(s) missing: ${missing[*]}" >&2
-    echo "explain-all: run just plugins ${missing[*]}" >&2
+    echo "explain-all: run just --justfile {{repo}}/Justfile --working-directory {{repo}} plugins ${missing[*]}" >&2
     echo "explain-all: without them pm cannot explain the image layer, and reports" >&2
     echo "explain-all: an unexpandable command or an underivable policy rather" >&2
     echo "explain-all: than a missing plugin" >&2

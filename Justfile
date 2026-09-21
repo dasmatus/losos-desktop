@@ -389,7 +389,13 @@ toolchain-report *args:
   #!/usr/bin/env bash
   set -euo pipefail
   if [ "${1:-}" = "--" ]; then shift; fi
-  just --justfile "{{repo}}/tools/Justfile" --working-directory "{{repo}}" toolchain-report -- "$@"
+  if [ $# -eq 0 ]; then
+    just --justfile "{{repo}}/tools/Justfile" --working-directory "{{repo}}" toolchain-report
+  elif [ "${1:-}" != "${1#-}" ]; then
+    just --justfile "{{repo}}/tools/Justfile" --working-directory "{{repo}}" toolchain-report -- "$@"
+  else
+    just --justfile "{{repo}}/tools/Justfile" --working-directory "{{repo}}" toolchain-report "$@"
+  fi
 
 vm-test *args:
   #!/usr/bin/env bash
