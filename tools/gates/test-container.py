@@ -65,18 +65,25 @@ class ContainerTests(unittest.TestCase):
             with self.subTest(machine=machine), patch.object(container.platform, "machine", return_value=machine):
                 with patch.dict(os.environ, {"LOSOS_CONTAINER_IMAGE": "localhost/test"}):
                     with patch.object(container.subprocess, "call", return_value=0) as call:
-                        container.build("docker", argparse.Namespace(build_arg=[]))
+                        container.build("buildah", argparse.Namespace(build_arg=[]))
                         call.assert_called_once_with([
-                            "docker", "build", "-t", "localhost/test", "-f", str(REPO / "Containerfile"),
+                            "buildah", "bud", "-t", "localhost/test", "-f", str(REPO / "Containerfile"),
                             "--build-arg", f"BASE_IMAGE={base}", str(REPO),
                         ])
 
     def test_explicit_base_override(self):
         with patch.object(container, "base_image") as base:
             with patch.object(container.subprocess, "call", return_value=0) as call:
-                container.build("podman", argparse.Namespace(build_arg=["BASE_IMAGE=custom:base"]))
+                container.build("buildah", argparse.Namespace(build_arg=["BASE_IMAGE=custom:base"]))
                 base.assert_not_called()
                 self.assertIn("BASE_IMAGE=custom:base", call.call_args.args[0])
+
+    def test_build_subcommand_prefers_buildah(self):
+        with patch.object(container.sys, "argv", ["container", "build"]):
+            with patch.object(container, "builder", return_value="buildah"):
+                with patch.object(container.subprocess, "call", return_value=0) as call:
+                    self.assertEqual(container.main(), 0)
+                    self.assertEqual(call.call_args.args[0][:2], ["buildah", "bud"])
 
     def test_explicit_build_rejects_digest_target(self):
         with patch.dict(os.environ, {"LOSOS_CONTAINER_IMAGE": "ghcr.io/example/host@sha256:" + "a" * 64}):

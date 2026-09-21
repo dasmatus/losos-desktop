@@ -35,7 +35,7 @@ buildable, which tells a broken tree and a broken Containerfile apart. The
 architectures. `build` also uses that image when the outer job lacks the pinned
 mkosi, so both jobs need a nested container runtime.
 
-Only those two jobs run privileged, for nested Podman. Jobs that invoke pm
+Only those two jobs run privileged, for nested Buildah and Podman. Jobs that invoke pm
 directly instead unconfine seccomp, AppArmor and the masked system paths so
 its user namespace can mount procfs. VM verification jobs expose `/dev/kvm`
 when the host provides it, retaining the software-emulation fallback otherwise.
@@ -88,7 +88,8 @@ just container build
 just container-check
 ```
 
-`container build` remains an explicit local build and tags the selected image.
+`container build` remains an explicit local build, prefers Buildah when it is
+installed, and tags the selected image.
 The registry supplies the **build tools**, not pm, the plugin components, source
 tarballs or completed OS images. The sibling pm checkout and its binary are
 still mounted as before; publishing this host does not cache pm's OS builds.

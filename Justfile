@@ -57,6 +57,7 @@ default:
     '  plugins [crate]            build the pm plugin components into plugins/dist' \
     '                             (needs the wasm32 Rust target; not part of check)' \
     '  packages [args...]         publish/pull signed .cpkg containers with pm-oci' \
+    '  release-images [args...]   publish/pull named image artifacts with release-oci' \
     '  clean                      remove out/recipes, out/pkgs, out/tmp' \
     '  container pull             download or refresh the published build host' \
     '  container build            explicitly rebuild the image locally' \
@@ -124,6 +125,7 @@ lint:
   python3 "{{repo}}/tools/gates/test-libvirt.py"
   python3 "{{repo}}/tools/gates/test-container.py"
   python3 "{{repo}}/tools/gates/test-oci.py"
+  python3 "{{repo}}/tools/gates/test-release-oci.py"
   python3 "{{repo}}/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "{{repo}}/tools/gates/plugins.py"
   python3 "{{repo}}/tools/gates/workflow.py" --self-test
@@ -298,6 +300,12 @@ packages *args:
   set -euo pipefail
   if [ "${1:-}" = "--" ]; then shift; fi
   python3 "{{repo}}/tools/pm-oci" "$@"
+
+release-images *args:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if [ "${1:-}" = "--" ]; then shift; fi
+  python3 "{{repo}}/tools/release-oci" "$@"
 
 serve:
   mkdir -p "{{repo}}/out/tmp" "{{repo}}/out/pkgs"

@@ -8,7 +8,7 @@ inputs:
     description: Install the same Rust toolchain as the Containerfile.
     default: "false"
   nested:
-    description: Configure nested Podman for a privileged build job.
+    description: Configure nested Buildah/Podman for a privileged build job.
     default: "false"
   kvm:
     description: Expose KVM when the VM host provides it, otherwise retain TCG.
@@ -29,7 +29,7 @@ runs:
           packages+=(clang lld llvm make pkgconf rustup)
         fi
         packages+=(python-pip)
-        if [ "$NESTED" = true ]; then packages+=(podman); fi
+        if [ "$NESTED" = true ]; then packages+=(buildah podman); fi
         # Never install against a newly synced index without upgrading the base.
         pacman -Syu --needed --noconfirm "${packages[@]}"
 
@@ -65,7 +65,7 @@ runs:
         printf '%s\n' /usr/local/bin >> "$GITHUB_PATH"
         printf '%s\n' "RUSTUP_HOME=$RUSTUP_HOME" "CARGO_HOME=$CARGO_HOME" >> "$GITHUB_ENV"
 
-    - name: Configure nested Podman
+    - name: Configure nested Buildah and Podman
       if: inputs.nested == 'true'
       shell: bash
       run: |
@@ -76,8 +76,8 @@ runs:
         printf '%s\n' '[storage]' 'driver = "vfs"' \
           'runroot = "/run/containers/storage"' \
           'graphroot = "/var/lib/containers/storage"' > /etc/containers/storage.conf
-        # Arch's rootless Podman picks user config first; pin rootless storage
-        # locations and the runtime env so nested jobs never fall back to
+        # Arch's rootless Buildah and Podman pick user config first; pin the
+        # storage locations and runtime env so nested jobs never fall back to
         # overlay in Docker.
         mkdir -p "$HOME/.config/containers"
         : "${XDG_RUNTIME_DIR:=/run/user/$(id -u)}"

@@ -105,10 +105,11 @@ ARG RUST_VERSION=1.95.0
 # guarantee. Arch installs one LLVM, unversioned, with its tools already on
 # /usr/bin, so both the argument and that loop have nothing left to do.
 
-# No SHELL directive: podman builds OCI images by default and ignores one with
-# a warning, so anything relying on `sh -eux` would be relying on a line that
-# did nothing. Every RUN below chains with `&&` instead, which fails on the
-# first error under any shell.
+# No SHELL directive: the OCI builders used here keep `/bin/sh -c` semantics,
+# and podman ignores a SHELL line with a warning when producing an OCI image, so
+# anything relying on `sh -eux` would be relying on a line that did nothing.
+# Every RUN below chains with `&&` instead, which fails on the first error under
+# any shell.
 
 # pacman 7 downloads inside a sandbox of its own: it drops to the `alpm` user
 # and confines the download process with a Landlock ruleset. A container build

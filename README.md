@@ -133,6 +133,27 @@ other pm installations, and pulling must not silently confer that trust.
 The public signer is carried in `.cpkg.sig`; after independently verifying it,
 `pm trust <package>.cpkg.sig` is pm's explicit opt-in to trusting that signer.
 
+## Image containers
+
+The named image artifacts in `release/` can also travel through GHCR as one OCI
+image per architecture. Install `skopeo` alongside Python 3:
+
+```sh
+skopeo login ghcr.io
+just release-images -- publish --repository ghcr.io/owner/losos-desktop/images \
+  --tag nightly-20260920.1-x86_64 --arch x86_64 --source release \
+  --source-url https://github.com/owner/losos-desktop
+just release-images -- pull ghcr.io/owner/losos-desktop/images@sha256:DIGEST \
+  --arch x86_64 --output release
+```
+
+Each OCI image carries the flat release directory exactly as built -- typically
+the UKI, compressed root image, installation media and `SHA256SUMS`. CI uses
+that transport to hand images between jobs without re-uploading the binaries as
+workflow artifacts, while the moved `nightly`/`stable` GitHub release remains
+the sysupdate URL baked into the image. Use the digest-pinned reference printed
+by publish for pull.
+
 ## What has actually been built
 
 Honesty matters more here than ambition, so: the environment this was developed
