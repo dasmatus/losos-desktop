@@ -952,6 +952,7 @@ jobs:
           for arch in x86_64 aarch64; do
             ref="refs/release-ref-${arch}.txt"
             [ -f "$ref" ] || continue
+            mkdir -p "pulled/$arch"
             just release-images -- pull "$(cat "$ref")" --arch "$arch" --output "pulled/$arch"
           done
           if [ -n "$(find pulled -type f -print -quit 2>/dev/null)" ]; then

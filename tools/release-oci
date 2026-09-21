@@ -238,7 +238,7 @@ def skopeo(arguments, arch):
     try:
         subprocess.run(["skopeo", "--override-arch", ARCHES[arch], "copy",
                         "--preserve-digests", *arguments],
-                       check=True, stdout=sys.stderr)
+                       check=True, stderr=sys.stderr)
     except FileNotFoundError as error:
         raise OCIError("skopeo is required; install it on the host") from error
     except subprocess.CalledProcessError as error:
