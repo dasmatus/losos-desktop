@@ -1,0 +1,106 @@
+# workflow_run uses the default branch's workflow, never pull-request code.
+# No checkout or artifacts belong in this privileged job.
+name: automerge
+
+on:
+  workflow_run:
+    workflows: [images]
+    types: [completed]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  merge:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.path == '.github/workflows/images.yml'
+    runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Bootstrap the merge toolchain
+        run: |
+          if grep -q '^#\?DisableSandboxFilesystem' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandboxFilesystem.*/DisableSandboxFilesystem/' /etc/pacman.conf
+          elif grep -q '^#\?DisableSandbox' /etc/pacman.conf; then
+            sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          else
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          fi
+          pacman -Syu --needed --noconfirm github-cli jq
+      - name: Merge only the verified eligible head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # A successful run from before the aggregate check existed is not
+          # proof that packages, assembly and boot verification all succeeded.
+          ci=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | select(.name == "ci") | .conclusion')
+          if [ "$ci" != success ]; then
+            echo "The triggering run has no successful aggregate ci check; skipping."
+            exit 0
+          fi
+          # Read associations from GitHub, not from an artifact or branch file.
+          numbers=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '.pull_requests[].number')
+          while IFS= read -r number; do
+            [ -n "$number" ] || continue
+            [[ "$number" =~ ^[0-9]+$ ]] || exit 1
+            pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+            # Forks require manual review and merging; CI success alone is not
+            # authorization to merge a contributor's untrusted workflow.
+            if ! jq -e --arg sha "$HEAD_SHA" --arg repo "$GITHUB_REPOSITORY" \
+              '.state == "open" and .draft == false and
+               .base.ref == "main" and .head.sha == $sha and
+               .head.repo.full_name == $repo' <<< "$pr" >/dev/null; then
+              echo "PR #$number is not an eligible current head; skipping."
+              continue
+            fi
+            # A PR must not replace images.yml or its actions with a no-op ci
+            # job and authorize its own merge. All .github changes stay manual,
+            # including renames out of that directory. Check every page and
+            # reject incomplete lists (GitHub caps this endpoint at 3000 files).
+            changed_files=$(jq -er '.changed_files | numbers' <<< "$pr")
+            if [ "$changed_files" -gt 3000 ]; then
+              echo "PR #$number exceeds GitHub's complete file-list limit; skipping."
+              continue
+            fi
+            files=$(gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100")
+            if ! jq -e --argjson expected "$changed_files" \
+              '[.[][]] | length == $expected and
+               all(.[]; (.filename | startswith(".github/") | not) and
+                   ((.previous_filename // "") | startswith(".github/") | not))' \
+              <<< "$files" >/dev/null; then
+              echo "PR #$number changes merge authorization or has an incomplete file list; skipping."
+              continue
+            fi
+            # Persistent enrollment could authorize later pushes that change
+            # this policy. Merge now only when protection is satisfied; rerun
+            # images after pending reviews/checks finish instead of enrolling.
+            state=$(gh pr view "$number" --repo "$GITHUB_REPOSITORY" \
+              --json mergeStateStatus --jq '.mergeStateStatus')
+            if [ "$state" != CLEAN ]; then
+              echo "PR #$number is not ready to merge; rerun images once protection is satisfied."
+              continue
+            fi
+            # GitHub still enforces protection; the match closes the race if
+            # a new commit lands after any of the API reads above.
+            gh pr merge "$number" --repo "$GITHUB_REPOSITORY" \
+              --squash --match-head-commit "$HEAD_SHA"
+            # Token-authored merges suppress push workflows. Dispatch main
+            # explicitly so a successful merge still builds and publishes it.
+            gh workflow run images.yml --repo "$GITHUB_REPOSITORY" --ref main
+          done <<< "$numbers"

@@ -275,7 +275,7 @@ def main():
     text = WORKFLOW.read_text()
     doc = yaml.safe_load(text)
     jobs = doc.get("jobs") or {}
-    failures = []
+    failures = check_package_handoff(doc)
 
     uploads, downloads = [], []
     for job, spec in jobs.items():

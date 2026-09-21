@@ -12,6 +12,7 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     # Nightly, off the hour: a cron on the hour competes with everyone else's.
     - cron: "17 3 * * *"
@@ -33,8 +34,8 @@ defaults:
 
 # One run per pull request branch, and only a pull request's run is cancelled.
 #
-# Every job here compiles the base layer from source, so an out-of-date run is
-# not a wasted minute but a wasted pair of build runners for as long as it
+# Each packages matrix leg compiles the base layer from source, so a stale run
+# is not a wasted minute but a wasted pair of build runners for as long as it
 # takes to reach the package that is actually being worked on. Pushing four
 # fixes in ten minutes -- which is what driving a broken layer forward looks
 # like -- left four pairs of runners compiling four versions of the same tree,
@@ -80,14 +81,19 @@ jobs:
     container: docker.io/library/archlinux:base
     outputs:
       name: ${{ steps.pick.outputs.name }}
+      version: ${{ steps.pick.outputs.version }}
     steps:
       - id: pick
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             echo "name=stable" >> "$GITHUB_OUTPUT"
+            version="${GITHUB_REF_NAME#v}"
           else
             echo "name=nightly" >> "$GITHUB_OUTPUT"
+            version="$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
           fi
+          # Packages and assembly must agree even when they straddle midnight.
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   # The gate that runs anywhere, on every event. No network to upstream, no
   # KVM, no nix. If this is red nothing below is worth running.
@@ -272,9 +278,8 @@ jobs:
           just container-check
 
   # Whether the sources are pinned decides whether anything below can run at
-  # all. Reported as an output rather than a failure: an unpinned tree is the
-  # normal state while a distribution is being brought up, and it should not
-  # turn every push red.
+  # all. Reported as an output so expensive jobs can skip an unpinned tree;
+  # the aggregate ci check still refuses to call that a verified image.
   pinned:
     runs-on: ubuntu-24.04
     container: docker.io/library/archlinux:base
@@ -293,7 +298,9 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  # pm carries a nested dependency closure and has no build cache (C5/C6).
+  # Build the ordered package chain once per architecture, not a package DAG.
+  packages:
     needs: [gates, pinned, channel]
     if: needs.pinned.outputs.ready == 'true'
     strategy:
@@ -315,6 +322,9 @@ jobs:
       # Justfile falls back to tools/container for the pinned mkosi host.
       # Only jobs running nested containers receive full privilege.
       options: --privileged
+    env:
+      CHANNEL: ${{ needs.channel.outputs.name }}
+      LOSOS_VERSION: ${{ needs.channel.outputs.version }}
     steps:
       - *arch-bootstrap
       - uses: actions/checkout@v4
@@ -425,32 +435,6 @@ jobs:
           path: losos-desktop/out/sources
           key: ${{ steps.mirror.outputs.cache-primary-key }}
 
-      # The channel comes from the `channel` job, not from the event read a
-      # second time here: a tag builds stable, everything else nightly, and
-      # every job below has to agree on which. It is not a matrix dimension
-      # because that would double every job to publish a "stable" nobody
-      # tagged.
-      - name: Take the channel
-        run: echo "CHANNEL=${{ needs.channel.outputs.name }}" >> "$GITHUB_ENV"
-
-      # The version is decided HERE, before the build, and not after it with
-      # the artifact names. It is baked into the name of the unified kernel
-      # image on the image's own ESP, and that name is the only place
-      # systemd-sysupdate can read a version from: at the default an image's
-      # kernel is unversioned, the first update installs a second one beside it
-      # and neither can ever be retired.
-      - name: Decide the version
-        run: |
-          # Derived from the channel rather than by reading the ref a second
-          # time. The `channel` job is the one place that decides what this
-          # build is, and a version that asked the ref again could disagree
-          # with it.
-          version="$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
-          if [ "$CHANNEL" = stable ]; then
-            version="${GITHUB_REF_NAME#v}"
-          fi
-          echo "LOSOS_VERSION=$version" >> "$GITHUB_ENV"
-
       # $GITHUB_WORKSPACE, not $TMPDIR: the Justfile's `export TMPDIR` reaches
       # its own recipes' children and not this shell, so $TMPDIR here is unset
       # and would report /tmp -- a filesystem the build writes nothing to. The
@@ -466,7 +450,7 @@ jobs:
       - name: Disk before the build
         run: df -h / "$GITHUB_WORKSPACE"
 
-      - name: Build the image
+      - name: Build the package closure
         working-directory: losos-desktop
         env:
           PM: ${{ github.workspace }}/pm/target/release/pm
@@ -479,22 +463,54 @@ jobs:
             sleep 0.3
           done
           python3 tools/serve-sources --port 8730 --check
+          # The image target used to select this host automatically. A package
+          # target does not, so keep its compiler and tools identical explicitly.
+          just container build
           # Tee'd so the last step of this job can say what failed without
           # anyone scrolling: see `Say what failed` below for why that step
           # exists and why it is last.
           set +e
-          just build losos-90-image 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          LOSOS_CONTAINER_HOST_NETWORK=1 just container-run -- \
+            just build losos-40-gnome 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
           status=${PIPESTATUS[0]}
           set -e
           exit "$status"
 
-      - name: Name the artifacts and write SHA256SUMS
+      # Only the top archive: it already carries every lower layer in deps/.
+      # A missing closure is a failure, never a green upload with no files.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: losos-desktop/out/pkgs/losos-40-gnome-0.1.0.cpkg
+          if-no-files-found: error
+          compression-level: 0
+
+      # Keep package publishing separate from the build: code compiled on a PR
+      # must never run with a registry write token. Signatures travel with the
+      # archives; a pulled package must still pass pm's own trust check.
+      - name: Sign the built packages and record their release version
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         working-directory: losos-desktop
         run: |
-          just stage-release -- --arch ${{ matrix.arch }} \
-            --version "$LOSOS_VERSION" --out release
-          just release-manifest -- --arch ${{ matrix.arch }} \
-            --version "$LOSOS_VERSION" release
+          # pm build signs neither its top-level archive nor intermediate ones.
+          # Use the build's existing key, never a new key in the publish job.
+          export XDG_CONFIG_HOME="$PWD/.pm-config"
+          for package in out/pkgs/*.cpkg; do
+            "$GITHUB_WORKSPACE/pm/target/release/pm" sign "$package"
+          done
+          printf '%s\n' "$LOSOS_VERSION" > out/pkgs/package-version.txt
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        with:
+          name: packages-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
+          path: |
+            losos-desktop/out/pkgs/*.cpkg
+            losos-desktop/out/pkgs/*.cpkg.sig
+            losos-desktop/out/pkgs/package-version.txt
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
 
       # Keep package publishing separate from the build: code compiled on a PR
       # must never run with a registry write token. Signatures travel with the
@@ -529,29 +545,15 @@ jobs:
       # much the job used, and only the total survives someone adding a
       # directory and never coming back here. It is $GITHUB_WORKSPACE rather
       # than the checkout, because this job also builds pm beside it and
-      # pm/target is not small. release/ is its own entry because
-      # stage-release copies into it (shutil.copy2, tools/stage-release:154)
-      # rather than renaming, so on a successful run the disk holds the image
-      # twice.
+      # pm/target is not small.
       - name: Disk after the build
         if: always()
         run: |
           df -h / "$GITHUB_WORKSPACE"
           du -sh losos-desktop/out/pkgs losos-desktop/out/tmp \
-            losos-desktop/out/sources losos-desktop/release \
+            losos-desktop/out/sources \
             pm/target 2>/dev/null || true
           du -sh "$GITHUB_WORKSPACE" 2>/dev/null || true
-
-      # always(): a build that stopped at some package never reached
-      # stage-release, but whatever the layers below it produced is still the
-      # only output this tree has ever made. if-no-files-found: warn keeps that
-      # from failing a job that already said what went wrong.
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: losos-${{ needs.channel.outputs.name }}-${{ matrix.arch }}
-          path: losos-desktop/release/
-          if-no-files-found: warn
 
       # Last in the job, so that the end of the log is the answer rather than
       # the disk report, the artifact upload and post-job cleanup. A failed
@@ -733,6 +735,24 @@ jobs:
         with:
           name: ota-console-${{ matrix.arch }}
           path: ota-console.log
+
+  # A stable branch-protection check: skipped matrices (including an unpinned
+  # tree), cancellations and failures must not look like merge-ready CI.
+  ci:
+    needs: [gates, container, pinned, packages, build, verify, ota]
+    if: always()
+    runs-on: ubuntu-24.04
+    container: docker.io/library/archlinux:base
+    steps:
+      - *arch-bootstrap
+      - name: Install jq
+        run: pacman -Syu --needed --noconfirm jq
+      - name: Require every validation job
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -e '(.pinned.outputs.ready == "true") and
+            all(.[]; .result == "success")' <<< "$NEEDS"
 
   publish:
     needs: [build, verify, ota, channel]
