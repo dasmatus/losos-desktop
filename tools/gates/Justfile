@@ -24,6 +24,7 @@ explain-all:
     echo "explain-all: without them pm cannot explain the image layer, and reports" >&2
     echo "explain-all: an unexpandable command or an underivable policy rather" >&2
     echo "explain-all: than a missing plugin" >&2
+    exit 1
   fi
 
   failed=0
