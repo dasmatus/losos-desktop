@@ -41,7 +41,7 @@ except ImportError:
 
 import compose as compose_lib
 from fnv import basename, download_path
-from pm_toolchain import configured_toolchain
+from toolchain import Toolchain
 
 UNRESOLVED = "TODO"
 
@@ -326,7 +326,8 @@ def main():
     # so, which is what `tools/pm-toolchain report` exists to catch.
     # The triple is the architecture's, not the toolchain manifest's: writing
     # it in both places is how they come to disagree.
-    toolchain = configured_toolchain(repo=REPO, triple=arch["triple"])
+    toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
+    toolchain.target["triple"] = arch["triple"]
     subs.update(toolchain.placeholders(tool_path))
 
     subs["@SRCDIR@"] = str(REPO)

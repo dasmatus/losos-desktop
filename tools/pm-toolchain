@@ -1,14 +1,22 @@
-#!/usr/bin/env python3
-"""Host-side pm extension for this repository's toolchain configuration."""
+#!/usr/bin/env bash
+# Host-side pm extension entrypoint for the repository's toolchain checks.
+set -euo pipefail
 
-import sys
-from pathlib import Path
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "tools" / "lib"))
-
-from pm_toolchain import main
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+case "${1:-}" in
+  report)
+    shift
+    exec python3 "$repo/tools/gates/toolchain-report.py" "$@"
+    ;;
+  ""|-h|--help|help)
+    printf '%s\n' \
+      'pm-toolchain <command>' \
+      '' \
+      '  report [args...]   compile and audit the configured toolchain'
+    ;;
+  *)
+    echo "pm-toolchain: unknown command: $1" >&2
+    exit 1
+    ;;
+esac
