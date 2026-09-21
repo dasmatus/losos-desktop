@@ -345,15 +345,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="verb", required=True)
 
-    builder = sub.add_parser("build", help="build the image")
-    builder.add_argument(
+    build_parser = sub.add_parser("build", help="build the image")
+    build_parser.add_argument(
         "--build-arg",
         action="append",
         default=[],
         metavar="NAME=VALUE",
         help="override a pin, e.g. BASE_IMAGE=<image> or MKOSI_COMMIT=<sha>",
     )
-    builder.set_defaults(handler=build)
+    build_parser.set_defaults(handler=build)
 
     puller = sub.add_parser("pull", help="download or refresh the published image")
     puller.set_defaults(handler=pull)
