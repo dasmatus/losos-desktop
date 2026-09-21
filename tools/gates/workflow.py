@@ -228,7 +228,10 @@ def self_test():
                 "runs-on": "ubuntu-24.04",
                 "container": {"image": ARCH_IMAGES["ubuntu-24.04"]},
             },
-            "packages": {},
+            "packages": {
+                "runs-on": "ubuntu-24.04",
+                "container": {"image": ARCH_IMAGES["ubuntu-24.04"]},
+            },
             "build": {
                 "needs": ["packages"],
                 "runs-on": "${{ matrix.runner }}",
