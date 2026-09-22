@@ -27,7 +27,9 @@ build *crates:
   for crate in "$@"; do
     args+=( -p "$crate" )
   done
-  cargo build --release --target "$target" "${args[@]}"
+  # The workspace manifest lives here, not at the repository root that
+  # --working-directory points at, so cargo must run from {{here}}.
+  ( cd "{{here}}" && cargo build --release --target "$target" "${args[@]}" )
 
   if [ ! -x "$encoder" ]; then
     echo "building pm's component encoder in {{pm_root}}/plugins" >&2
