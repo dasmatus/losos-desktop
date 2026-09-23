@@ -131,11 +131,46 @@ steps:
 # the same words -- "--disable-systemd-journal and --disable-sd-notify because
 # systemd is four layers above". When pam_systemd.so is actually needed, the
 # fix is a real libsystemd in this layer, not this flag.
+#
+# --disable-nis is the same host-versus-sysroot problem a second time, in
+# pam_unix. WITH_NIS defaults to `check` (configure.ac:477-479), whose block
+# tests for the NIS libraries and headers on the line before deciding:
+#
+#     PKG_CHECK_MODULES([NSL], [libnsl], [],
+#                       [AC_CHECK_LIB([nsl],[yp_match],[NSL_LIBS="-lnsl"],[NSL_LIBS=""])])
+#     ...
+#     AC_CHECK_HEADER([rpcsvc/ypclnt.h], , [enable_nis=no])
+#     AC_CHECK_HEADER([rpcsvc/yp_prot.h], , [enable_nis=no])
+#
+# PKG_CONFIG_PATH names the sysroot's .pc directories but cannot subtract the
+# host's, the point --disable-logind above already makes, so pkg-config reads
+# /usr/lib/pkgconfig on the build machine and answers yes for libnsl. NSL_LIBS
+# is then spent by modules/pam_unix/Makefile.am:43 -- pam_unix_la_LIBADD takes
+# @TIRPC_LIBS@ @NSL_LIBS@ -- and pam_unix.so is linked with a -lnsl the sysroot
+# does not carry:
+#
+#     mold: fatal: library not found: nsl
+#     clang: error: linker command failed with exit code 1
+#     make[3]: *** [Makefile:852: pam_unix.la] Error 1
+#
+# The two AC_CHECK_HEADERs strip the header half of that test and are why the
+# library half is not caught here: both rpcsvc headers are absent from the
+# sysroot ("checking for rpcsvc/ypclnt.h... no"), so enable_nis is no and
+# HAVE_NIS stays undefined -- the headers cannot be spent, but NSL_LIBS was
+# already set and is spent unconditionally.
+#
+# Setting WITH_NIS=no before the AC_CHECK_LIBs is the same shape of answer as
+# pam_cv_ld_no_undefined below and for the same reason: an interface configure
+# documents, so no patch is needed. It keeps HAVE_NIS undefined (its default
+# anyway) and NSL_LIBS, TIRPC_LIBS and NIS_LIBS empty, so pam_unix.so links
+# against the sysroot's own libc and nothing else. When NIS is genuinely
+# wanted, the fix is libtirpc and libnsl in this layer, not the flag: only
+# pam_unix and pam_unix_passwd spend HAVE_NIS at all.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig pam_cv_ld_no_undefined=no --disable-static --disable-doc --disable-logind
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig pam_cv_ld_no_undefined=no --disable-static --disable-doc --disable-logind --disable-nis
 
 - stage: Build
   name: compile
