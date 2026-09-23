@@ -27,11 +27,31 @@ steps:
 # exemption sat inert for its whole life. tools/gates/exceptions-live.py
 # fails the build if this line goes back to the shared file. --native-file
 # stays the shared one: it carries no flags, so it has nothing to drop.
+#
+# -Dnls=false, and the reason is layer order. NLS is the one option here that
+# reaches for a program built FORWARD of this layer: p11-kit is in
+# losos-10-base, and `subdir('po')` runs i18n.gettext(), which resolves msgfmt
+# from native.ini as /build/sysroot/usr/bin/msgfmt -- and msgfmt comes out of
+# gettext in losos-15-hosttools, a whole layer above. meson writes that path
+# into build.ninja as a file dependency, so ninja stops before the first
+# compile:
+#
+#     ninja: error: '/build/sysroot/usr/bin/msgfmt', needed by
+#     'po/ar/LC_MESSAGES/p11-kit.mo', missing and no known rule to make it
+#
+# Configure does not catch it. `Has header "libintl.h" : YES` comes from the
+# host headers and makes this look like a working NLS build, and the libraries
+# themselves do not even use it -- header satisfied and `Library intl found:
+# NO`, so nothing links libintl. What NLS buys here is .mo catalogues under
+# /usr/share/locale, and this image ships no locale data at all and defaults to
+# C.UTF-8 (systemd's -Ddefault-locale). So the option is stated off rather than
+# the injection carried -- the same call docs/systemd-inventory.md records for
+# systemd, and the same rule: turn it off rather than paper over it.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --cross-file @CROSS_INI_P11_KIT@ --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --cross-file @CROSS_INI_P11_KIT@ --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled -Dnls=false
 
 - stage: Build
   name: compile
