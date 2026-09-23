@@ -76,7 +76,9 @@ jobs:
   # failed and publish (needs: [verify, ota]) never ran: the stable release
   # path could not complete at all. One output, referenced everywhere.
   channel:
-    runs-on: ubuntu-latest
+    # A pinned label, not the floating ubuntu-latest: the Arch container paired
+    # with it must be the one the workflow gate's ARCH_IMAGES map names.
+    runs-on: ubuntu-24.04
     container: docker.io/library/archlinux:base
     outputs:
       name: ${{ steps.pick.outputs.name }}
@@ -97,7 +99,7 @@ jobs:
   # The gate that runs anywhere, on every event. No network to upstream, no
   # KVM, no nix. If this is red nothing below is worth running.
   gates:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     container:
       image: docker.io/library/archlinux:base
       # pm creates user/mount namespaces and a fresh procfs (C7); unmasking
@@ -182,7 +184,12 @@ jobs:
         working-directory: losos-desktop
         run: |
           
-           sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+           # No host sysctl here: the job is unprivileged, so setting a host kernel
+           # parameter can only fail with EPERM and abort before the gate runs --
+           # and an Arch job has no business configuring the Ubuntu host. pm's
+           # user namespaces come from the container options above (seccomp,
+           # apparmor, systempaths unconfined), the sanctioned mechanism; see
+           # docs/container.md.
            PM=$GITHUB_WORKSPACE/pm/target/release/pm just check
 
       # Proves the flag set compiles, links, runs, and that a mistyped indirect
@@ -212,8 +219,13 @@ jobs:
       matrix:
         include:
             - image: docker.io/library/archlinux:base
+              runner: ubuntu-24.04
+            # The ARM leg needs GitHub's native arm64 runner: the archlinuxarm
+            # image is aarch64, so pairing it with an x86_64 host is a mismatch
+            # the workflow gate rejects.
             - image: docker.io/menci/archlinuxarm:base
-    runs-on: ubuntu-latest  
+              runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
       # Nested Podman builds and runs the Containerfile, not the VM's daemon.
