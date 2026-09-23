@@ -181,7 +181,8 @@ jobs:
       - name: just check
         working-directory: losos-desktop
         run: |
-           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          
+           sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
            PM=$GITHUB_WORKSPACE/pm/target/release/pm just check
 
       # Proves the flag set compiles, links, runs, and that a mistyped indirect
