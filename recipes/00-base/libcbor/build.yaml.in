@@ -81,11 +81,42 @@ steps:
 # The CXX skip above is NOT what fixes this and would not have: it suppresses a
 # test rather than correcting the flags one is run with, and the C test has no
 # equivalent here because the C compiler genuinely has to work.
+#
+# COMPILER_HAS_HIDDEN_VISIBILITY is a third C++ link test under the same
+# missing-libstdc++ fault, and unlike the toolchain check it decides libcbor's
+# public API rather than merely gating C++. src/CMakeLists.txt:21 calls
+# generate_export_header(cbor), and CMake's module writes the
+# `__attribute__((visibility("default")))` into CBOR_EXPORT only when its probe
+# passes. That probe is check_compiler_flag(CXX -fvisibility=hidden ...) -- a
+# C++ program CMake compiles and *links* -- so it too dies on the musl base:
+#
+#     -- Performing Test COMPILER_HAS_HIDDEN_VISIBILITY - Failed
+#
+# CBOR_EXPORT then expands to nothing, the layer's own -fvisibility=hidden
+# applies with no annotation left to spare, and the library ships an empty
+# dynamic symbol table. The staged check is what said so:
+#
+#     check-exports: /dest/usr/lib/libcbor.so does not export cbor_load
+#
+# and the symbol is already STV_HIDDEN by then, so no version script can
+# promote it. Stating the value is the supported override: check_source_compiles
+# returns before running anything when its result variable is already defined,
+# so this is an answer to the question, not a way to stop it being asked. clang
+# does support -fvisibility=hidden -- it is the sysroot that cannot link the
+# test -- so TRUE is the fact. The library is compiled in C, so the honest proof
+# is the C object set the probe never looked at: every public declaration in the
+# twelve installed headers carries CBOR_EXPORT and none carries a hidden
+# annotation.
+#
+# The sibling probes COMPILER_HAS_HIDDEN_INLINE_VISIBILITY and
+# COMPILER_HAS_DEPRECATED_ATTR fail the same way and are deliberately left
+# unstated: neither CBOR_HIDDEN_INLINE_VISIBILITY nor CBOR_DEPRECATED is used
+# anywhere in src/, so only the export macro changes the library.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DWITH_EXAMPLES=OFF -DCMAKE_CXX_COMPILER_WORKS=1
+  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DWITH_EXAMPLES=OFF -DCMAKE_CXX_COMPILER_WORKS=1 -DCOMPILER_HAS_HIDDEN_VISIBILITY=TRUE
 
 - stage: Build
   name: compile
