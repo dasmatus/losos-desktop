@@ -180,7 +180,9 @@ jobs:
 
       - name: just check
         working-directory: losos-desktop
-        run: PM=$GITHUB_WORKSPACE/pm/target/release/pm just check
+        run: |
+           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+           PM=$GITHUB_WORKSPACE/pm/target/release/pm just check
 
       # Proves the flag set compiles, links, runs, and that a mistyped indirect
       # call is actually caught -- not that a YAML file says CFI is on.
