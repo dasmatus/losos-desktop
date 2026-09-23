@@ -35,10 +35,14 @@ buildable, which tells a broken tree and a broken Containerfile apart. The
 architectures. `build` also uses that image when the outer job lacks the pinned
 mkosi, so both jobs need a nested container runtime.
 
-Only those two jobs run privileged, for nested Buildah and Podman. Jobs that invoke pm
-directly instead unconfine seccomp, AppArmor and the masked system paths so
-its user namespace can mount procfs. VM verification jobs expose `/dev/kvm`
-when the host provides it, retaining the software-emulation fallback otherwise.
+Three jobs run privileged: `container` and `build` for nested Buildah and
+Podman, and `gates` because nothing less lets pm create its user namespace on
+GitHub's hosted runner. Unconfining seccomp, AppArmor and the masked system
+paths is not enough there: Ubuntu 24.04's
+`kernel.apparmor_restrict_unprivileged_userns=1` is enforced by AppArmor
+itself, so the uid_map write still returns EPERM. VM verification jobs expose
+`/dev/kvm` when the host provides it, retaining the software-emulation fallback
+otherwise.
 These are container options, not attempts to change the Ubuntu host's sysctls
 from inside Arch. Shell steps explicitly use bash: GitHub otherwise defaults
 container jobs to `sh`, which cannot read the build pipeline's `PIPESTATUS`.

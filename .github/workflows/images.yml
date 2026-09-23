@@ -102,9 +102,17 @@ jobs:
     runs-on: ubuntu-24.04
     container:
       image: docker.io/library/archlinux:base
-      # pm creates user/mount namespaces and a fresh procfs (C7); unmasking
-      # system paths matters independently of seccomp and AppArmor.
-      options: --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
+      # pm creates user/mount namespaces and a fresh procfs (C7). Privileged,
+      # like the `container` job below and for the same reason: the
+      # seccomp/apparmor/systempaths unconfine trio is not enough on GitHub's
+      # hosted runner. Ubuntu 24.04 ships
+      # kernel.apparmor_restrict_unprivileged_userns=1, which AppArmor mediates
+      # even with its profile unconfined, so pm's uid_map write still returns
+      # EPERM and `check-digest` reports INCONCLUSIVE before any gate runs.
+      # Only a privileged container escapes that, which is why the sibling job
+      # that runs pm's user namespace green today already uses it. See
+      # docs/container.md.
+      options: --privileged
     steps:
       # This cannot be a local action: checkout needs git and CA roots BEFORE
       # the repository exists, or it silently falls back to a REST archive.
