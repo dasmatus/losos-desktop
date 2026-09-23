@@ -27,17 +27,25 @@ steps:
 # in this tree has one: `mold: fatal: library not found: stdc++`.
 #
 # libcbor really does compile no C++. src/CMakeLists.txt lists twenty .c files
-# and nothing else; WITH_TESTS is OFF by default and is not turned on here; the
-# two examples WITH_EXAMPLES builds are readfile.c and create_items.c. So the
-# skip asserts nothing untrue -- it is the same finding and the same fix as
+# and nothing else; WITH_TESTS is OFF by default and is not turned on here. So
+# the skip asserts nothing untrue -- it is the same finding and the same fix as
 # zstd's, and the same tombstone applies: a `drops: [stdlibxx]` exception is not
 # the answer, because -nostdlib++ leaves the CFI layer's
 # libclang_rt.ubsan_standalone_cxx with no C++ ABI to resolve against.
 #
-# Hidden visibility is not a problem here the way it was for zstd's CLI:
-# src/CMakeLists.txt runs generate_export_header(cbor), so every public symbol
-# carries an explicit visibility("default") and the examples link against the
-# same shared library the sysroot gets.
+# WITH_EXAMPLES is the option that has to be stated, because upstream defaults
+# it ON and its examples are the only targets that fail. src/CMakeLists.txt
+# runs generate_export_header(cbor), so the library's public symbols carry an
+# explicit visibility("default") -- but the examples' link does not resolve
+# them under this layer's cross-DSO CFI: readfile and create_items die on
+# `mold: error: undefined symbol: cbor_load` (and cbor_decref, cbor_describe,
+# cbor_map_add, ...) with every reference in the LTO'd `(main.cfi)` object.
+# Nothing in this distribution consumes them: CMakeLists.txt's install()
+# rules cover only the library, the headers, libcbor.pc and libcborConfig.cmake
+# -- no example is installed -- so here they are pure waste that only happens to
+# break. Stating the option off is libqrencode's -DWITH_TOOLS=NO, for the same
+# reason. The staged check below still proves the .so exports its public API, so
+# nothing about the library's own linking is left unchecked.
 #
 # CMAKE_POLICY_DEFAULT_CMP0056=NEW is a second, unrelated problem with the same
 # `project()` call, and it is the C compiler test rather than the C++ one.
@@ -77,7 +85,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DCMAKE_CXX_COMPILER_WORKS=1
+  - cmake -S /build/src/libcbor -B /build/b/libcbor -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DWITH_EXAMPLES=OFF -DCMAKE_CXX_COMPILER_WORKS=1
 
 - stage: Build
   name: compile
