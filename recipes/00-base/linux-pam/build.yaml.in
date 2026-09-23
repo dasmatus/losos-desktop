@@ -103,11 +103,39 @@ steps:
 # The check-exports test below is what keeps this honest: libpam.map and
 # libpam_internal would both link to an empty libpam.so if the exemption were
 # ever narrowed, and the nm check on pam_start is the thing that would say so.
+#
+# --disable-logind because the logind probe answers yes from the wrong tree.
+# configure.ac:564 runs, under the default WITH_LOGIND=check,
+#
+#     PKG_CHECK_MODULES([SYSTEMD], [libsystemd >= 254],
+#                       [LOGIND_CFLAGS="-DUSE_LOGIND=1 $SYSTEMD_CFLAGS"], [:])
+#
+# and it succeeds -- libsystemd.pc is found -- while the header it names is
+# not in the sysroot:
+#
+#     checking for libsystemd >= 254... yes
+#     ...
+#     pam_issue.c:32:10: fatal error: 'systemd/sd-login.h' file not found
+#
+# systemd is four layers above this one (losos-20-systemd) and this layer
+# cannot build its headers; only pam_issue.c and pam_timestamp.c read
+# USE_LOGIND at all. PKG_CONFIG_PATH names the sysroot's .pc directories but
+# cannot subtract the host's: pkg-config's own compiled-in default path,
+# /usr/lib/pkgconfig among it, is still searched, and the host has libsystemd
+# where the sysroot does not. Without the flag the probe reads the host and
+# defines USE_LOGIND against nothing; with it the two modules fall back to
+# their utmp path, which is what the sysroot actually carries (utmp.h is
+# present: "checking for utmp.h... yes").
+#
+# lvm2, one layer over, turns systemd off for the same reason and says so in
+# the same words -- "--disable-systemd-journal and --disable-sd-notify because
+# systemd is four layers above". When pam_systemd.so is actually needed, the
+# fix is a real libsystemd in this layer, not this flag.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig pam_cv_ld_no_undefined=no --disable-static --disable-doc
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig pam_cv_ld_no_undefined=no --disable-static --disable-doc --disable-logind
 
 - stage: Build
   name: compile
