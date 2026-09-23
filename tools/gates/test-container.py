@@ -15,6 +15,8 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent.parent
 loader = importlib.machinery.SourceFileLoader("container", str(REPO / "tools/container"))
 spec = importlib.util.spec_from_loader(loader.name, loader)
+if spec is None or spec.loader is None:
+    raise ImportError(f"cannot load container helper from {REPO / 'tools/container'}")
 container = importlib.util.module_from_spec(spec)
 loader.exec_module(container)
 
@@ -125,7 +127,8 @@ class ContainerTests(unittest.TestCase):
         import re
         justfile = (REPO / "Justfile").read_text()
         match = re.search(r"(?ms)^[ \t]*build_in_container\(\) \{\n(.*?)^[ \t]*\}[ \t]*$", justfile)
-        self.assertIsNotNone(match, "build_in_container() not found in Justfile")
+        if match is None:
+            self.fail("build_in_container() not found in Justfile")
         fallback = match.group(1)
         self.assertNotRegex(fallback, r"\btools/container\"\s+build\b")
         self.assertRegex(fallback, r"\btools/container\"\s+run\b")
