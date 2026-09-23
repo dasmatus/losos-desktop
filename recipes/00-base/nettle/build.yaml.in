@@ -28,6 +28,12 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# @CFLAGS_RSP_NETTLE@ and not @CFLAGS_RSP@: manifest/toolchain.yaml gives
+# nettle `drops: [visibility]`, tools/configure writes cflags-nettle.rsp for
+# it either way, and a recipe left spelling the shared file gets the shared
+# flags with the exemption written to disk and read by nothing. See
+# tools/gates/exceptions-live.py.
 
 # CC_FOR_BUILD: the compiler for programs that run on the BUILD machine.
 #
@@ -59,7 +65,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/nettle /build/src/nettle/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ CC_FOR_BUILD=@CC@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/nettle /build/src/nettle/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_NETTLE@ LDFLAGS=@LDFLAGS_RSP_NETTLE@ CC_FOR_BUILD=@CC@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile
@@ -82,3 +88,9 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libnettle.so
+  # The symbols are the ones nettle's own tools stopped on in the failing build:
+  # `make all` links tools/nettle-lfib-stream and sexp-conv against libnettle
+  # and could not find them. __cfi_check says the visibility exception stayed
+  # narrow and did not take CFI with it -- the compile line still carries the
+  # schemes and -fsanitize-cfi-cross-dso, only -fvisibility=hidden is off.
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libnettle.so nettle_sha256 nettle_sha1 nettle_md5 nettle_base16_encode_update nettle_knuth_lfib_init __cfi_check

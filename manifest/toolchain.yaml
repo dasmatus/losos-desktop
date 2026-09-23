@@ -545,6 +545,35 @@ exceptions:
       in configure.ac or src/Makefile.am mentions visibility in either
       direction. The 1.18 reading was right; it was only waiting on the pinned
       bytes.
+  - package: nettle
+    drops: [visibility]
+    why: >
+      Bare declarations and a linker version script, the same shape as popt and
+      the rest of the group. nettle-types.h carries only _NETTLE_ATTRIBUTE_PURE
+      and _NETTLE_ATTRIBUTE_DEPRECATED -- neither an export hook -- and nothing
+      in the public headers or configure.ac mentions visibility. libnettle.map
+      (generated from libnettle.map.in, `global: nettle_*; local: *;`) reaches
+      the linker as -Wl,--version-script, which cannot promote STV_HIDDEN.
+
+      Measured on the pinned 3.10, which did not survive its own make. The
+      shared library came out with an empty dynamic symbol table, and the first
+      consumer to notice was nettle's own tools/nettle-lfib-stream and
+      sexp-conv, which link against libnettle in the same build:
+
+          mold: error: undefined symbol: nettle_knuth_lfib_init
+          >>> referenced by nettle-lfib-stream.c
+          mold: error: undefined symbol: nettle_base16_encode_update
+          mold: error: undefined symbol: nettle_sha256
+
+      Same failure as popt's 1.19 and libunistring's test-localcharset: the
+      noinst tools expose the empty table before any package higher up does.
+
+      This is the narrow form. It keeps the CFI schemes and the LTO they need
+      and drops only -fvisibility=hidden, which is on the line as CFI's
+      precondition rather than for its own sake. Nothing in nettle places a
+      versioned alias with inline asm `.symver`, so ThinLTO is not what this
+      package's version script conflicts with -- the map is an ordinary
+      --version-script the linker reads, exactly as popt's libpopt.vers is.
   - package: lvm2
     drops: [cfi, lto]
     why: >
