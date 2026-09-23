@@ -109,11 +109,23 @@ ldflags=("--target=$triple" "--sysroot=$sysroot" "-resource-dir=$resource_dir")
 ldflags+=("${cfi_flags[@]}")
 ldflags+=("${hardening_ldflags[@]}")
 
+# The flags that only make sense against the staged musl sysroot: where clang
+# looks for its own runtimes, which unwinder and C runtime it links, and what it
+# is compiling for at all. Everything else in the flag set -- LTO, CFI, the
+# hardening set -- is checked here against the HOST's toolchain.
+#
+# --rtlib belongs in this list with --unwindlib, not with the kept flags. Both
+# name libraries that live inside the sysroot's resource directory, and dropping
+# only the unwinder leaves --rtlib=compiler-rt pointing at compiler-rt on the
+# host, which suppresses libgcc_s there. With trap: false the cfi_diag runtime
+# needs an unwinder, so the host executable link came back with _Unwind_Backtrace
+# and _Unwind_GetIP undefined -- a failure caused entirely by the half-dropped
+# pair, not by anything wrong with the flags under test.
 host_flags() {
   local flag
   for flag in "$@"; do
     case "$flag" in
-      --target=*|--sysroot=*|-resource-dir=*|--unwindlib=*) ;;
+      --target=*|--sysroot=*|-resource-dir=*|--rtlib=*|--unwindlib=*) ;;
       *) printf '%s\n' "$flag" ;;
     esac
   done
@@ -293,12 +305,12 @@ fi
 echo
 printf '  NOT verified here:\n'
 printf '    --target=%s, --sysroot, -resource-dir\n' "$triple"
-printf '    and --unwindlib:\n'
+printf '    and --rtlib/--unwindlib:\n'
 printf '    no musl sysroot exists until losos-00-toolchain is built, and the\n'
-printf '    resource directory and the unwinder both live inside it. The probe\n'
-printf '    above drops exactly those four flags and keeps every other one, so\n'
-printf '    what it proves is the flag set against the HOST\047s runtimes and\n'
-printf '    unwinder, not the staged ones.\n'
+printf '    resource directory, the C runtime and the unwinder all live inside\n'
+printf '    it. The probe above drops exactly those flags and keeps every other\n'
+printf '    one, so what it proves is the flag set against the HOST\047s runtimes\n'
+printf '    and unwinder, not the staged ones.\n'
 printf '    See docs/limits.md for what remains outside the scheme.\n'
 
 exit "$((ok ? 0 : 1))"
