@@ -53,11 +53,61 @@ steps:
 # variable is never spent. Dropping the flag to get man pages would therefore
 # turn on a failure that has nothing to do with documentation; add
 # CC_FOR_BUILD=@CC@ at the same time, the way the other two recipes do.
+#
+# pam_cv_ld_no_undefined=no is the third spelling of the --no-undefined
+# problem, after tpm2-tss's --disable-defaultflags and kmod's OUR_LDFLAGS=,
+# and it is answered the way this tree answers every configure-time probe that
+# asks for a flag cross-DSO CFI cannot survive: the cache variable, set on the
+# configure line, which is a documented autoconf interface and not a patch.
+#
+# configure.ac:76 runs PAM_LD_NO_UNDEFINED (m4/ld-no-undefined.m4), which links
+# a trivial executable with -Wl,--no-undefined and appends the flag to LDFLAGS
+# when the link succeeds. It does succeed here, for exactly the reason
+# tpm2-tss's probe does: an executable link is where clang puts
+# libclang_rt.cfi_diag, so the probe's own link resolves the two symbols and
+# the flag lands in LDFLAGS for every link after it. libpam.la is the first
+# one that is a SHARED object, where clang links no sanitizer runtime at all,
+# and it stopped there:
+#
+#     mold: error: undefined symbol: __ubsan_handle_cfi_check_fail
+#     >>> referenced by pam_account.c
+#     mold: error: undefined symbol: __cfi_slowpath_diag
+#     >>> referenced by pam_data.c
+#     clang: error: linker command failed with exit code 1
+#     make[2]: *** [Makefile:573: libpam.la] Error 1
+#
+# The flag comes from this probe alone. It is not in the response file --
+# out/recipes/losos-10-base/ldflags-linux-pam.rsp carries --as-needed and
+# every CFI flag but no --no-undefined -- so what appears on the link line is
+# LDFLAGS as configure accumulated it, spelled out ahead of the response file:
+#
+#     @.../ldflags-linux-pam.rsp -Wl,--as-needed -Wl,--no-undefined -Wl,-O1
+#
+# Setting the cache variable suppresses the probe, and the tail disappears with
+# it. That is why the fix is here and not in the response file: there is no
+# --no-undefined in the response file to remove.
+#
+# Nor could there be. LDFLAGS is a single word -- a clang @response-file@,
+# because pm splits a command on whitespace (C1) -- so configure's own probes
+# read the response file too, and any file this recipe named would be the one
+# the probes use. The probe is the only thing that adds the flag, so the probe
+# is the only place to stop it.
+#
+# Nothing else in the PAM_LD_* set needs this: --as-needed is harmless and
+# -O1 is a linker optimisation. Only --no-undefined asks the linker to refuse
+# the two symbols cross-DSO CFI deliberately leaves undefined, and the
+# exemption is linux-pam's `drops: [visibility]` -- which keeps every CFI
+# scheme, and so keeps those two calls, while only relaxing the hidden
+# visibility CFI wants as a precondition.
+#
+# The check-exports test below is what keeps this honest: libpam.map and
+# libpam_internal would both link to an empty libpam.so if the exemption were
+# ever narrowed, and the nm check on pam_start is the thing that would say so.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --disable-doc
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/linux-pam /build/src/linux-pam/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LINUX_PAM@ LDFLAGS=@LDFLAGS_RSP_LINUX_PAM@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig pam_cv_ld_no_undefined=no --disable-static --disable-doc
 
 - stage: Build
   name: compile
