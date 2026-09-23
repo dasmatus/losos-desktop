@@ -56,7 +56,7 @@ steps:
   # sysroot.sh stages only usr/, so recreate musl's loader entry explicitly.
   # /lib becomes a symlink to /usr/lib below, so /usr/lib/ld-musl-*.so.1 is the
   # single place that keeps PT_INTERP's absolute /lib/ld-musl-*.so.1 valid.
-  - /bin/sh -eu -c 'loader=/build/root/usr/lib/ld-musl-@ARCH@.so.1; if [ ! -e "$loader" ] && [ ! -L "$loader" ]; then test -f /build/root/usr/lib/libc.so; ln -s libc.so "$loader"; fi'
+  - /bin/sh @RECIPE@/files/losos-image/loader-link.sh /build/root/usr/lib @ARCH@
   - cp -a @RECIPE@/files/losos-image/overlay/. /build/root/
   # The shipped tree is /usr-merged: root-level compatibility paths are
   # symlinks, and the musl loader entry is staged in /usr/lib ahead of that.
