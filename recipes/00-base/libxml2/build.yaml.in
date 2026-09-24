@@ -23,11 +23,20 @@ steps:
 # and meson rejects a boolean given a feature triplet before it reads anything
 # else -- so this one option would have stopped the last member of the base
 # layer after thirty-eight packages had built.
+# -Dicu=disabled, because this tree ships no ICU recipe and the build host's
+# ICU is not one of its dependencies. meson's dependency('icu-i18n') answers
+# YES from the host's own .pc -- pm mirrors the host's /usr into the jail
+# read-only (C7) -- so configure turns the icu feature on, and the cross
+# compile then dies on <unicode/ucnv.h>: clang is handed
+# --sysroot=/build/sysroot, so the host headers meson just resolved are not on
+# the include path. A build that did find them would be worse, not better --
+# libxml2.so would link against a libicu the image does not carry. libxml2's
+# iconv path still covers encoding conversion, which is what icu was adding.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libxml2 /build/src/libxml2 --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dpython=false
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libxml2 /build/src/libxml2 --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dpython=false -Dicu=disabled
 
 - stage: Build
   name: compile
