@@ -107,11 +107,18 @@
     - libtasn1
     - p11-kit
     - gnutls
+    # Before libarchive: libarchive's configure.ac takes the "libxml2 present"
+    # branch as soon as pkg-config reports libxml-2.0, and that branch makes
+    # `xmlInitParser` in -lxml2 a hard AC_MSG_FAILURE rather than a silent
+    # fallback. pkg-config answers yes from the build host's own libxml2.pc,
+    # so without the target copy staged first the link is attempted against a
+    # library the sysroot does not have and configure dies with
+    # "Missing xml2 library".
+    - libxml2
     - libarchive
     - elfutils
     - libbpf
     - libpwquality
-    - libxml2
 
 - name: losos-15-hosttools
   dir: 01-hosttools
