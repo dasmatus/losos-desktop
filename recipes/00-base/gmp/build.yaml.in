@@ -1,0 +1,114 @@
+# gmp 6.3.0
+#
+# The bignum library gnutls's public key path is built on. It is not optional:
+# gnutls 3.8's configure is an unconditional AC_CHECK_LIB(gmp, __gmpz_cmp) and
+# dies with "*** gmp was not found." when libgmp is absent, and nettle's
+# hogweed (the public key half gnutls links) reaches GMP the same way.
+name: gmp
+version:
+- '6'
+- '3'
+- '0'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_GMP@: '@SHA256_GMP@'
+  run:
+  - mkdir -p /build/src/gmp /build/b/gmp
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_GMP@ --no-same-owner -C /build/src/gmp --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. configure takes VAR=value
+# as positional arguments, which is how the toolchain and the sysroot are
+# reached without `env`.
+#
+# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
+# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
+# separate arguments and configure would reject the first it did not know.
+# The response file is one word, and clang expands it. Its contents come from
+# manifest/toolchain.yaml -- LTO and CFI included.
+#
+# @CFLAGS_RSP_GMP@ and not the shared pair: manifest/toolchain.yaml gives gmp
+# `drops: [visibility]`, tools/configure writes cflags-gmp.rsp for it either
+# way, and a recipe left spelling @CFLAGS_RSP@ gets the shared flags with the
+# exemption written to disk and read by nothing. See
+# tools/gates/exceptions-live.py.
+#
+# GMP needs the exemption for the same reason nettle and libtasn1 do, and it is
+# the case the group's rule "bare declarations" is easiest to get wrong about.
+# __GMP_DECLSPEC is spelled all over gmp-h.in -- 399 times -- and looks like the
+# export hook the exception exists for, but on ELF it expands to NOTHING:
+# gmp-h.in:100-124 defines it to __declspec(__dllexport__) only under
+# __GNUC__ on a DLL build (__GMP_LIBGMP_DLL), to real dllexport under MSVC and
+# Borland, and to the empty string in the `#else /* all other cases */`. ELF is
+# the `#else`. GMP exports by relying on default visibility, so under the
+# layer's -fvisibility=hidden its C sources -- mpz/*.c, the bignum API gnutls
+# checks for -- are emitted STV_HIDDEN and libgmp.so comes out with an empty
+# dynamic symbol table. Its hand-written .asm files are not touched by a
+# compiler flag and would export; the C half would not, which is why gnutls's
+# `checking for __gmpz_cmp in -lgmp` is the line that would fail first.
+#
+# CC_FOR_BUILD: the compiler for programs that run on the BUILD machine.
+#
+# Every configure in this tree is a cross build (--host, because everything
+# above losos-00-toolchain is musl and the host is glibc), and `cross_compiling
+# = yes` is what makes autoconf reach for a second compiler. GMP's configure
+# (configure:9965-10057) takes $CC_FOR_BUILD if it is set and otherwise walks
+# $HOST_CC and a list that includes gcc -- and the build container installs
+# clang, lld, llvm and compiler-rt and no gcc at all -- see the Containerfile.
+# So the default is a program that is not there.
+#
+# @CC@ is the right answer and the flags are deliberately absent, exactly as in
+# nettle: the musl cross-ness of this tree lives entirely in CFLAGS, which is a
+# clang response file; @CC@ on its own is /usr/bin/clang, and clang with no
+# flags produces a glibc binary that runs on the build host, which is what a
+# build-time helper is for. GMP spends it on gen-fac, gen-fib, gen-bases and
+# the other table generators make runs before the first library object.
+#
+# `--enable-assembly` is the default and is kept. GMP's .asm loops are the
+# reason the library is fast enough to sit under TLS, and disabling them would
+# trade the product away to avoid a host dependency. The dependency they carry
+# is m4: configure:25606-25660 runs the "suitable m4" check whenever assembly
+# is on, and the .asm files are m4-preprocessed before ccas sees them
+# (mpn/Makefile.in:742-768). m4 is therefore a build-host requirement, added
+# beside the other generators in the Containerfile and in the jobs that run
+# this layer.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/gmp /build/src/gmp/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GMP@ LDFLAGS=@LDFLAGS_RSP_GMP@ CC_FOR_BUILD=@CC@ --disable-static
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/gmp -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/gmp install DESTDIR=/dest
+  - make -C /build/b/gmp install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+# __gmpz_cmp is the symbol gnutls's configure probes for and the one that would
+# be missing from an empty libgmp.so. __gmpn_zero_p is nettle's probe. Both are
+# named because failing either one turns public key crypto off silently in the
+# consumer rather than failing the link. __cfi_check is the same check nettle
+# and libtasn1 carry: the visibility exception is the narrow form and did not
+# take the CFI schemes with it.
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libgmp.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libgmp.so __gmpz_cmp __gmpn_zero_p __cfi_check

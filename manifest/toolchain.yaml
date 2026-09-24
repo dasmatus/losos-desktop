@@ -545,6 +545,19 @@ exceptions:
       in configure.ac or src/Makefile.am mentions visibility in either
       direction. The 1.18 reading was right; it was only waiting on the pinned
       bytes.
+  - package: gmp
+    drops: [visibility]
+    why: >
+      __GMP_DECLSPEC, 399 times through gmp-h.in, and on ELF it expands to
+      nothing: gmp-h.in:100-124 defines it to __declspec(__dllexport__) only
+      under __GNUC__ on a DLL build (__GMP_LIBGMP_DLL), to real dllexport under
+      MSVC and Borland, and to the empty string in the `#else /* all other
+      cases */` that ELF takes. GMP exports by default visibility, so under the
+      layer's -fvisibility=hidden its C sources -- the mpz/*.c API -- are
+      STV_HIDDEN and libgmp.so comes out empty. Its hand-written .asm files are
+      not touched by a compiler flag and would export; the C half would not.
+      gnutls's `checking for __gmpz_cmp in -lgmp` is the line that would fail
+      first, and nettle's `__gmpn_zero_p` the second.
   - package: nettle
     drops: [visibility]
     why: >

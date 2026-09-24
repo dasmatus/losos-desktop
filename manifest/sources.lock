@@ -189,6 +189,11 @@ OPENSSL:
   version: '3.3.2'
   sha256: 2e8a40b01979afe8be0bbfb3de5dc1c6709fedb46d6c89c10da114ab5fc3d281
 
+GMP:
+  url: https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz
+  version: '6.3.0'
+  sha256: a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898
+
 NETTLE:
   url: https://ftp.gnu.org/gnu/nettle/nettle-3.10.tar.gz
   version: '3.10'

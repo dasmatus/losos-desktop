@@ -98,6 +98,11 @@
     # library at runtime. The recipe has the whole argument.
     - libfido2-headers
     - linux-pam
+    # The bignum library nettle's hogweed and gnutls's public key code sit on.
+    # Before both: nettle's configure checks for it with AC_CHECK_LIB and
+    # silently drops public key support when it is absent, so it has to be in
+    # the sysroot by the time nettle is configured.
+    - gmp
     - nettle
     - libtasn1
     - p11-kit

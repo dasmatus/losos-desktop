@@ -358,7 +358,7 @@ jobs:
           packages: >-
             clang lld mold llvm compiler-rt just python-yaml python-jinja
             ninja cmake bison flex bc xz bzip2 perl make pkgconf cpio patch
-            diffutils gperf gettext rsync curl
+            diffutils gperf gettext rsync curl m4
           rust: "true"
           nested: "true"
 

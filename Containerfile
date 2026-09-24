@@ -239,6 +239,12 @@ RUN pacman -Syu --noconfirm --needed \
       `# "rsync: not found" and an exit 127 that reads as a broken recipe.` \
       bison flex bc gperf gettext rsync \
       \
+      `# m4, for gmp's hand-written .asm. gmp's configure runs its "suitable` \
+      `# m4" check whenever assembly is enabled (the default), and mpn's .asm` \
+      `# files are m4-preprocessed before the assembler sees them. Nothing` \
+      `# else here needs m4, so it is named for one recipe that does.` \
+      m4 \
+      \
       `# The image tooling. Before this image these were the reason the tree` \
       `# carried hand-written ext4, FAT, GPT, ISO and qcow2 writers: not that` \
       `# pm refuses them -- the losos-image plugin classifies them -- but that` \
