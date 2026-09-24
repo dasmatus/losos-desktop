@@ -78,6 +78,31 @@ steps:
 # They survive precisely because the block that would overwrite them is the one
 # --without-brotli skips, so the conditional reads no/no and stays false.
 #
+# --disable-cxx: gnutls ships a C++ binding, lib/Makefile.am:317's
+# `if ENABLE_CXX` builds libgnutlsxx.la, and configure.ac:45's unconditional
+# AC_PROG_CXX finds the host's g++ because no CXX is passed. Nothing here wants
+# that library -- no recipe in this tree links it -- and it cannot be built
+# anyway. Its link carries -no-undefined (lib/Makefile.am:328), which becomes
+# -Wl,--no-undefined, and the tree keeps CFI with cfi.trap false, so
+# gnutlsxx.o calls into libclang_rt.cfi_diag.a's __cfi_slowpath_diag; that
+# archive is meant to arrive on the EXECUTABLE, not the library (the same
+# design cryptsetup's patch header states), so every symbol the binding is
+# required to define is undefined by construction and mold refuses the link.
+# The g++ in the same command is the visible half of the same mistake: it is
+# handed clang response files it cannot parse (`unrecognized command-line
+# option '--target=x86_64-linux-musl'`, `'-resource-dir=...'`), because the
+# build host is clang-only.
+#
+# --disable-cxx is the supported switch for this (configure.ac:141,
+# `--disable-cxx` sets use_cxx=no unconditionally), so it is taken as a native
+# configure argument rather than a CXX=@CXX@ (C2: no `env`, and clang++ would
+# find no C++ runtime in this musl sysroot either). use_cxx=no short-circuits
+# configure.ac:145's probe AND leaves ENABLE_CXX false, so libgnutlsxx.la is
+# never named in lib_LTLIBRARIES and the broken link never runs. This is the
+# same call the zstd recipe documents against dropping stdlibxx: compiling C++
+# is not viable in this tree, and the answer is not to weaken CFI to make it
+# compile.
+#
 # With brotli off, HAVE_LIBBROTLI stays undefined and compress.c falls back to
 # zlib and zstd, which the sysroot really does carry (both are recipes in this
 # layer). Brotli is only certificate compression (RFC 8879); when it is wanted
@@ -86,7 +111,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GNUTLS@ LDFLAGS=@LDFLAGS_RSP_GNUTLS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests --without-brotli with_libbrotlienc=no with_libbrotlidec=no
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GNUTLS@ LDFLAGS=@LDFLAGS_RSP_GNUTLS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests --without-brotli --disable-cxx with_libbrotlienc=no with_libbrotlidec=no
 
 - stage: Build
   name: compile
