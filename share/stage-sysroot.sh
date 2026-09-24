@@ -28,7 +28,31 @@ done
 
 # libtool archives and cmake package files carry absolute paths too, and a
 # stale /usr in either is just as invisible.
+#
+# libdir= alone is not enough. An archive that links another one names it in
+# dependency_libs, and libtool writes that entry from the dependency's OWN
+# libdir, not the staging prefix it was just installed under. tpm2-tss is where
+# this surfaces: libtss2-esys links libtss2-sys, and `install` relinks the
+# sysroot copy with -inst-prefix-dir so libdir= comes out correct -- while
+# dependency_libs keeps the real prefix, `-ltss2-mu /usr/lib/libtss2-sys.la`.
+# Every member of the bundle is in the same class, so this is fixed for all of
+# them here rather than in one recipe.
+#
+# What reads that entry is a consumer that links the archive with libtool: it
+# greps the file it names, and /usr is pm's read-only host mirror (C7), which
+# has no libtss2-sys.la. gnutls finds libtss2-esys through pkg-config
+# (`checking for tss2-esys... yes`), links it, and dies on
+#
+#     libtool: error: '/usr/lib/libtss2-sys.la' is not a valid libtool archive
+#
+# with the real file sitting at $ROOT/usr/lib/libtss2-sys.la the whole time.
+#
+# The anchor is a leading whitespace and the `lib` filename prefix, so the
+# `-L/usr/lib` in the same variable is left alone -- that one is right, because
+# the sysroot's .pc files were already re-pointed above and the linker path a
+# consumer inherits comes from them.
 find "$ROOT/usr" -name '*.la' -exec \
-  sed -i "s|libdir='/usr/lib'|libdir='$ROOT/usr/lib'|g" {} + 2>/dev/null || true
+  sed -i -e "s|libdir='/usr/lib'|libdir='$ROOT/usr/lib'|g" \
+         -e "s|\([[:space:]]\)/usr/lib/lib|\1$ROOT/usr/lib/lib|g" {} + 2>/dev/null || true
 
 echo "stage-sysroot: re-pointed metadata under $ROOT"
