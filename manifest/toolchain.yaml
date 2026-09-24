@@ -848,6 +848,28 @@ exceptions:
       and `#define EXTERN(type) extern type`, which is the libjpeg API as it
       has been since 1991. Both libjpeg and libturbojpeg are affected, so both
       are checked; gdk-pixbuf is the consumer.
+  - package: libxml2
+    drops: [visibility]
+    why: >
+      XMLPUBFUN is empty everywhere that is not Windows: xmlexports.h defines
+      XMLPUBLIC as nothing under `#else /* not Windows */` and XMLPUBFUN as
+      XMLPUBLIC, so every declaration in include/libxml is a bare `extern` and
+      no export in the library is annotated. Compiled with -fvisibility=hidden
+      the shared object ships an empty dynamic symbol table, and libxml2's own
+      programs are the first to say so -- xmllint, xmlcatalog and runsuite all
+      fail to link with `undefined symbol: xmlMemFree`,
+      `xmlSchemaNewParserCtxt`, `__xmlTreeIndentString`, `xmlRelaxNGParse` and
+      the rest of the public API.
+
+      Upstream's libxml2.syms does not save it, for the usual two reasons: the
+      meson build this recipe uses names no version script anywhere, and even
+      the autotools path's script could only re-list in `global:` what the
+      compiler already made STV_HIDDEN, which a version script cannot promote.
+      Same shape as libcap and util-linux. shared-mime-info links it here, and
+      the GNOME stack above reaches it through that.
+
+      A meson build, so it names @CROSS_INI_LIBXML2@ rather than a response
+      file -- see p11-kit for why that is the only way.
   - package: gjs
     drops: [cfi-vcall, cfi-nvcall, cfi-derived-cast, cfi-unrelated-cast]
     why: >

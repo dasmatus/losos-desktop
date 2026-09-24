@@ -32,11 +32,23 @@ steps:
 # the include path. A build that did find them would be worse, not better --
 # libxml2.so would link against a libicu the image does not carry. libxml2's
 # iconv path still covers encoding conversion, which is what icu was adding.
+#
+# --cross-file is @CROSS_INI_LIBXML2@ and not the layer's shared cross.ini.
+# XMLPUBFUN expands to nothing off Windows, so no libxml2 export is annotated,
+# and -fvisibility=hidden leaves the shared object with an empty dynamic symbol
+# table. xmllint, xmlcatalog and runsuite are built against the public API of
+# that library and fail to link -- undefined symbol: xmlMemFree, xmlSchemaFree,
+# xmlSchemaNewParserCtxt, __xmlTreeIndentString, xmlRelaxNGParse and the rest.
+# manifest/toolchain.yaml gives libxml2 `drops: [visibility]` for exactly that,
+# and this line is what reads it. meson takes flags only from a cross file, and
+# the cross file is per LAYER, so the exemption reaches the compiler through the
+# package's own copy and nowhere else -- the same shape as p11-kit and
+# harfbuzz, which name theirs the same way.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libxml2 /build/src/libxml2 --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dpython=false -Dicu=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libxml2 /build/src/libxml2 --cross-file @CROSS_INI_LIBXML2@ --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dpython=false -Dicu=disabled
 
 - stage: Build
   name: compile
