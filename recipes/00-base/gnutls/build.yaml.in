@@ -43,11 +43,29 @@ steps:
 # lib/Makefile.am:281's -Wl,--version-script and :283's
 # -export-symbols-regex, both of which run long after the compiler has made
 # every symbol hidden. See manifest/toolchain.yaml for the rest.
+#
+# --without-brotli is the same host-versus-sysroot problem linux-pam's
+# --disable-logind describes: PKG_CONFIG_PATH names the sysroot's .pc
+# directories but cannot subtract the host's, so pkg-config still reads its
+# compiled-in default path (/usr/lib/pkgconfig among it) and the host carries
+# libbrotlienc.pc (Arch's curl depends on brotli) where the sysroot -- and this
+# whole tree -- has no brotli at all. configure then reports
+#
+#     checking for libbrotlienc >= 1.0.0... yes
+#
+# while the header it implies is absent, and the build dies in compress.c:
+#
+#     lib/dlwrap/brotlienc.h:11:10: fatal error: 'brotli/encode.h' file not found
+#
+# With brotli off, HAVE_LIBBROTLI stays undefined and compress.c falls back to
+# zlib and zstd, which the sysroot really does carry (both are recipes in this
+# layer). Brotli is only certificate compression (RFC 8879); when it is wanted
+# the fix is a real brotli in this layer, not this flag.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GNUTLS@ LDFLAGS=@LDFLAGS_RSP_GNUTLS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GNUTLS@ LDFLAGS=@LDFLAGS_RSP_GNUTLS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests --without-brotli
 
 - stage: Build
   name: compile
