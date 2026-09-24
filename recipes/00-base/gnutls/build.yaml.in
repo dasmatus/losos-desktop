@@ -57,15 +57,36 @@ steps:
 #
 #     lib/dlwrap/brotlienc.h:11:10: fatal error: 'brotli/encode.h' file not found
 #
+# --without-brotli on its own is not enough, and the reason is a bug in
+# gnutls's own conditional. configure.ac:1161 is
+#
+#     AM_CONDITIONAL(HAVE_LIBBROTLI, test "$with_libbrotlienc" != "no" &&
+#                                    test "$with_libbrotlidec" != "no")
+#
+# but with_libbrotlienc and with_libbrotlidec are assigned only INSIDE
+# configure.ac:1129's `if test x$ac_brotli != xno` -- every branch of the
+# pkg-config probe sets one of them, and none of it runs when --without-brotli
+# has set ac_brotli=no. The two variables are therefore still unset when the
+# conditional is evaluated, `"" != "no"` is true, and HAVE_LIBBROTLI_TRUE comes
+# out set: lib/Makefile.am:115's `if HAVE_LIBBROTLI` appends
+# dlwrap/brotlienc.c and dlwrap/brotlidec.c to COBJECTS regardless, and the
+# build dies on the header the flag was supposed to avoid.
+#
+# Setting the two variables as configure arguments is the same shape of answer
+# as linux-pam's pam_cv_ld_no_undefined and WITH_NIS: an interface configure
+# documents (its `*=*` option case exports VAR=value), so no patch is needed.
+# They survive precisely because the block that would overwrite them is the one
+# --without-brotli skips, so the conditional reads no/no and stays false.
+#
 # With brotli off, HAVE_LIBBROTLI stays undefined and compress.c falls back to
 # zlib and zstd, which the sysroot really does carry (both are recipes in this
 # layer). Brotli is only certificate compression (RFC 8879); when it is wanted
-# the fix is a real brotli in this layer, not this flag.
+# the fix is a real brotli in this layer, not these flags.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GNUTLS@ LDFLAGS=@LDFLAGS_RSP_GNUTLS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests --without-brotli
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/gnutls /build/src/gnutls/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_GNUTLS@ LDFLAGS=@LDFLAGS_RSP_GNUTLS@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static --without-p11-kit --disable-doc --disable-tests --without-brotli with_libbrotlienc=no with_libbrotlidec=no
 
 - stage: Build
   name: compile
