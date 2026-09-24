@@ -118,10 +118,24 @@ def ensure_tmpdir():
     It belongs here rather than in each of the four container recipes because
     this program is also run directly, and because the engine's need for a usable
     TMPDIR is this program's business and not the Justfile's.
+
+    When TMPDIR is *unset*, as it is under CI, the engine inherits the host's
+    /var/tmp. On a runner whose job container stores its layers on overlayfs,
+    that directory is itself an overlayfs mount, and buildah cannot layer its
+    own context overlay on top of it:
+
+      Error: mounting an overlay over build context directory: creating overlay
+      scaffolding for build context directory: mount overlay:...: invalid argument
+
+    which exits 125 before a line of the Containerfile is read. Default it to
+    the repository's out/tmp, which the Justfile already uses and which lives on
+    the checkout's real disk, so the engine gets a non-overlay TMPDIR either way.
     """
     tmpdir = os.environ.get("TMPDIR")
-    if tmpdir:
-        Path(tmpdir).mkdir(parents=True, exist_ok=True)
+    if not tmpdir:
+        tmpdir = str(REPO / "out" / "tmp")
+        os.environ["TMPDIR"] = tmpdir
+    Path(tmpdir).mkdir(parents=True, exist_ok=True)
 
 
 def pm_root():
