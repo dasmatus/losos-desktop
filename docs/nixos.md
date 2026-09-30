@@ -7,9 +7,33 @@ What changes is how it is built. pm compiles ninety packages from pinned
 tarballs; this takes them from nixpkgs 26.05, pinned in `flake.lock`, and
 spends its effort on how they are wired together instead.
 
-The pm tree is still here and still builds. Nothing in `nixos/` reads from it
-except the two programs this repository writes itself, `losos-security` and
-`losos-swap`, which are built from the same sources under `recipes/10-core/`.
+The pm tree is still here and is the primary build: it is self-contained,
+compiling every package from a tarball pinned by SHA-256, and this is not.
+Nothing in `nixos/` reads from it except the two programs this repository
+writes itself, `losos-security` and `losos-swap`, which are built from the same
+sources under `recipes/10-core/`. pm itself ships in this image too, as the
+system manager, pinned to the same commit CI builds the pm tree with.
+
+## What this trusts from outside
+
+Everything the flake builds from, besides this repository:
+
+- **nixpkgs 26.05**, the channel tarball from `channels.nixos.org`, pinned by
+  `narHash` in `flake.lock`. Its expressions are read, not trusted blindly:
+  a different tarball fails the hash.
+- **cache.nixos.org.** Every package nixpkgs has already built -- the kernel,
+  systemd, GNOME, the compilers -- is downloaded as a binary rather than
+  compiled. The store paths are fixed by the pinned expressions, and each
+  download is checked against the cache's signing key, but the binaries
+  themselves were compiled by NixOS's build farm, not here. This is the
+  trade the pm build does not make. `nix build --option substitute false`
+  compiles everything locally instead, at the cost of a very long build.
+- **The upstream sources nixpkgs fetches** for anything the cache lacks, each
+  pinned by hash in nixpkgs.
+- **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
+  (`nixos/pkgs/pm.nix`), and **crates.io**, for its and losos-security's
+  dependencies, each pinned by `Cargo.lock` and checked by hash.
+- **In CI only:** the `cachix/install-nix-action` action that installs nix.
 
 ## Building
 
@@ -84,6 +108,7 @@ That buys two things the pm tree wrote down as limits:
 | `manifest/architectures.yaml` | `losos.arch` in `options.nix` | x86_64 and aarch64 |
 | `tools/configure --version --channel` | `losos.version`, `losos.channel` | the flake derives the version from the commit date |
 | `tools/vm-test` | `nixos/tests/boot.nix` | boots the real image under UEFI |
+| pm, the system manager | pm, the system manager (`pm.nix`) | the same pm commit in both images |
 
 ## Everything systemd, and the exceptions
 
@@ -148,6 +173,18 @@ reported, not built a second time, so the bytes sysupdate installs are the
 bytes the image boots.
 
 ## What is not done
+
+- **pm on a NixOS host.** pm's jail mirrors the host's `/bin`, `/lib` and
+  `/usr` and resolves a step's first word there. In this image `/usr` is the
+  Nix store's partition and `/bin` holds only `sh`, so a recipe that names
+  `/bin/cat` or expects a compiler under `/usr` finds nothing. pm itself runs
+  (`pm --help`, `pm source-path`, signing, `explain`), and the boot test checks
+  it is installed; building and running packages here needs pm to learn to
+  mount `/nix/store` or resolve through `PATH`, which is a change in pm. For the
+  same reason seven of pm's test targets are skipped in the nix build (the
+  list is in `nixos/pkgs/pm.nix`), and its wasm plugins are not installed.
+- **CI does not publish the flake's release.** `ci.yml` builds and checks it;
+  the release is the pm build's.
 
 - **Signing.** `losos.update.pubring` is unset, so sysupdate installs updates
   without verifying `SHA256SUMS.gpg`, and the build warns. Secure Boot signing

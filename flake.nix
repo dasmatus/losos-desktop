@@ -88,7 +88,7 @@
           release = build.releaseArtifacts;
           uki = build.uki;
           toplevel = build.toplevel;
-          inherit (ours) losos-security losos-swap;
+          inherit (ours) pm losos-security losos-swap;
           default = build.image;
         }
       );
@@ -102,6 +102,7 @@
           # Runs losos-security's own test suite as part of the build.
           losos-security = self.packages.${system}.losos-security;
           losos-swap = self.packages.${system}.losos-swap;
+          pm = self.packages.${system}.pm;
         }
         # Boots the image under QEMU and checks the systemd pieces are actually
         # in place. Needs KVM, which the test driver asks for, so a builder

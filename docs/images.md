@@ -182,57 +182,22 @@ that is the test that settles it; CI runs it on both architectures.
 `tools/libvirt-domain` writes the same machine for virt-manager, for looking at
 the desktop rather than asserting it exists.
 
-## CI handoff and automerge
+## CI handoff
 
-The `packages` matrix compiles the package chain on native x86_64 and aarch64
-runners before the `build` matrix assembles either system. This is an
-architecture matrix, not independent per-package jobs: the layer order and
-within-layer member order remain dependencies, and pm has no archive cache
-(C5/C6). Each leg uploads the final package layer's `.cpkg`, including its
-nested dependency closure. Assembly downloads only the matching architecture's
-artifact from the same workflow run, not a cache or an earlier build.
+`.github/workflows/ci.yml` builds each architecture in one job on a native
+runner: the whole package chain and then the image, with nothing reused from
+an earlier run. That is slower than splitting packages from assembly, and it
+is the point: a release is exactly what that one job compiled from pinned
+sources, with no cached or handed-over archive whose provenance has to be
+argued for. `tools/configure --prebuilt-packages` still exists for a local
+build that wants to reuse a closure it made itself.
 
-`tools/configure --prebuilt-packages <archive>` stages that trusted closure
-beside the image recipe and copies it into `/dest/deps` before unpacking.
-External inputs are first imported into `out/pkgs`, which remains available
-inside the container fallback even if the original download is removed.
-Only the image's dependency edge is removed, so pm assembles the system without
-compiling the packages again. The option is remembered across `just build`'s
-regeneration and container fallback. The archive must be outside `out/recipes`,
-have the final package layer's archive name, and come from the same source
-revision and architecture. The filename alone does not prove provenance; CI's
-same-run artifact handoff supplies it. Without the option, local builds still
-compile the complete chain.
+The finished release directory goes to GHCR as one OCI artifact per
+architecture, pushed with `oras`, and the verify and publish jobs pull it back
+by digest. That keeps the handoff exact without a multi-gigabyte workflow
+artifact, and leaves the GitHub release to do the one thing GHCR cannot: keep
+the stable `nightly`/`stable` URL systemd-sysupdate is pointed at. Pull
+requests build and check but never push, so their images are not booted.
 
-The finished image artifacts then move a different way. Each build leg names its
-release directory and publishes that flat directory to GHCR as one OCI image,
-which later jobs pull back by immutable digest. That keeps the handoff exact,
-removes the large binary workflow-artifact upload/download pair, and leaves the
-GitHub release step to do the one thing GHCR cannot here: keep the stable
-`nightly`/`stable` URL shape systemd-sysupdate is already pointed at.
-
-The aggregate `ci` check requires the gates, both container checks, pinned
-sources, package compilation, assembly, boot verification and OTA verification
-to succeed. A skipped image build is not sufficient for automerge.
-After a successful pull-request `images` run, `automerge.yml` checks that the
-pull request is still open, ready for review, targets `main`, and has the
-tested head commit before requesting a squash merge through GitHub.
-Only same-repository branches qualify; forks and changes under `.github/`
-require manual review and merging, so a pull request cannot rewrite its
-workflow to authorize its own merge. The handler never checks out or executes
-pull-request code with its write token.
-
-Repository administrators must enable **Squash merging** in Settings → General.
-Protect `main` with the required **ci** check and any required reviews or
-additional checks. The handler merges only when GitHub reports the head ready
-to merge, without bypassing protection. If reviews or other checks are still
-pending, rerun `images` after they are satisfied. It deliberately does not
-enable persistent auto-merge: that enrollment could survive a later push that
-changes workflows and no longer qualifies. The completion workflow must first
-land on the default branch to receive `workflow_run` events.
-
-Merges made with `GITHUB_TOKEN` do not trigger `push` workflows. After a
-successful merge the handler explicitly dispatches `images` on `main`, keeping
-post-merge image publishing intact. Its job-local Actions write permission is
-needed for that dispatch; package and assembly jobs remain read-only apart from
-the build leg's image upload to GHCR.
+The aggregate `ci` job is the one check to protect `main` with. Nothing merges
+automatically.

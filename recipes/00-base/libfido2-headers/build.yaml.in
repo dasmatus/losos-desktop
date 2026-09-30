@@ -30,7 +30,7 @@
 # one hash and the headers can never describe a different version from the
 # library. The `version:` list below is checked against manifest/sources.lock
 # by tools/gates/versions.py independently of the other recipe's, so a
-# `tools/check-latest --apply` that moved only one of the two turns the gate
+# version bump that moved only one of the two turns the gate
 # red instead of letting the pair drift apart quietly.
 #
 # Tombstone for the options this replaces: a two-pass systemd was the earlier

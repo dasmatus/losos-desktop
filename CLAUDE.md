@@ -99,7 +99,10 @@ drop-ins, presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`,
 networkd config, the kernel command line. The image layer stages it verbatim.
 
 **`flake.nix` and `nixos/` are a second, independent build of the same OS**
-on NixOS. They share nothing with the pm chain except the sources of
+on NixOS, kept beside the pm build rather than instead of it: the pm build is
+self-contained, and the flake takes prebuilt binaries from cache.nixos.org
+(`docs/nixos.md` lists every outside input). Its image still ships pm as the
+system manager. They share nothing with the pm chain except the sources of
 `losos-security` and `losos-swap` under `recipes/10-core/`. `docs/nixos.md` is
 the map; the one structural difference is that the OS lives on a dm-verity
 `/usr` partition (the Nix store) and root holds only state. Check it with
@@ -215,34 +218,36 @@ Beyond the numbered list in `docs/pm-constraints.md`:
 
 ## Keeping the pins current
 
-`tools/check-latest` asks every upstream what its newest stable release is.
-Most of them answer with a directory listing; the thirty-two on github.com have
-none, so those are asked over `api.github.com` and the answer carries the
-download URL, which is why no GitHub URL is composed by string surgery. Set
-`GITHUB_TOKEN` or the sweep runs out of anonymous quota a third of the way
-through and reports the rest as `unknown`.
+A pin moves by hand, one deliberate edit at a time: change the url and
+version in `manifest/sources.lock`, set its hash to `TODO`, change the
+`version:` list of the recipe that downloads it (which `tools/gates/versions.py`
+checks against the lock), then `tools/fetch-sources --update` to record what
+the new bytes hash to. Where one recipe downloads several sources they are one
+upstream release split across tarballs and move together. `COMPILER_RT` is
+version-locked to the host clang.
 
-`--apply` moves three things together, and moving fewer is how the tree starts
-lying about what it contains: the lock's url and version, the lock's hash back
-to `TODO`, and the `version:` list of the recipe that downloads it (which
-`tools/gates/versions.py` checks against the lock). `HOLD` in that file names
-the sources whose newest release is not this tree's to take, with the reason --
-`COMPILER_RT` is version-locked to the host clang.
+There used to be a weekly sweep (`tools/check-latest`,
+`update-sources.yml`) that asked every upstream for its newest release and
+opened a pull request. It is gone, and on purpose: this tree builds from
+sources it pins, and a bot that proposes whatever upstream served this week
+works against that. Nothing here validates a recipe's `-D` options against
+sources it does not have, so a bump that crosses a major version needs a real
+build and a release note either way.
 
-Where one recipe downloads several sources, they are one upstream release
-split across tarballs, and `tools/gates/versions.py` reads the version they
-agree on as the recipe's. `enforce_lockstep` refuses an `--apply` that would
-move some of a group and not the rest, because the result is not a tree the
-gate rejects -- it is one the gate passes over, which is worse. `--only` is
-repeatable so a group can be named in one run.
+## CI
 
-`.github/workflows/update-sources.yml` runs that weekly and tests **each
-candidate alone** in its own matrix leg -- fetch the new bytes, hash them, run
-`./do check` -- before collecting the survivors into one pull request. A leg
-proves the URL exists and the tree still lints. It compiles nothing: nothing
-here validates a recipe's `-D` options against sources it does not have (see
-the tombstone in `tools/gates/`), so a bump that crosses a major version still
-needs a human and a release note.
+`.github/workflows/ci.yml` is the one workflow that builds, and it is plain on
+purpose: hosted Ubuntu runners, and every step through the same entry points a
+person uses. The `pm` job builds the build host from the `Containerfile`,
+then runs pm's build, `just plugins`, `just check`, `just fetch` and `just
+build` in it via `tools/container run`, per architecture, and names the
+release. Outside a pull request it pushes that to GHCR with `oras`; `verify`
+boots it and applies an update with `tools/vm-test`, and `publish` replaces
+the `nightly` (or, for a `v*` tag, `stable`) GitHub release. The `flake` job
+builds and checks the NixOS flake beside it and publishes nothing. `ci` is
+the aggregate check. `container.yml` separately publishes the build host for
+`just container pull`. `PM_REF` in `ci.yml` and the pin in
+`nixos/pkgs/pm.nix` are the same pm commit and move together.
 
 ## Conventions
 

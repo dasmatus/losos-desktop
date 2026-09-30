@@ -128,8 +128,6 @@ lint:
   python3 "{{repo}}/tools/gates/test-release-oci.py"
   python3 "{{repo}}/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "{{repo}}/tools/gates/plugins.py"
-  python3 "{{repo}}/tools/gates/workflow.py" --self-test
-  python3 "{{repo}}/tools/gates/workflow.py"
   python3 -m basedpyright --project "{{repo}}/basedpyrightconfig.json"
   python3 "{{repo}}/tools/gates/patches.py"
   python3 "{{repo}}/tools/gates/cross-configure.py"
@@ -140,7 +138,6 @@ lint:
   # because a gate ./do check never exercises is one a refactor can quietly
   # turn into a gate that agrees with everything.
   python3 "{{repo}}/tools/gates/recipe-entrypoints.py" --self-test
-  python3 "{{repo}}/tools/check-latest" --self-test >/dev/null
   just --justfile "{{repo}}/tools/gates/Justfile" --working-directory "{{repo}}" explain-all
 
 check *args:
@@ -374,12 +371,6 @@ container *args:
   else
     python3 "{{repo}}/tools/container" run "$@"
   fi
-
-check-latest *args:
-  #!/usr/bin/env bash
-  set -euo pipefail
-  if [ "${1:-}" = "--" ]; then shift; fi
-  python3 "{{repo}}/tools/check-latest" "$@"
 
 release-manifest *args:
   #!/usr/bin/env bash

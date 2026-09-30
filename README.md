@@ -45,9 +45,11 @@ the build cannot drift apart — 149 of them, and a missing one fails the build.
 `flake.nix` builds the same OS a second way: as a NixOS configuration on
 nixpkgs 26.05, with the same systemd design -- repart on first boot, a
 dm-verity `/usr`, sysupdate A/B, homed LUKS users, networkd and resolved -- and
-the Nix store as the immutable half. `nix build` produces a bootable disk
-image with no pm, no mirror and no container. What maps to what, and what
-changed on the way, is in [`docs/nixos.md`](docs/nixos.md).
+the Nix store as the immutable half, and pm still in the image as the system
+manager. It is an addition to the pm build, not a replacement: it is quicker
+to build because it takes nixpkgs' prebuilt binaries, and for the same reason
+it is not self-contained. What maps to what, every outside input it trusts,
+and what changed on the way are in [`docs/nixos.md`](docs/nixos.md).
 
 ## Building
 
@@ -123,7 +125,7 @@ OCI digests, package checksum and container layout before installing either.
 It never runs an image or extracts the package itself. Authentication uses
 skopeo's normal login store or `REGISTRY_AUTH_FILE`; TLS verification stays on.
 
-Successful main/tag builds publish to
+Successful main/tag builds in `.github/workflows/ci.yml` publish to
 `ghcr.io/<owner>/losos-desktop/packages/<archive-stem>:<channel>-<version>-<arch>`
 and list immutable references in the workflow summary. PRs never publish or
 receive registry write permission. These are built packages, **not** the
@@ -157,9 +159,9 @@ just release-images -- pull ghcr.io/owner/losos-desktop/images@sha256:DIGEST \
 ```
 
 Each OCI image carries the flat release directory exactly as built -- typically
-the UKI, compressed root image, installation media and `SHA256SUMS`. CI uses
-that transport to hand images between jobs without re-uploading the binaries as
-workflow artifacts, while the moved `nightly`/`stable` GitHub release remains
+the UKI, compressed root image, installation media and `SHA256SUMS`. CI hands
+images between jobs the same way, as one OCI artifact per architecture pushed
+with `oras`, without re-uploading the binaries as workflow artifacts, while the moved `nightly`/`stable` GitHub release remains
 the sysupdate URL baked into the image. Use the digest-pinned reference printed
 by publish for pull.
 

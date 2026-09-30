@@ -98,6 +98,10 @@
       with subtest("sysupdate sees the installed version"):
           machine.succeed("${nodes.machine.systemd.package}/lib/systemd/systemd-sysupdate list | grep -q '1'")
 
+      with subtest("pm is installed as the system manager"):
+          machine.succeed("pm --help")
+          machine.succeed("pm source-path https://example.org/x-1.0.tar.xz | grep -q x-1.0.tar.xz")
+
       with subtest("the security report answers on the system bus"):
           machine.succeed(
               "busctl call io.losos.Security1 /io/losos/Security1 "

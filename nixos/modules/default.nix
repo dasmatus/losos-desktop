@@ -13,6 +13,7 @@
     ./network.nix
     ./desktop.nix
     ./services.nix
+    ./pm.nix
     ./installer.nix
     ./testing.nix
   ];

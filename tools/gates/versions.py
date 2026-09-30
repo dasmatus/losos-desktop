@@ -28,10 +28,9 @@ option `type: 'feature'`, which accepts only `enabled`, `disabled` or `auto`.
 to the thirty others on the same line, and nothing said otherwise until
 `meson setup` ran in a real build and died before one object compiled.
 
-So a wrong option is invisible to `./do check`, and therefore invisible to the
-per-candidate legs in .github/workflows/update-sources.yml, which run exactly
-that. A bump crossing a major version needs a human and a release note; the
-matrix proves the tarball exists and the tree still lints, and claims no more.
+So a wrong option is invisible to `./do check`. A bump crossing a major
+version needs a human, a real build and a release note; this gate proves the
+lock and the recipes agree, and claims no more.
 """
 
 import pathlib
@@ -89,7 +88,7 @@ def check(repo):
         # Unless they all carry the same version, which is not a guess. That
         # is compiler-rt: its sources are two tarballs cut from one LLVM
         # release, and skipping it would drop the check from the one recipe in
-        # the tree that is version-locked on purpose (HOLD in tools/check-latest)
+        # the tree that is version-locked on purpose (to the host clang)
         # -- exactly where a silent drift costs most.
         versions = {str(lock[key].get("version", "")) for key in keys}
         if len(versions) > 1:

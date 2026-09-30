@@ -23,36 +23,19 @@ the layers below it, which need none of this, stay on the host where they are
 faster. `recipe_needs_image_host` and `build_in_container` in `Justfile` are the two
 halves of that.
 
-CI jobs run in Arch Linux containers, using Arch Linux ARM on the native
-arm64 runners. The `runs-on: ubuntu-24.04` and `ubuntu-24.04-arm` labels still
-select GitHub's underlying VMs; GitHub does not provide a hosted Arch runner
-label. Packages and job steps run in the Arch userspace, not on Ubuntu.
+CI uses this image as the build host too. `.github/workflows/ci.yml` builds it
+from the Containerfile in the commit under test, on a plain hosted Ubuntu
+runner, and runs every step of the pm build through `tools/container run`:
+pm, the plugins, `just check`, `just fetch`, `just build`. So CI and a local
+`just container` session run the same toolchain, and a pull request that
+changes the Containerfile is built with the Containerfile it proposes rather
+than the one last published.
 
-The `gates` job in `images.yml` deliberately keeps its own pacman package list.
-It runs on every event without depending on this repository's image being
-buildable, which tells a broken tree and a broken Containerfile apart. The
-`container` job still builds and checks the full Containerfile on both
-architectures. `build` also uses that image when the outer job lacks the pinned
-mkosi, so both jobs need a nested container runtime.
-
-Three jobs run privileged: `container` and `build` for nested Buildah and
-Podman, and `gates` because nothing less lets pm create its user namespace on
-GitHub's hosted runner. Unconfining seccomp, AppArmor and the masked system
-paths is not enough there: Ubuntu 24.04's
-`kernel.apparmor_restrict_unprivileged_userns=1` is enforced by AppArmor
-itself, so the uid_map write still returns EPERM. VM verification jobs expose
-`/dev/kvm` when the host provides it, retaining the software-emulation fallback
-otherwise.
-These are container options, not attempts to change the Ubuntu host's sysctls
-from inside Arch. Shell steps explicitly use bash: GitHub otherwise defaults
-container jobs to `sh`, which cannot read the build pipeline's `PIPESTATUS`.
-
-Bootstrap installs git before checkout, preserving the real Git worktree
-needed by source proposals and release publishing. Rust is installed explicitly
-rather than inherited from the hosted runner, with its toolchain under `/usr`
-and real cargo/rustc/rustdoc links where pm's jail can reach them (C3, C7).
-The pm binary and encoder caches distinguish the Arch userspace from the old
-Ubuntu entries; the SHA-256-verified source mirror remains shared.
+The one thing the runner itself has to change is a sysctl. Ubuntu 24.04 sets
+`kernel.apparmor_restrict_unprivileged_userns=1`, which AppArmor enforces even
+for an unconfined container, so pm's uid_map write returns EPERM and
+`check-digest` reports INCONCLUSIVE before any gate runs. The job sets it to 0
+first. Nothing else about the Ubuntu host reaches the build.
 
 ```sh
 just container pull       # download the published image; no local rebuild
@@ -100,14 +83,14 @@ still mounted as before; publishing this host does not cache pm's OS builds.
 
 ### Publishing
 
-The workflow runs on main when the Containerfile, container helper, setup action
-or publishing workflow changes, and can be dispatched manually **on main** to
+The workflow runs on main when the Containerfile, container helper or
+publishing workflow changes, and can be dispatched manually **on main** to
 refresh the rolling Arch packages. Each architecture builds and smoke-tests on a
 native runner. Only after both succeed does the publishing job update the
 multi-architecture `latest` and `sha-<commit>` tags. Run-specific native tags
 keep different workflow runs from being mixed into one manifest.
-Pull requests never publish; the existing `images.yml` container gate still
-rebuilds and checks proposed Containerfile changes.
+Pull requests never publish; `ci.yml` still builds the proposed Containerfile,
+because every run builds its own build host.
 
 No registry password secret is needed: the publishing jobs use `GITHUB_TOKEN`
 with job-scoped `packages: write`. After merging, run the workflow once and
