@@ -102,7 +102,8 @@ networkd config, the kernel command line. The image layer stages it verbatim.
 on NixOS, kept beside the pm build rather than instead of it: the pm build is
 self-contained, and the flake takes prebuilt binaries from cache.nixos.org
 (`docs/nixos.md` lists every outside input). Its image still ships pm as the
-system manager. They share nothing with the pm chain except the sources of
+system manager, and `plugins/losos-nix` is what lets a pm build file drive the
+flake (`nix build`, `nix flake check`; no network under `--offline`). They share nothing with the pm chain except the sources of
 `losos-security` and `losos-swap` under `recipes/10-core/`. `docs/nixos.md` is
 the map; the one structural difference is that the OS lives on a dm-verity
 `/usr` partition (the Nix store) and root holds only state. Check it with

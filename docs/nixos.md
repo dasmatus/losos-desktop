@@ -52,6 +52,22 @@ cache.nixos.org. The image is built by `systemd-repart` inside the build
 sandbox; it needs no loop device, no root and no KVM. Only the VM test needs
 KVM.
 
+## Driving the flake from pm
+
+pm stays the system manager here too, so a pm build file can build and check
+the flake: `nix build`, `nix flake check`, `nix eval` and the other commands
+that read or build are named by the `losos-nix` plugin (`plugins/README.md`),
+which pm's fingerprint table otherwise refuses (C2). Two things about pm's
+jail shape such a step. `/nix/store` is mounted read-only and the daemon
+socket not at all, so the step builds into a store of its own, `nix --store
+/build/nix ...`. And a step that says `--offline` gets no network, so the jail
+enforces what the step claims; without it the step, and so the whole build
+file (C8), is on the host network, because evaluating fetches the inputs and
+building substitutes from cache.nixos.org. `nixos-rebuild`, `nix profile`,
+`nix run` and `nix flake update` are recognised and deliberately left
+unclassified: this OS is updated by systemd-sysupdate, never by switching a
+generation, and a pin moves by hand.
+
 ## Where the OS lives
 
 The one structural change is where the operating system is.
@@ -175,14 +191,17 @@ bytes the image boots.
 ## What is not done
 
 - **pm on a NixOS host.** pm's jail mirrors the host's `/bin`, `/lib` and
-  `/usr` and resolves a step's first word there. In this image `/usr` is the
-  Nix store's partition and `/bin` holds only `sh`, so a recipe that names
-  `/bin/cat` or expects a compiler under `/usr` finds nothing. pm itself runs
-  (`pm --help`, `pm source-path`, signing, `explain`), and the boot test checks
-  it is installed; building and running packages here needs pm to learn to
-  mount `/nix/store` or resolve through `PATH`, which is a change in pm. For the
-  same reason seven of pm's test targets are skipped in the nix build (the
-  list is in `nixos/pkgs/pm.nix`), and its wasm plugins are not installed.
+  `/usr`, and additionally mounts `/nix/store` and the store-backed `PATH`
+  directories read-only, so a step whose tools come from the store runs: a
+  `losos-nix` step (`nix eval`, `nix hash`) ran that way in pm's jail on a
+  Nix-provisioned host. What still finds nothing is a recipe that names FHS
+  paths, `/bin/cat` or a compiler under `/usr`, and every recipe in this tree
+  does; in this image `/usr` is the Nix store's partition and `/bin` holds
+  only `sh`. So pm itself runs here (`pm --help`, `pm source-path`, signing,
+  `explain`), and the boot test checks it is installed, but this tree's
+  recipes do not build on it. For the same reason seven of pm's test targets
+  are skipped in the nix build (the list is in `nixos/pkgs/pm.nix`), and the
+  wasm plugins are not installed in the image.
 - **CI does not publish the flake's release.** `ci.yml` builds and checks it;
   the release is the pm build's.
 

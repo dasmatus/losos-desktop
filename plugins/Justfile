@@ -15,11 +15,11 @@ build *crates:
 
   mkdir -p "$out"
   if [ "$#" -eq 0 ]; then
-    set -- losos-image losos-mkosi losos-systemd
+    set -- losos-image losos-mkosi losos-nix losos-systemd
   elif [ "${1:-}" = "--" ]; then
     shift
     if [ "$#" -eq 0 ]; then
-      set -- losos-image losos-mkosi losos-systemd
+      set -- losos-image losos-mkosi losos-nix losos-systemd
     fi
   fi
 

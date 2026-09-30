@@ -1,12 +1,12 @@
 # This distribution's pm plugins
 
-Three WebAssembly components, built against pm's `wit/plugin.wit`
+Four WebAssembly components, built against pm's `wit/plugin.wit`
 ([pm#4](https://github.com/dichhead/pm/pull/4)). pm loads every `*.wasm` in
 `$XDG_CONFIG_HOME/pm/plugins/` and asks it two questions its built-in tables
 cannot always answer.
 
 Read pm's `plugins/README.md` for the sandbox and the trust model. What follows
-is why *these three* exist.
+is why *these four* exist.
 
 ## `losos-image` — classify-command
 
@@ -99,6 +99,53 @@ inside a build, where pm's first-word resolution is never consulted, and naming
 it here would suggest a recipe could call it directly — which would mean
 building an image outside mkosi's own bookkeeping.
 
+## `losos-nix` — classify-command, and symbols
+
+pm is the system manager on the NixOS build of this OS as well
+(`docs/nixos.md`), so pm is also what drives the flake — and `nix` is not in
+its fingerprint table. This names the commands that read or build a flake:
+
+```
+$ pm explain build.yaml
+grants:     Toolchain, Coreutils, Archive
+plugins:    losos-image 0.1.0, losos-mkosi 0.1.0, losos-nix 0.1.0, losos-systemd 0.1.0
+
+COMMAND                                                  FINGERPRINT
+nix --store /build/nix flake check --offline /build/src  losos-nix:flake-check-offline
+nix --store /build/nix build --offline /build/src#image  losos-nix:build-offline
+nix-store --query --requisites /build/result             losos-nix:nix-store
+nix hash path /build/result                              losos-nix:hash
+```
+
+This is the one plugin here whose ceiling includes `Network`, because
+evaluating a flake fetches its inputs and building one substitutes from
+cache.nixos.org. A `nix` step that says `--offline` gets none, and its
+fingerprint says so (`-offline`), so the jail enforces the claim rather than
+trusting it: `--offline` alone only turns substituters off. Drop it from one
+step and `grants` gains `Network` for the whole file (C8). The older `nix-*`
+commands have no such switch and always get it; `nix hash` and `nix nar` never
+do.
+
+pm's jail mounts `/nix/store` read-only and no daemon socket, which is why the
+steps above build into `--store /build/nix`.
+
+Recognised and deliberately left unclassified, with a log line saying why:
+`nixos-rebuild`, `nixos-install`, `nix-env`, `nix profile` (they change a
+machine, and this OS updates by systemd-sysupdate, never by switching a
+generation); `nix run`, `shell`, `develop`, `fmt`, `bundle`, `repl`, `nix-shell`
+(each runs a program the step does not name); `nix copy`, `nix-copy-closure`,
+the writing `nix-store` operations (another store); `nix flake update`, `lock`,
+`prefetch`, `nix-prefetch-url`, `nix-channel` (newer than the pin, and a pin
+moves by hand). An option before the subcommand whose value it does not know
+fails safe: the value is read as the subcommand and nothing is classified.
+
+Its symbols are the paths NixOS fixes — `store`, `current-system`,
+`booted-system`, `system-bin` — for a package that installs something referring
+to them. Only the store is visible inside the jail.
+
+pm's own tree already carries `sysupdate`, `sysext` and `systemd` plugins, so
+there is no losos copy of those.
+
 ## `losos-systemd` — scan-source
 
 This one is the interesting half, because it is the only signal in pm that can
@@ -148,7 +195,7 @@ never a path.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-just plugins                     # all three, into dist/
+just plugins                     # all four, into dist/
 just plugins losos-mkosi         # one
 ```
 

@@ -13,7 +13,7 @@ if command -v just >/dev/null 2>&1; then
     exec just --justfile "$here/Justfile" --working-directory "$repo" build "$@"
 fi
 
-crates=${*:-"losos-image losos-mkosi losos-systemd"}
+crates=${*:-"losos-image losos-mkosi losos-nix losos-systemd"}
 
 mkdir -p "$out"
 cargo build --release --target "$target" $(for c in $crates; do echo "-p $c"; done)
