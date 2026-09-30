@@ -32,3 +32,12 @@ plugins/dist/
 # and it differs by interpreter version.
 __pycache__/
 *.pyc
+
+# The NixOS tree (flake.nix). nix-direnv caches the dev shell in .direnv/, and
+# `nix build` leaves result symlinks; `nix run .#vm` writes a disk and a
+# firmware variable store beside wherever it was run.
+.direnv/
+result
+result-*
+/losos-desktop.qcow2
+/losos-desktop-efivars.fd

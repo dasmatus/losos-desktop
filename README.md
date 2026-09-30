@@ -40,6 +40,15 @@ that enables it, the units it ships, and where this OS wires it in. Its rows are
 the same paths a `Test` step in the systemd recipe asserts, so the document and
 the build cannot drift apart — 149 of them, and a missing one fails the build.
 
+## On NixOS
+
+`flake.nix` builds the same OS a second way: as a NixOS configuration on
+nixpkgs 26.05, with the same systemd design -- repart on first boot, a
+dm-verity `/usr`, sysupdate A/B, homed LUKS users, networkd and resolved -- and
+the Nix store as the immutable half. `nix build` produces a bootable disk
+image with no pm, no mirror and no container. What maps to what, and what
+changed on the way, is in [`docs/nixos.md`](docs/nixos.md).
+
 ## Building
 
 ```sh

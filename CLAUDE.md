@@ -98,6 +98,13 @@ all — is the Containerfile's.
 drop-ins, presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`,
 networkd config, the kernel command line. The image layer stages it verbatim.
 
+**`flake.nix` and `nixos/` are a second, independent build of the same OS**
+on NixOS. They share nothing with the pm chain except the sources of
+`losos-security` and `losos-swap` under `recipes/10-core/`. `docs/nixos.md` is
+the map; the one structural difference is that the OS lives on a dm-verity
+`/usr` partition (the Nix store) and root holds only state. Check it with
+`nix flake check`, not `./do check`.
+
 ## Gotchas that bite silently
 
 Beyond the numbered list in `docs/pm-constraints.md`:
