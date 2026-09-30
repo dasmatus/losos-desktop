@@ -17,12 +17,13 @@
 
   inputs = {
     # The channel tarball rather than github:NixOS/nixpkgs. It is the same
-    # tree at the revision the channel's Hydra jobset tested, so everything in
-    # it is already in cache.nixos.org, and it resolves to an immutable
-    # releases.nixos.org URL that flake.lock pins by narHash exactly as it
-    # would a git revision. It is also the form that fetches without
-    # api.github.com, which rate-limits anonymous clients and which some build
-    # hosts cannot reach at all. `nix flake update nixpkgs` moves it.
+    # tree at the revision the channel's Hydra jobset tested -- its sources,
+    # not its binaries: the system below is musl and built from them -- and
+    # it resolves to an immutable releases.nixos.org URL that flake.lock pins
+    # by narHash exactly as it would a git revision. It is also the form that
+    # fetches without api.github.com, which rate-limits anonymous clients and
+    # which some build hosts cannot reach at all. `nix flake update nixpkgs`
+    # moves it.
     #
     # 26.05 is the stable release: this is an OS people install, and an
     # update to it is a new image, so unstable's churn buys nothing.
@@ -51,13 +52,25 @@
         in
         "${lib.substring 0 8 d}.${lib.substring 8 6 d}";
 
+      # musl, not glibc: the libc the pm tree builds everything against, and
+      # the one this OS is meant to run on. Only the host platform changes, so
+      # the build is native rather than cross, and runs on any builder of the
+      # same architecture: on x86_64 nixpkgs grows its musl compiler from
+      # source (the minimal bootstrap), on aarch64 from pinned musl bootstrap
+      # tools. Every package is compiled by the builder; CI's only binary
+      # cache is this project's own (docs/nixos.md, "Binary cache").
+      musl = {
+        x86_64-linux = lib.systems.examples.musl64;
+        aarch64-linux = lib.systems.examples.aarch64-multiplatform-musl;
+      };
+
       mkSystem =
         system:
         lib.nixosSystem {
           modules = [
             self.nixosModules.default
             {
-              nixpkgs.hostPlatform = system;
+              nixpkgs.hostPlatform = musl.${system};
               losos.version = lib.mkDefault version;
             }
           ];
@@ -79,7 +92,9 @@
         system: pkgs:
         let
           build = (configOf system).system.build;
-          ours = self.overlays.default pkgs pkgs;
+          # The system's own package set, so these are the musl builds the
+          # image carries rather than glibc ones built for the build host.
+          ours = self.nixosConfigurations."losos-desktop-${archOf system}".pkgs;
         in
         {
           image = build.image;
@@ -88,7 +103,16 @@
           release = build.releaseArtifacts;
           uki = build.uki;
           toplevel = build.toplevel;
-          inherit (ours) pm losos-security losos-swap;
+          inherit (ours)
+            pm
+            pm-plugins
+            losos-security
+            losos-swap
+            ;
+          # Nix itself, from source against musl. The image carries none (an
+          # update is a new /usr, not a switch); this is for a build host that
+          # wants its Nix to be the same libc as what it builds.
+          nix = ours.nix;
           default = build.image;
         }
       );
@@ -103,6 +127,7 @@
           losos-security = self.packages.${system}.losos-security;
           losos-swap = self.packages.${system}.losos-swap;
           pm = self.packages.${system}.pm;
+          pm-plugins = self.packages.${system}.pm-plugins;
         }
         # Boots the image under QEMU and checks the systemd pieces are actually
         # in place. Needs KVM, which the test driver asks for, so a builder

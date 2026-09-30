@@ -46,10 +46,12 @@ the build cannot drift apart — 149 of them, and a missing one fails the build.
 nixpkgs 26.05, with the same systemd design -- repart on first boot, a
 dm-verity `/usr`, sysupdate A/B, homed LUKS users, networkd and resolved -- and
 the Nix store as the immutable half, and pm still in the image as the system
-manager. It is an addition to the pm build, not a replacement: it is quicker
-to build because it takes nixpkgs' prebuilt binaries, and for the same reason
-it is not self-contained. What maps to what, every outside input it trusts,
-and what changed on the way are in [`docs/nixos.md`](docs/nixos.md).
+manager. It is an addition to the pm build, not a replacement. It is musl
+too, and compiled from source: nothing comes from cache.nixos.org, only from
+this project's own cache in GHCR, served through [`proxy/`](proxy/). It still
+trusts nixpkgs' expressions for how each package is built, which the pm tree
+does not. What maps to what, every outside input it trusts, and what changed
+on the way are in [`docs/nixos.md`](docs/nixos.md).
 
 ## Building
 

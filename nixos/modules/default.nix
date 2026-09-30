@@ -16,6 +16,7 @@
     ./pm.nix
     ./installer.nix
     ./testing.nix
+    ./musl.nix
   ];
 
   nixpkgs.overlays = [ (import ../pkgs) ];

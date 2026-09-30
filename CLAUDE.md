@@ -99,11 +99,16 @@ drop-ins, presets, `sysusers.d`, `tmpfiles.d`, `repart.d`, `sysupdate.d`,
 networkd config, the kernel command line. The image layer stages it verbatim.
 
 **`flake.nix` and `nixos/` are a second, independent build of the same OS**
-on NixOS, kept beside the pm build rather than instead of it: the pm build is
-self-contained, and the flake takes prebuilt binaries from cache.nixos.org
-(`docs/nixos.md` lists every outside input). Its image still ships pm as the
-system manager, and `plugins/losos-nix` is what lets a pm build file drive the
-flake (`nix build`, `nix flake check`; no network under `--offline`). They share nothing with the pm chain except the sources of
+on NixOS, kept beside the pm build rather than instead of it. It is musl and
+compiled from nixpkgs' sources, never cache.nixos.org's binaries; the only
+substituter is the project's own cache in GHCR, which `proxy/` (a Vercel edge
+function around a Rust-to-WebAssembly core) serves and
+`tools/nix-cache-push` fills (`docs/nixos.md` lists every outside input).
+Its image still ships pm as the system manager, with the plugins, and
+`plugins/losos-nix` is what lets a pm build file drive the flake (`nix
+build`, `nix flake check`; no network under `--offline`). A homed login does
+not work on musl yet: musl has no NSS (`docs/nixos.md`, "musl"). They share
+nothing with the pm chain except the sources of
 `losos-security` and `losos-swap` under `recipes/10-core/`. `docs/nixos.md` is
 the map; the one structural difference is that the OS lives on a dm-verity
 `/usr` partition (the Nix store) and root holds only state. Check it with
@@ -244,8 +249,12 @@ then runs pm's build, `just plugins`, `just check`, `just fetch` and `just
 build` in it via `tools/container run`, per architecture, and names the
 release. Outside a pull request it pushes that to GHCR with `oras`; `verify`
 boots it and applies an update with `tools/vm-test`, and `publish` replaces
-the `nightly` (or, for a `v*` tag, `stable`) GitHub release. The `flake` job
-builds and checks the NixOS flake beside it and publishes nothing. `ci` is
+the `nightly` (or, for a `v*` tag, `stable`) GitHub release and moves the
+`images:<channel>-<arch>` tag `proxy/` serves updates from. The `flake` job
+builds the NixOS flake from source within a time budget, pushes whatever
+finished to the GHCR cache so the next run continues from there, and checks
+the flake once a build completes; it publishes no release. `proxy` tests the
+cache proxy and deploys nothing. `ci` is
 the aggregate check. `container.yml` separately publishes the build host for
 `just container pull`. `PM_REF` in `ci.yml` and the pin in
 `nixos/pkgs/pm.nix` are the same pm commit and move together.

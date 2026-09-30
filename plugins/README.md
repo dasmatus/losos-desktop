@@ -143,8 +143,9 @@ Its symbols are the paths NixOS fixes — `store`, `current-system`,
 `booted-system`, `system-bin` — for a package that installs something referring
 to them. Only the store is visible inside the jail.
 
-pm's own tree already carries `sysupdate`, `sysext` and `systemd` plugins, so
-there is no losos copy of those.
+pm's own tree already carries `sysupdate`, `sysext` and `systemd` plugins,
+so there is no losos copy of those; `just plugins` builds them from the pm
+checkout beside this one (next section).
 
 ## `losos-systemd` — scan-source
 
@@ -195,9 +196,22 @@ never a path.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-just plugins                     # all four, into dist/
+just plugins                     # all seven, into dist/
 just plugins losos-mkosi         # one
+just plugins sysupdate           # one of pm's, from $PM_ROOT/plugins
 ```
+
+Seven: this tree's four, and three of pm's own — `sysext`, `sysupdate` and
+`systemd` — built from the pm checkout at `PM_ROOT` (by default `../pm`, the
+commit `PM_REF` pins) rather than copied here to drift. They read the
+sysupdate transfers and sysext definitions `overlay/` and `nixos/` ship and
+name the systemd tools a recipe calls. pm's `zig` is left out: nothing here
+builds with it. pm consults plugins in file-name order and takes the first
+verdict, so where `losos-image` and pm's `sysext` both name a tool
+(`systemd-repart`, `mkfs.erofs`), `losos-image` answers; all nine recipes
+explain the same with and without pm's three. The NixOS image carries all
+seven, unsigned, in `/run/current-system/sw/share/pm/plugins`
+(`nixos/pkgs/pm-plugins.nix`).
 
 The top-level `just sign` recipe — via `tools/Justfile`'s `sign-all` recipe —
 installs whatever is in `dist/` into the repo-local trust store and signs it

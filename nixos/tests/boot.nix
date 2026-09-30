@@ -23,6 +23,10 @@
 
       losos.version = "1";
 
+      # The same musl system flake.nix builds; the test framework would
+      # otherwise hand the node its own glibc package set.
+      nixpkgs.hostPlatform = lib.systems.examples.musl64;
+
       # The first-boot wizard waits on the console for a person, which a test
       # has none of. The user is created by the test script instead.
       services.homed.promptOnFirstBoot = lib.mkForce false;

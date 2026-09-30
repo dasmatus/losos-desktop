@@ -251,6 +251,12 @@ def main():
                              "filename, which is where systemd-sysupdate reads "
                              "it from; CI passes the version it is about to "
                              "publish")
+    parser.add_argument("--update-url", metavar="URL",
+                        help="where the image's sysupdate transfers look for "
+                             "SHA256SUMS and the release files, ending in a "
+                             "slash; default the GitHub release named after "
+                             "the channel. proxy/ serves the same files from "
+                             "GHCR at <proxy>/updates/<channel>/<arch>/")
     parser.add_argument("--ota-port", type=int, default=8731,
                         help="loopback port tools/vm-test offers a release on")
     parser.add_argument("--mirror", metavar="URL",
@@ -326,6 +332,14 @@ def main():
         subs[f"@ARCH_{key.upper()}@"] = str(value)
     subs["@ARCH@"] = args.arch
     subs["@CHANNEL@"] = args.channel
+    # https:// either way: losos-ota-test.service swaps any https Path= for the
+    # loopback server tools/vm-test runs, so the OTA test is indifferent to it.
+    update_url = args.update_url or (
+        f"https://github.com/dichhead/losos-desktop/releases/download/{args.channel}/"
+    )
+    if not update_url.startswith("https://") or not update_url.endswith("/"):
+        raise SystemExit(f"configure: --update-url must be https:// and end in /: {update_url}")
+    subs["@UPDATE_URL@"] = update_url
     # The version reaches exactly one place: the name of the UKI on the ESP the
     # image ships with. sysupdate parses the version out of that filename and
     # out of nothing else, so an image whose kernel is not named for its version
@@ -522,6 +536,8 @@ def main():
     # succeed.
     remembered = [f"--arch={args.arch}", f"--channel={args.channel}",
                   f"--version={args.version}", f"--ota-port={args.ota_port}"]
+    if args.update_url:
+        remembered.append(f"--update-url={args.update_url}")
     if args.allow_unresolved:
         remembered.append("--allow-unresolved")
     if args.mirror:

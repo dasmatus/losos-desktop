@@ -4,7 +4,9 @@
 # pinned by SHA-256 in manifest/sources.lock, inside the build host this
 # repository's own Containerfile describes. Nothing in it comes prebuilt from
 # anyone but the base image's package manager. The NixOS flake is built and
-# checked beside it as an addition, and never published.
+# checked beside it as an addition, never published as a release; it builds
+# from source on musl too, and its only binary cache is this project's own, in
+# GHCR, served by proxy/ (docs/nixos.md, "Binary cache").
 #
 # Deliberately plain. Every job runs on a hosted Ubuntu runner and does its
 # work through the same entry points a person would -- `tools/container`,
@@ -112,9 +114,13 @@ jobs:
         env:
           CHANNEL: ${{ steps.channel.outputs.name }}
           VERSION: ${{ steps.channel.outputs.version }}
+          # Set as a repository variable once proxy/ is deployed; until then the
+          # image updates from the GitHub release, as before.
+          LOSOS_PROXY_URL: ${{ vars.LOSOS_PROXY_URL }}
         run: |
           python3 tools/container run -- just configure -- \
-            --arch ${{ matrix.arch }} --channel "$CHANNEL" --version "$VERSION"
+            --arch ${{ matrix.arch }} --channel "$CHANNEL" --version "$VERSION" \
+            ${LOSOS_PROXY_URL:+--update-url "$LOSOS_PROXY_URL/updates/$CHANNEL/${{ matrix.arch }}/"}
           # Tee'd so the last step can repeat what failed without scrolling.
           set +e
           python3 tools/container run -- just build 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
@@ -290,8 +296,16 @@ jobs:
           path: "*console.log"
 
   # The NixOS flake, as an addition to the pm build: built and checked on
-  # both architectures, never published. Its inputs are not self-contained --
-  # nixpkgs' binaries come from cache.nixos.org -- which docs/nixos.md spells out.
+  # both architectures, never published as a release. It is musl and built
+  # from source, so its only substituter is this project's own cache in GHCR,
+  # through proxy/; cache.nixos.org is switched off, not merely outranked.
+  #
+  # From an empty cache the whole OS is thousands of derivations, far more
+  # than one runner's six hours. So the build has a budget, and whatever
+  # finished is pushed to the cache whether or not the rest did: each run
+  # starts where the last one stopped. A run that ran out of time with no
+  # failed derivation says so and passes; one where a derivation failed is
+  # red. `nix flake check` runs only once the build completes.
   flake:
     strategy:
       fail-fast: false
@@ -300,6 +314,17 @@ jobs:
           - runner: ubuntu-24.04
           - runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 355
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # Repository variables, set once proxy/ is deployed and a signing key
+      # exists (docs/nixos.md, "Binary cache"). Without them the flake still
+      # builds, from source every time, and nothing is pushed.
+      NIX_CACHE_URL: ${{ vars.LOSOS_PROXY_URL }}
+      NIX_CACHE_PUBLIC_KEY: ${{ vars.NIX_CACHE_PUBLIC_KEY }}
+      NIX_VERSION: "2.34.8"
     steps:
       - name: Free disk space
         run: |
@@ -308,34 +333,110 @@ jobs:
             /usr/local/share/boost /usr/local/share/powershell
           df -h /
 
-      # The flake's boot test asks for the kvm system feature, and nix will not
-      # schedule it without. Only the x86_64 runner has /dev/kvm.
-      - name: Enable KVM
+      # The official installer, pinned, in place of a third party's action.
+      # This Nix binary is the one thing the flake job takes prebuilt: Nix is
+      # what builds Nix, and `.#nix` is the musl one from source for a build
+      # host that wants it after this bootstrap.
+      #
+      # substituters is set to the project's cache alone, or to nothing:
+      # without the line, Nix's default is cache.nixos.org, which carries
+      # glibc builds this OS is not made of and was not compiled here.
+      # The boot test asks for the kvm feature, and only the x86_64 runner has
+      # /dev/kvm.
+      - name: Install Nix
         run: |
+          curl -sSfL --proto '=https' \
+            "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
+          sh install-nix --daemon --yes --no-channel-add
+          features="nixos-test benchmark big-parallel"
           if [ -e /dev/kvm ]; then
             sudo chmod 0666 /dev/kvm
-            echo "features=nixos-test benchmark big-parallel kvm" >> "$GITHUB_ENV"
-          else
-            echo "features=nixos-test benchmark big-parallel" >> "$GITHUB_ENV"
+            features="$features kvm"
           fi
+          {
+            echo "experimental-features = nix-command flakes"
+            echo "system-features = $features"
+            echo "max-jobs = auto"
+            if [ -n "$NIX_CACHE_URL" ] && [ -n "$NIX_CACHE_PUBLIC_KEY" ]; then
+              echo "substituters = $NIX_CACHE_URL"
+              echo "trusted-public-keys = $NIX_CACHE_PUBLIC_KEY"
+            else
+              echo "substituters ="
+            fi
+          } | sudo tee -a /etc/nix/nix.conf
+          sudo systemctl restart nix-daemon
+          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            system-features = ${{ env.features }}
+
+      - name: Build the release
+        id: build
+        run: |
+          set +e
+          timeout --signal=INT 300m nix build -L --keep-going --no-link .#release \
+            2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" = 0 ]; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          elif [ "$status" = 124 ] && ! grep -q "^error: builder for .* failed" build.log; then
+            echo "::warning::The build ran out of time with nothing failed; what finished is pushed to the cache and the next run continues from there."
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          else
+            grep -A20 "^error: builder for .* failed" build.log | head -80 || true
+            exit 1
+          fi
+
+      # Every valid path, not only the release's closure: after a run that
+      # ran out of time the closure is not realised, but what was built is on
+      # disk and is exactly what the next run would otherwise compile again.
+      # A pull request never pushes; its run reads the cache and writes nothing.
+      - uses: oras-project/setup-oras@v1
+        if: always() && github.event_name != 'pull_request' && env.NIX_CACHE_URL != ''
+      - name: Push what was built to the cache
+        if: always() && github.event_name != 'pull_request' && env.NIX_CACHE_URL != ''
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
+        run: |
+          if [ -z "$NIX_CACHE_SIGNING_KEY" ]; then
+            echo "::warning::NIX_CACHE_SIGNING_KEY is not set; nothing is pushed to the cache."
+            exit 0
+          fi
+          printf '%s' "$GHCR_TOKEN" \
+            | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          umask 077
+          printf '%s' "$NIX_CACHE_SIGNING_KEY" > "$RUNNER_TEMP/cache.sec"
+          python3 tools/nix-cache-push --all \
+            --repository "ghcr.io/${GITHUB_REPOSITORY,,}/nix-cache" \
+            --secret-key-file "$RUNNER_TEMP/cache.sec"
+          rm -f "$RUNNER_TEMP/cache.sec"
 
       - name: Check formatting
+        if: steps.build.outputs.complete == 'true'
         run: nix fmt -- --ci
-      - name: Build the release
-        run: nix build -L .#release --no-link
       - name: Check the flake
+        if: steps.build.outputs.complete == 'true'
         run: nix flake check -L
+
+  # The GHCR proxy: its decisions in Rust, then the handler against a fake
+  # registry. Nothing is deployed from here.
+  proxy:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: proxy
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo test
+      - run: sh build.sh
+      - run: node --test test/*.test.js
 
   # The one check branch protection looks for, so a skipped or cancelled leg
   # never reads as green.
   ci:
-    needs: [pm, verify, flake]
+    needs: [pm, verify, flake, proxy]
     if: always()
     runs-on: ubuntu-24.04
     steps:
@@ -344,14 +445,17 @@ jobs:
           PM: ${{ needs.pm.result }}
           VERIFY: ${{ needs.verify.result }}
           FLAKE: ${{ needs.flake.result }}
+          PROXY: ${{ needs.proxy.result }}
         run: |
           test "$PM" = success
           test "$FLAKE" = success
+          test "$PROXY" = success
           # verify does not run on a pull request, which never pushes an image.
           test "$VERIFY" = success || test "$VERIFY" = skipped
 
-  # Publish the pm build to the channel's GitHub release, the URL sysupdate
-  # reads (it cannot fetch from an OCI registry). A dispatched run publishes
+  # Publish the pm build to the channel's GitHub release and move the
+  # channel's tag in GHCR, the two places an image's sysupdate reads from
+  # (the second through proxy/, since sysupdate cannot speak OCI). A dispatched run publishes
   # whatever reached GHCR even if verification failed, because that is what the
   # person dispatching asked for; a push to main or a tag keeps the gate.
   publish:
@@ -364,7 +468,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      packages: read
+      packages: write
     steps:
       - uses: oras-project/setup-oras@v1
       - uses: actions/download-artifact@v4
@@ -396,6 +500,20 @@ jobs:
             echo "any=false" >> "$GITHUB_OUTPUT"
             echo "No architecture reached GHCR; nothing to publish."
           fi
+
+      # `images:<channel>-<arch>` is what proxy/ serves at
+      # /updates/<channel>/<arch>/, so it moves only here, after the gate, and
+      # to exactly the artifact the release below is made from.
+      - name: Move the channel tags in GHCR
+        if: steps.pulled.outputs.any == 'true'
+        env:
+          CHANNEL: ${{ needs.pm.outputs.channel }}
+        run: |
+          for arch in x86_64 aarch64; do
+            ref="refs/release-ref-$arch.txt"
+            [ -f "$ref" ] || continue
+            oras tag "$(cat "$ref")" "$CHANNEL-$arch"
+          done
 
       # The release tag is the channel and is replaced rather than renamed:
       # sysupdate's source URL is baked into the image updating itself.

@@ -2,6 +2,7 @@
 # system manager. Everything else the OS runs comes from nixpkgs.
 final: _prev: {
   pm = final.callPackage ./pm.nix { };
+  pm-plugins = final.callPackage ./pm-plugins.nix { };
   losos-security = final.callPackage ./losos-security.nix { };
   losos-swap = final.callPackage ./losos-swap.nix { };
 }

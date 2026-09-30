@@ -6,6 +6,14 @@
 # plus landlock, both of which NixOS's kernel allows by default.
 { pkgs, ... }:
 
+#
+# pm's plugins are shipped under /run/current-system/sw/share/pm/plugins and
+# not installed into anyone's config: pm runs a plugin only when it is signed
+# by a key its user trusts, and that trust is the user's to give.
 {
-  environment.systemPackages = [ pkgs.pm ];
+  environment.systemPackages = [
+    pkgs.pm
+    pkgs.pm-plugins
+  ];
+  environment.pathsToLink = [ "/share/pm" ];
 }

@@ -12,7 +12,7 @@ ProtectVersion=%A
 
 [Source]
 Type=url-file
-Path=https://github.com/dichhead/losos-desktop/releases/download/@CHANNEL@/
+Path=@UPDATE_URL@
 MatchPattern=losos-desktop_@v_@ARCH_SYSUPDATE_ROOT@.raw.xz
 
 [Target]

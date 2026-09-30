@@ -4,11 +4,14 @@
 under `recipes/`: a GNOME desktop that is systemd end to end, image-based,
 updated by `systemd-sysupdate`, with every user a `systemd-homed` LUKS volume.
 What changes is how it is built. pm compiles ninety packages from pinned
-tarballs; this takes them from nixpkgs 26.05, pinned in `flake.lock`, and
-spends its effort on how they are wired together instead.
+tarballs; this compiles nixpkgs 26.05's packages, pinned in `flake.lock`, and
+spends its effort on how they are wired together instead. Both are musl, and
+both compile everything from source: this build takes no binaries from
+cache.nixos.org, only from the project's own cache of what its CI compiled.
 
 The pm tree is still here and is the primary build: it is self-contained,
-compiling every package from a tarball pinned by SHA-256, and this is not.
+compiling every package from a tarball pinned by SHA-256 with nothing between
+it and those tarballs. This one trusts nixpkgs' expressions to say how.
 Nothing in `nixos/` reads from it except the two programs this repository
 writes itself, `losos-security` and `losos-swap`, which are built from the same
 sources under `recipes/10-core/`. pm itself ships in this image too, as the
@@ -21,19 +24,27 @@ Everything the flake builds from, besides this repository:
 - **nixpkgs 26.05**, the channel tarball from `channels.nixos.org`, pinned by
   `narHash` in `flake.lock`. Its expressions are read, not trusted blindly:
   a different tarball fails the hash.
-- **cache.nixos.org.** Every package nixpkgs has already built -- the kernel,
-  systemd, GNOME, the compilers -- is downloaded as a binary rather than
-  compiled. The store paths are fixed by the pinned expressions, and each
-  download is checked against the cache's signing key, but the binaries
-  themselves were compiled by NixOS's build farm, not here. This is the
-  trade the pm build does not make. `nix build --option substitute false`
-  compiles everything locally instead, at the cost of a very long build.
-- **The upstream sources nixpkgs fetches** for anything the cache lacks, each
-  pinned by hash in nixpkgs.
+- **The upstream sources nixpkgs fetches**, each pinned by hash in nixpkgs.
+  With no substituter but the project's own, every package is compiled from
+  them.
+- **What a from-source build starts from.** On x86_64, nothing prebuilt at
+  all for C: nixpkgs' minimal bootstrap grows the compiler from
+  stage0-posix's hand-auditable hex seed through tinycc to gcc. On aarch64,
+  nixpkgs' musl bootstrap tools, a small static toolchain pinned by hash in
+  `pkgs/stdenv/linux/bootstrap-files/`, which builds the real compiler and is
+  then discarded. rustc and Go are self-hosting and start, as any from-source
+  build of them does, from upstream's own prebuilt compiler of the previous
+  release. The pm tree's equivalent of all this is the build host's clang.
 - **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
   (`nixos/pkgs/pm.nix`), and **crates.io**, for its and losos-security's
   dependencies, each pinned by `Cargo.lock` and checked by hash.
-- **In CI only:** the `cachix/install-nix-action` action that installs nix.
+- **The project's binary cache** in GHCR, through `proxy/` (below): paths
+  this project's CI compiled and signed. A client checks every narinfo
+  against the one public key it was told to trust, so the proxy and GHCR
+  carry bytes but cannot vouch for them.
+- **In CI only:** the official Nix installer from `releases.nixos.org`,
+  pinned by version. Nix is what builds Nix, so this binary is the one
+  bootstrap; `.#nix` is the musl Nix from source for a build host after it.
 
 ## Building
 
@@ -46,11 +57,98 @@ nix flake check        # both architectures, losos-security's tests, and
                        # (on a builder with KVM) a VM boot test
 ```
 
-Nothing is compiled that nixpkgs has already built except the two programs
-above and the configuration itself, so a build is mostly a download from
-cache.nixos.org. The image is built by `systemd-repart` inside the build
-sandbox; it needs no loop device, no root and no KVM. Only the VM test needs
-KVM.
+From an empty cache that is the whole OS from source: about 2,560
+derivations for one architecture's release, a compiler bootstrap, LLVM,
+rustc, WebKit, SpiderMonkey and the kernel among them -- days on one
+machine, not hours. With the project's cache configured (below), a build
+compiles only what changed. The image is built by `systemd-repart` inside
+the build sandbox; it needs no loop device, no root and no KVM. Only the VM
+test needs KVM.
+
+## musl
+
+`flake.nix` sets the host platform to `x86_64-unknown-linux-musl` or
+`aarch64-unknown-linux-musl`. Only the host changes, so this is a native
+build of a musl nixpkgs, not a cross build, and any builder of the same
+architecture runs it. Both architectures evaluate, image and release
+included, with no package refusing the platform.
+
+`nixos/modules/musl.nix` holds what follows from it:
+
+- **No GHC.** ShellCheck (behind `writeShellApplication`'s lint) and pandoc
+  (behind two packages' man pages) are Haskell, and pulled a musl GHC and a
+  hundred Haskell libraries into the build; nixpkgs' own switch for platforms
+  without GHC turns both off. The NixOS manual goes too, because rendering it
+  runs Nix itself. Together that is 354 fewer derivations.
+- **glibc appears once, as source.** NixOS's setuid wrapper copies glibc's
+  list of unsafe environment variables out of the glibc tarball at build
+  time. Nothing links against glibc.
+- **Accounts are the gap.** musl has no NSS, so `nss-systemd` is not built
+  and `getpwnam()` reads `/etc/passwd` and then asks an nscd socket. A
+  systemd-homed user is in neither unless whatever answers that socket asks
+  systemd's userdb, and nsncd, which answers it today, looks users up with
+  the same musl `getpwnam()`. So GDM will not see a homed user on this build.
+  The fix is small and specific: an nscd-protocol forwarder that answers from
+  `io.systemd.UserDatabase` over Varlink. It is not written yet, and the build
+  prints a warning until it is.
+
+## Binary cache
+
+`proxy/` is a Vercel edge function whose decisions are a WebAssembly module
+compiled from Rust (`proxy/src/lib.rs`); the JavaScript around it only
+fetches. It serves two things from this project's GHCR namespace:
+
+- **A Nix binary cache.** `tools/nix-cache-push` pushes each store path as
+  one OCI artifact, `nix-cache:<store hash>`, holding its signed narinfo and
+  its NAR. The proxy answers `/<hash>.narinfo` (with its `URL:` pointed back
+  at itself) and redirects `/nar/<hash>/<file>` to GHCR's blob storage, so a
+  NAR never passes through it. A real `nix copy` pulled and verified a signed
+  path through it against a fake registry; the tests are in `proxy/test/`.
+- **Updates.** `/updates/<channel>/<arch>/<file>` serves a file of
+  `images:<channel>-<arch>`, which CI's publish job moves to each release
+  that passed verification. `tools/configure --update-url` points the pm
+  image's sysupdate transfers there, and `losos.update.baseUrl` does the
+  same for this one.
+
+To use it for a build:
+
+```
+substituters = https://<proxy>/
+trusted-public-keys = <the public half of NIX_CACHE_SIGNING_KEY>
+```
+
+`substituters` replaces cache.nixos.org rather than adding to it; with it
+unset, Nix's default is cache.nixos.org, whose glibc builds this OS is not.
+
+What has to be set up once, outside the repository:
+
+1. **Vercel**: a project with root directory `proxy/` and environment
+   variable `GHCR_REPOSITORY=dasmatus/losos-desktop`. `vercel.json` has the
+   rest. Its build installs a pinned Rust with rustup, since Vercel's build
+   image has none.
+2. **GHCR**: the `losos-desktop/nix-cache` and `losos-desktop/images`
+   packages public, once CI has created them; or a read-only token in
+   Vercel as `GHCR_TOKEN`.
+3. **A signing key**: `nix key generate-secret --key-name losos-desktop-1`,
+   stored as the secret `NIX_CACHE_SIGNING_KEY`; its public half, from `nix
+   key convert-secret-to-public`, as the variable `NIX_CACHE_PUBLIC_KEY`.
+4. **`LOSOS_PROXY_URL`**, the deployment's URL without a trailing slash, as a
+   repository variable. Until it is set, CI builds from source every time,
+   pushes nothing, and images update from the GitHub release as before.
+
+## pm's plugins
+
+`nixos/pkgs/pm-plugins.nix` builds the same seven components `just plugins`
+builds for the pm tree, this repository's four and pm's own `sysext`,
+`sysupdate` and `systemd`, and the image carries them in
+`/run/current-system/sw/share/pm/plugins`. pm loads plugins only from a user's
+own `~/.config/pm/plugins`, and only signed by a key that user trusts, so the
+image offers them and trusts them for no one:
+
+```
+install -Dm644 -t ~/.config/pm/plugins /run/current-system/sw/share/pm/plugins/*.wasm
+for p in ~/.config/pm/plugins/*.wasm; do pm sign "$p"; done
+```
 
 ## Driving the flake from pm
 
@@ -63,7 +161,7 @@ socket not at all, so the step builds into a store of its own, `nix --store
 /build/nix ...`. And a step that says `--offline` gets no network, so the jail
 enforces what the step claims; without it the step, and so the whole build
 file (C8), is on the host network, because evaluating fetches the inputs and
-building substitutes from cache.nixos.org. `nixos-rebuild`, `nix profile`,
+building substitutes from the project's cache. `nixos-rebuild`, `nix profile`,
 `nix run` and `nix flake update` are recognised and deliberately left
 unclassified: this OS is updated by systemd-sysupdate, never by switching a
 generation, and a pin moves by hand.
@@ -133,8 +231,9 @@ non-systemd component remains are the places systemd has no equivalent, or
 NixOS requires one:
 
 - **nsncd.** The `homed` module asserts `services.nscd.enable`: NixOS routes
-  NSS through a forwarder so glibc can find `nss-systemd` in the store. It is
-  stateless and holds no idea of its own about who exists.
+  NSS through a forwarder so a libc can find `nss-systemd` in the store. It is
+  stateless and holds no idea of its own about who exists. On musl it has
+  nothing to forward to; "musl" above says what that costs.
 - **nftables.** systemd has no packet filter. The pm tree shipped none at all;
   this keeps NixOS's firewall and opens mDNS and LLMNR for resolved.
 - **A PAM stack.** The pm tree shipped none, and `docs/limits.md` said nothing
@@ -181,8 +280,9 @@ SHA256SUMS
 
 It is the same shape as the pm tree's `release/`, so `just release-images --
 publish --source result` pushes it to GHCR unchanged, as PR #79 set up. The
-GitHub release remains the URL sysupdate reads, because systemd-sysupdate
-cannot fetch from an OCI registry.
+GitHub release is the default URL sysupdate reads, because systemd-sysupdate
+cannot fetch from an OCI registry; `proxy/` is the other way (see "Binary
+cache").
 
 The `/usr` halves are cut out of the finished disk image at the offsets repart
 reported, not built a second time, so the bytes sysupdate installs are the
@@ -200,8 +300,12 @@ bytes the image boots.
   only `sh`. So pm itself runs here (`pm --help`, `pm source-path`, signing,
   `explain`), and the boot test checks it is installed, but this tree's
   recipes do not build on it. For the same reason seven of pm's test targets
-  are skipped in the nix build (the list is in `nixos/pkgs/pm.nix`), and the
-  wasm plugins are not installed in the image.
+  are skipped in the nix build (the list is in `nixos/pkgs/pm.nix`).
+- **A homed login on musl.** See "musl": it needs an nscd forwarder backed by
+  systemd's userdb, which is not written.
+- **A complete from-source build.** Both architectures evaluate, and the
+  musl toolchain compiles here, but no one has built the whole musl image
+  yet: that is what CI's budgeted, cache-filling runs converge on.
 - **CI does not publish the flake's release.** `ci.yml` builds and checks it;
   the release is the pm build's.
 

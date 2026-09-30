@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""Push Nix store paths into GHCR, one OCI artifact per path, for proxy/ to serve.
+
+The flake builds from source (docs/nixos.md, "Binary cache"), so what one CI run
+compiled is the only thing that saves the next one from compiling it again. This
+puts it where the proxy looks: `nix copy --to file://` writes each path's signed
+narinfo and its NAR, and each pair becomes `<repository>:<store hash>`, with the
+two files as layers titled by their own names. The proxy maps `/<hash>.narinfo`
+and `/nar/<hash>/<file>` onto exactly that.
+
+A path whose tag already exists is skipped without being copied, so a run pushes
+only what it built. `--all` pushes every valid path in the store, which is what
+CI wants after a build that ran out of time: whatever finished is kept.
+
+  tools/nix-cache-push --repository ghcr.io/owner/name/nix-cache \\
+      --secret-key-file key.sec ./result
+  tools/nix-cache-push --repository ... --secret-key-file ... --all
+
+Needs `nix` and `oras` on PATH, and GHCR_TOKEN (a token that may write packages)
+for the existence checks; `oras` must already be logged in. The secret key never
+leaves this host: nix signs each narinfo while writing it, and the signature
+covers the store path, the NAR's hash and size and its references -- which is
+why the proxy may rewrite the URL line and a client still verifies it.
+"""
+
+import argparse
+import base64
+import concurrent.futures
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+STORE_PATH = re.compile(r"^/nix/store/([0-9a-df-np-sv-z]{32})-[^/]+$")
+ARTIFACT_TYPE = "application/vnd.losos.nix-cache.v1"
+
+
+def store_hash(path):
+    """The hash part of a path `store_paths` already filtered by STORE_PATH."""
+    match = STORE_PATH.match(path)
+    assert match, path
+    return match.group(1)
+
+
+def run(*argv, **kwargs):
+    return subprocess.run(argv, check=True, text=True, **kwargs)
+
+
+def store_paths(installables, everything):
+    """The valid store paths to consider, closures included."""
+    if everything:
+        argv = ["nix", "path-info", "--all"]
+    else:
+        argv = ["nix", "path-info", "--recursive", *installables]
+    out = run(*argv, stdout=subprocess.PIPE).stdout.split()
+    return sorted({p for p in out if STORE_PATH.match(p)})
+
+
+class Registry:
+    """Just enough of the OCI distribution API to ask whether a tag exists."""
+
+    def __init__(self, repository):
+        host, _, self.name = repository.partition("/")
+        if host != "ghcr.io" or not self.name:
+            sys.exit(f"nix-cache-push: {repository}: expected ghcr.io/<owner>/<name>/...")
+        secret = os.environ.get("GHCR_TOKEN", "")
+        request = urllib.request.Request(
+            f"https://ghcr.io/token?service=ghcr.io&scope=repository:{self.name}:pull"
+        )
+        if secret:
+            basic = base64.b64encode(f"token:{secret}".encode()).decode()
+            request.add_header("Authorization", f"Basic {basic}")
+        with urllib.request.urlopen(request) as response:
+            self.token = json.load(response)["token"]
+
+    def has(self, tag):
+        request = urllib.request.Request(
+            f"https://ghcr.io/v2/{self.name}/manifests/{tag}",
+            method="HEAD",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.oci.image.manifest.v1+json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request):
+                return True
+        except urllib.error.HTTPError as error:
+            # A repository that does not exist yet answers 404 or, on GHCR,
+            # sometimes 401 for an anonymous token: nothing is in it either way.
+            if error.code in (401, 403, 404):
+                return False
+            raise
+
+
+def push_one(staging, repository, store_hash, dry_run):
+    """Push one narinfo and its NAR as `<repository>:<store_hash>`."""
+    narinfo = staging / f"{store_hash}.narinfo"
+    url = next(
+        line[len("URL: ") :]
+        for line in narinfo.read_text().splitlines()
+        if line.startswith("URL: ")
+    )
+    nar = staging / url
+    # oras titles each layer with the path it was given, and the proxy looks
+    # layers up by title, so both files must be named bare: link them into a
+    # directory of their own rather than pushing `nar/<file>`.
+    bundle = staging / "push" / store_hash
+    bundle.mkdir(parents=True)
+    os.link(narinfo, bundle / narinfo.name)
+    os.link(nar, bundle / nar.name)
+    argv = [
+        "oras", "push", f"{repository}:{store_hash}",
+        "--artifact-type", ARTIFACT_TYPE,
+        f"{narinfo.name}:application/x-nix-narinfo",
+        f"{nar.name}:application/x-nix-nar",
+    ]
+    if dry_run:
+        print(" ".join(argv))
+    else:
+        run(*argv, cwd=bundle, stdout=subprocess.DEVNULL)
+    shutil.rmtree(bundle)
+    return store_hash
+
+
+def main():
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
+    parser.add_argument("--repository", required=True)
+    parser.add_argument("--secret-key-file", required=True, type=Path)
+    parser.add_argument("--all", action="store_true", help="every valid store path")
+    parser.add_argument("--jobs", type=int, default=8, help="concurrent oras pushes")
+    parser.add_argument("--batch", type=int, default=200, help="paths staged at a time")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="copy and sign, print the pushes, push nothing (and ask no registry)",
+    )
+    parser.add_argument(
+        "--staging", type=Path, help="keep the signed file cache here (default: temporary)"
+    )
+    parser.add_argument("installables", nargs="*")
+    args = parser.parse_args()
+    if not args.all and not args.installables:
+        parser.error("name what to push, or --all")
+
+    paths = store_paths(args.installables, args.all)
+    if args.dry_run:
+        missing = paths
+    else:
+        registry = Registry(args.repository)
+        missing = [p for p in paths if not registry.has(store_hash(p))]
+    print(f"nix-cache-push: {len(paths)} path(s), {len(missing)} not yet in {args.repository}")
+    if not missing:
+        return 0
+
+    key = args.secret_key_file.resolve()
+    if not key.read_text().strip():
+        sys.exit("nix-cache-push: the secret key file is empty")
+    # In batches, because a runner's disk holds the store once and not a
+    # compressed copy of all of it besides: each batch is copied, pushed and
+    # deleted before the next is written.
+    pushed = 0
+    for start in range(0, len(missing), args.batch):
+        batch = missing[start : start + args.batch]
+        staging = args.staging or Path(tempfile.mkdtemp(prefix="nix-cache-push."))
+        try:
+            # zstd: fast to write on a runner that is also building, and nix
+            # reads it natively. --no-recursive because the batch already lists
+            # exactly the paths to send; a closure would re-send what is there.
+            run(
+                "nix", "copy", "--no-recursive", "--stdin",
+                "--to",
+                f"file://{staging}?compression=zstd&parallel-compression=true&secret-key={key}",
+                input="\n".join(batch),
+            )
+            hashes = [store_hash(p) for p in batch]
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+                pushed += len(
+                    list(pool.map(lambda h: push_one(staging, args.repository, h, args.dry_run), hashes))
+                )
+        finally:
+            if not args.staging:
+                shutil.rmtree(staging, ignore_errors=True)
+        print(f"nix-cache-push: pushed {pushed}/{len(missing)}", flush=True)
+    print(f"nix-cache-push: pushed {len(missing)} path(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
