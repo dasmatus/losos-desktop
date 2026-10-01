@@ -70,7 +70,7 @@ fi
 # shellcheck disable=SC2016 # $1 is the inner shell's, not this one's.
 cut -d' ' -f1 "$work/missing" \
   | xargs -r -P "$jobs" -n 1 sh -c \
-    'sudo nix copy --no-check-sigs --from https://cache.nixos.org "$1" 2>/dev/null || true' _
+    'sudo nix copy --no-recursive --no-check-sigs --from https://cache.nixos.org "$1" 2>/dev/null || true' _
 
 copied=0 bad=0
 while read -r out method hash; do
