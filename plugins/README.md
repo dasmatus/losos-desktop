@@ -139,6 +139,15 @@ the writing `nix-store` operations (another store); `nix flake update`, `lock`,
 moves by hand). An option before the subcommand whose value it does not know
 fails safe: the value is read as the subcommand and nothing is classified.
 
+A flake reference that can move gets no verdict either, so nixpkgs reaches a
+pm build only through a pin. `nixpkgs#hello`, `flake:nixpkgs`,
+`github:NixOS/nixpkgs/nixos-26.05`, a tarball URL without `narHash=`, a
+`git+` URL without `rev=`, `--override-input` with any of those, and a
+`<nixpkgs>` lookup path all resolve to whatever is newest. A path, a commit,
+and `--file` are classified. This flake's `.#pm-payloads.<name>` is the way in:
+any nixpkgs package at the pinned revision, static against musl, laid out as
+a pm package's `/dest` (`docs/nixos.md`, "nixpkgs in a pm build").
+
 Its symbols are the paths NixOS fixes — `store`, `current-system`,
 `booted-system`, `system-bin` — for a package that installs something referring
 to them. Only the store is visible inside the jail.

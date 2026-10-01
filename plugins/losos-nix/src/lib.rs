@@ -36,6 +36,30 @@
 //!   fetch something newer than what is pinned. A pin moves by hand in this tree
 //!   (CLAUDE.md, "Keeping the pins current"), and `flake.lock` is one.
 //!
+//! # nixpkgs, through the pin and nowhere else
+//!
+//! The flake's `legacyPackages` is the whole of nixpkgs at the revision
+//! `flake.lock` pins, built against musl -- the same package set the image is
+//! made of -- and `.#pm-payloads.<name>` is any of those packages linked
+//! statically and checked by Nix itself to refer to nothing in the store, which
+//! is what a pm package extracted at `/pkg` can actually run (docs/nixos.md,
+//! "nixpkgs in a pm build"). That makes all of nixpkgs reachable from a pm build
+//! file without any of it being unpinned, provided the build file names it by a
+//! reference that cannot move. So a flake reference that can move gets no
+//! verdict either, for the same reason `nix flake update` gets none:
+//!
+//! * a registry name -- `nixpkgs#hello`, `flake:nixpkgs`, `nixpkgs/nixos-26.05`
+//!   -- which resolves to whatever the registry says today, and by default
+//!   that is nixpkgs' newest commit on GitHub;
+//! * `github:`, `gitlab:` and `sourcehut:` without a commit, and the `git+`
+//!   schemes without `rev=`, because a branch or a tag is a name, not content;
+//! * a tarball URL without `narHash=`, because the server decides what it holds;
+//! * a `<nixpkgs>` lookup path, which is a channel by another name.
+//!
+//! A path (`/build/src`, `.`) is fine: its own `flake.lock` pins its inputs. So is
+//! `--file`, which names a file rather than a flake. `--override-input` replaces
+//! one input of a locked flake, so its reference is held to the same rule.
+//!
 //! # Network, and `--offline`
 //!
 //! Evaluating a flake can fetch its inputs and building one substitutes from
@@ -116,6 +140,10 @@ const OTHER_STORE: &str = "writes to or serves a store other than the build's ow
 /// Why a command that moves an input past its pin gets no verdict.
 const UNPINNED: &str = "fetches something newer than what is pinned; a pin moves by hand";
 
+/// Why a flake reference that can move gets no verdict.
+const UNLOCKED: &str = "names a flake by something that can move (a registry name, a branch, \
+     a URL without narHash=); name a commit, or use this flake's pinned nixpkgs: .#<package>";
+
 /// `nix` subcommands recognised and refused.
 const REFUSED: &[(&str, &str)] = &[
     ("profile", CHANGES_THE_MACHINE),
@@ -187,6 +215,12 @@ const VALUED_OPTIONS: &[(&str, usize)] = &[
     ("--system", 1),
     ("-I", 1),
     ("--include", 1),
+    ("--file", 1),
+    ("-f", 1),
+    ("--expr", 1),
+    ("--out-link", 1),
+    ("-o", 1),
+    ("--profile", 1),
 ];
 
 /// Paths NixOS fixes, for a build file that installs something referring to them.
@@ -251,6 +285,50 @@ fn operands<'a>(args: &[&'a str]) -> Vec<&'a str> {
     operands
 }
 
+/// Whether a flake reference names content rather than a name for content.
+///
+/// The part after `#` is an attribute path and pins nothing either way, so
+/// only what comes before it is read.
+fn locked(reference: &str) -> bool {
+    let flake = reference.split('#').next().unwrap_or(reference);
+    let (base, query) = flake.split_once('?').unwrap_or((flake, ""));
+    let has = |key: &str| {
+        query
+            .split('&')
+            .any(|pair| pair.strip_prefix(key).is_some_and(|v| v.starts_with('=')))
+    };
+    let commit = |word: &str| word.len() == 40 && word.bytes().all(|b| b.is_ascii_hexdigit());
+
+    // A path: whatever is there, its own flake.lock pins its inputs.
+    if base.starts_with('/') || base.starts_with('.') {
+        return true;
+    }
+    let Some((scheme, rest)) = base.split_once(':') else {
+        // No scheme and not a path: a registry name, `nixpkgs/<branch>` included.
+        return false;
+    };
+    match scheme {
+        "path" | "git+file" | "file" => true,
+        "github" | "gitlab" | "sourcehut" => {
+            rest.split('/').nth(2).is_some_and(commit) || has("rev")
+        }
+        "git+https" | "git+ssh" | "git+http" | "git" | "hg+https" | "hg+ssh" | "hg+http" => {
+            has("rev")
+        }
+        "https" | "http" | "tarball+https" | "tarball+http" | "tarball+file" => has("narHash"),
+        // `flake:`, and anything this does not know, fails safe.
+        _ => false,
+    }
+}
+
+/// The value of every `--override-input <name> <reference>` in `args`.
+fn overrides<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    args.windows(3)
+        .filter(|w| w[0] == "--override-input")
+        .map(|w| w[2])
+        .collect()
+}
+
 /// Classify the new `nix` command line.
 fn decide_nix(args: &[&str]) -> Decision {
     let operands = operands(args);
@@ -284,6 +362,31 @@ fn decide_nix(args: &[&str]) -> Decision {
     } else {
         return Decision::Unknown;
     };
+
+    // What the subcommand operates on: flake references, unless `--file` or
+    // `--expr` made them attribute paths. The store subcommands take store
+    // paths, which `locked` reads as paths.
+    let skip = if GROUPS.iter().any(|(name, _)| *name == subcommand) {
+        2
+    } else {
+        1
+    };
+    let attributes = args
+        .iter()
+        .any(|a| matches!(*a, "--file" | "-f" | "--expr") || a.starts_with("--file="));
+    let installables = if attributes {
+        &[][..]
+    } else {
+        &operands[skip..]
+    };
+    if args.iter().any(|a| a.starts_with('<'))
+        || installables
+            .iter()
+            .chain(overrides(args).iter())
+            .any(|r| !locked(r))
+    {
+        return Decision::Refuse(UNLOCKED);
+    }
 
     if offline {
         Decision::Classify {
@@ -335,6 +438,10 @@ fn decide(command: &str) -> Decision {
         "nix-store" => decide_nix_store(args),
         // Evaluation alone can fetch (`fetchTarball`, flake inputs), and neither
         // has an `--offline` that stops it.
+        // `<nixpkgs>` is NIX_PATH's channel, which moves on its own.
+        "nix-build" | "nix-instantiate" if args.iter().any(|a| a.starts_with('<')) => {
+            Decision::Refuse(UNLOCKED)
+        }
         "nix-build" | "nix-instantiate" => Decision::Classify {
             fingerprint: program.into(),
             network: true,
@@ -508,6 +615,55 @@ mod tests {
             decide("nix-prefetch-url https://x"),
             Decision::Refuse(UNPINNED)
         );
+    }
+
+    #[test]
+    fn nixpkgs_through_this_flake_or_a_commit_is_classified() {
+        assert_eq!(
+            decide("nix --store /build/nix build /build/src#pm-payloads.ripgrep"),
+            classified("build", true)
+        );
+        assert_eq!(
+            decide("nix build github:NixOS/nixpkgs/0123456789abcdef0123456789abcdef01234567#hello"),
+            classified("build", true)
+        );
+        assert_eq!(
+            decide(
+                "nix eval git+https://example.org/x?rev=0123456789abcdef0123456789abcdef01234567#v"
+            ),
+            classified("eval", true)
+        );
+        assert_eq!(
+            decide("nix build -f /build/src/default.nix hello"),
+            classified("build", true)
+        );
+        assert_eq!(
+            decide("nix path-info --recursive /nix/store/abc-hello"),
+            classified("path-info", true)
+        );
+        assert_eq!(
+            decide("nix flake show --offline /build/src"),
+            classified("flake-show-offline", false)
+        );
+    }
+
+    #[test]
+    fn nixpkgs_by_a_name_that_can_move_is_refused() {
+        for command in [
+            "nix build nixpkgs#hello",
+            "nix build flake:nixpkgs#hello",
+            "nix build nixpkgs/nixos-26.05#hello",
+            "nix build github:NixOS/nixpkgs#hello",
+            "nix build github:NixOS/nixpkgs/nixos-26.05#hello",
+            "nix eval https://channels.nixos.org/nixos-26.05/nixexprs.tar.xz#hello.version",
+            "nix flake check github:dasmatus/losos-desktop",
+            "nix build --override-input nixpkgs nixpkgs /build/src#image",
+            "nix build -f <nixpkgs> hello",
+            "nix-build <nixpkgs> -A hello",
+            "nix-instantiate --eval <nixpkgs/lib>",
+        ] {
+            assert_eq!(decide(command), Decision::Refuse(UNLOCKED), "{command}");
+        }
     }
 
     #[test]

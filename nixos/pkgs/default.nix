@@ -5,4 +5,6 @@ final: _prev: {
   pm-plugins = final.callPackage ./pm-plugins.nix { };
   losos-security = final.callPackage ./losos-security.nix { };
   losos-swap = final.callPackage ./losos-swap.nix { };
+  # Not a package: every package in nixpkgs, as a pm package's contents.
+  pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 }
