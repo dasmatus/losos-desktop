@@ -102,7 +102,12 @@
           # homed's first-boot wizard runs only while no regular user exists,
           # so nothing the image ships -- gdm's greeters included -- may count
           # as one. accounts.nix silences a NixOS warning on that reading.
-          machine.fail("userdbctl user --disposition=regular --no-legend | grep -q .")
+          # userdbctl also prints "begin/end systemd-homed users" marker rows
+          # for the UID ranges a filter covers, and homed's range is regular,
+          # so without --boundaries=no the output is never empty.
+          machine.fail(
+              "userdbctl user --disposition=regular --no-legend --boundaries=no | grep -q ."
+          )
           machine.succeed(
               "NEWPASSWORD=correct-horse homectl create alice --storage=luks "
               "--disk-size=256M --member-of=wheel --enforce-password-policy=no"
