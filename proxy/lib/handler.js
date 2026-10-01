@@ -39,12 +39,15 @@ function text(status, body, cacheControl) {
 }
 
 // A pull token for one repository. Anonymous for a public package; with
-// GHCR_TOKEN (a token with read:packages) for a private one.
+// GHCR_TOKEN (a token with read:packages) for a private one. GHCR pairs a
+// personal access token with its owner's login, so GHCR_USERNAME names it.
+// `token` serves for a GitHub Actions token, and is the default.
 async function token(fetchImpl, repository, env) {
   const url = `${REGISTRY}/token?service=ghcr.io&scope=repository:${repository}:pull`;
   const headers = {};
   if (env.GHCR_TOKEN) {
-    headers.authorization = `Basic ${btoa(`token:${env.GHCR_TOKEN}`)}`;
+    const user = env.GHCR_USERNAME || "token";
+    headers.authorization = `Basic ${btoa(`${user}:${env.GHCR_TOKEN}`)}`;
   }
   const response = await fetchImpl(url, { headers });
   if (!response.ok) throw new Error(`token: ${response.status}`);
@@ -52,7 +55,8 @@ async function token(fetchImpl, repository, env) {
 }
 
 // Build the request handler. `env` carries GHCR_REPOSITORY (owner/name, the
-// namespace every artifact lives under) and optionally GHCR_TOKEN.
+// namespace every artifact lives under) and optionally GHCR_TOKEN and
+// GHCR_USERNAME.
 export function handler(core, env, fetchImpl = fetch) {
   const namespace = (env.GHCR_REPOSITORY || "").toLowerCase();
 

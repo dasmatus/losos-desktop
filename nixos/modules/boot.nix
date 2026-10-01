@@ -48,12 +48,14 @@
 
   # bless-boot marks a counted entry good once boot-complete.target is reached,
   # and boot-check-no-failures is what makes reaching it mean something. NixOS
-  # carries bless-boot already; the check has to be named.
+  # carries bless-boot, and systemd-bless-boot-generator pulls it in whenever
+  # the boot loader reports a boot counter, so it is no longer wanted by hand.
+  # The check has to be named. Upstream's unit is RequiredBy= the target, and
+  # NixOS ignores [Install] sections, so that is set here too.
   systemd.additionalUpstreamSystemUnits = [
     "systemd-boot-check-no-failures.service"
   ];
-  systemd.services.systemd-boot-check-no-failures.wantedBy = [ "boot-complete.target" ];
-  systemd.services.systemd-bless-boot.wantedBy = [ "basic.target" ];
+  systemd.services.systemd-boot-check-no-failures.requiredBy = [ "boot-complete.target" ];
 
   # The system is an image. It cannot be rebuilt in place, and it carries no
   # Nix: an update is a new /usr from systemd-sysupdate, not a switch.

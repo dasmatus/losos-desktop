@@ -136,12 +136,12 @@ in
     }
   ];
 
-  # NixOS masks systemd-gpt-auto-generator on the running system, because on an
-  # ordinary install it would mount partitions nobody wrote into
-  # configuration. On this OS mounting by partition type is the configuration:
-  # it mounts /home and the ESP (at /efi) from the disk the system booted from,
-  # which is why neither appears in fileSystems.
-  systemd.generators.systemd-gpt-auto-generator = lib.mkForce "${config.systemd.package}/lib/systemd/system-generators/systemd-gpt-auto-generator";
+  # systemd-gpt-auto-generator mounts /home and the ESP (at /efi) from the disk
+  # the system booted from, by partition type, which is why neither appears in
+  # fileSystems. NixOS runs systemd's own generators as they are. This module
+  # used to link this one back in by hand, on the belief that NixOS masked it;
+  # it never did, and the masking is only the example in systemd.generators'
+  # documentation.
 
   # The factory reset Varlink API at /run/systemd/io.systemd.FactoryReset.
   # Socket-activated, so enabling it costs a socket and no process. Without it
