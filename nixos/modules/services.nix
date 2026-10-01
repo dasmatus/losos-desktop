@@ -28,11 +28,11 @@
   systemd.services.systemd-sysext.wantedBy = [ "sysinit.target" ];
   systemd.services.systemd-confext.wantedBy = [ "sysinit.target" ];
 
-  # Directories the units above expect to find on a root partition that
-  # first boot created empty.
+  # Where a person drops an extension, on a root partition that first boot
+  # created empty. /var/lib/portables and /var/lib/machines used to be listed
+  # here too; NixOS installs systemd's own portables.conf and
+  # systemd-nspawn.conf, which create both with the same modes.
   systemd.tmpfiles.settings."10-losos" = {
-    "/var/lib/portables".d.mode = "0700";
-    "/var/lib/machines".d.mode = "0700";
     "/var/lib/extensions".d.mode = "0755";
     "/var/lib/confexts".d.mode = "0755";
   };

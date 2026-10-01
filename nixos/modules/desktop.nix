@@ -26,15 +26,14 @@
   # Let systemd-oomd act on a desktop session before the kernel OOM killer
   # does. oomd watches cgroup pressure and kills the worst-behaved application
   # cgroup while the machine is still responsive, but only in slices that opt
-  # in; this opts in every user's.
+  # in; this opts in every user's. NixOS sets the limit at 80% pressure on
+  # user.slice. 50% is Fedora's for a desktop, where a session stalling for
+  # half of every interval is already unusable.
   systemd.oomd = {
     enable = true;
     enableUserSlices = true;
   };
-  systemd.services."user@".serviceConfig = {
-    ManagedOOMMemoryPressure = "kill";
-    ManagedOOMMemoryPressureLimit = "50%";
-  };
+  systemd.slices.user.sliceConfig.ManagedOOMMemoryPressureLimit = "50%";
 
   # Firmware updates. fwupd itself is bus-activated; the metadata refresh
   # timer is what makes updates appear without anyone asking.

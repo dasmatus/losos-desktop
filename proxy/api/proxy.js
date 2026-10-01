@@ -14,6 +14,7 @@ export default async function proxy(request) {
     handle = handler(bind(instance), {
       GHCR_REPOSITORY: process.env.GHCR_REPOSITORY,
       GHCR_TOKEN: process.env.GHCR_TOKEN,
+      GHCR_USERNAME: process.env.GHCR_USERNAME,
     });
   }
   return handle(request);

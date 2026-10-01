@@ -240,8 +240,8 @@ jobs:
         with: { persist-credentials: false }
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test
-      - run: sh build.sh
-      - run: node --test test/*.test.js
+      # Builds the module the handler tests load, then runs them.
+      - run: npm test
 
   # The one check branch protection looks for, so a skipped or cancelled job
   # never reads as green.
