@@ -2,3 +2,4 @@
 /api/losos_proxy.wasm
 /.vercel/
 /public/
+.env*

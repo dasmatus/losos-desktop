@@ -124,8 +124,8 @@ What has to be set up once, outside the repository:
 
 1. **Vercel**: a project with root directory `proxy/` and environment
    variable `GHCR_REPOSITORY=dasmatus/losos-desktop`. `vercel.json` has the
-   rest. Its build installs a pinned Rust with rustup, since Vercel's build
-   image has none.
+   rest. Its build installs a pinned Rust with rustup when absent and adds
+   the WebAssembly target when Rust is already installed.
 2. **GHCR**: the `losos-desktop/nix-cache` and `losos-desktop/images`
    packages public, once CI has created them; or a read-only token in
    Vercel as `GHCR_TOKEN`.
@@ -135,6 +135,14 @@ What has to be set up once, outside the repository:
 4. **`LOSOS_PROXY_URL`**, the deployment's URL without a trailing slash, as a
    repository variable. Until it is set, CI builds from source every time,
    pushes nothing, and images update from the GitHub release as before.
+
+Before setting `LOSOS_PROXY_URL`, check the public deployment without a
+Vercel login: `/nix-cache-info` must return the cache metadata, an absent
+store hash must return 404 rather than `502 token: 403`, and a published
+release's `/updates/<channel>/<arch>/SHA256SUMS` must be readable. A ready
+deployment alone does not prove GHCR access works. The variable also changes
+the pm image's update source, so leave it unset while the registry is
+inaccessible. Vercel deployment protection must allow anonymous clients.
 
 ## pm's plugins
 
