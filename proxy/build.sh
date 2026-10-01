@@ -1,10 +1,8 @@
 #!/bin/sh
 # Compile the proxy's decisions to WebAssembly, where api/proxy.js imports them.
 #
-# Vercel runs this as the project's build command, on a build image with no
-# Rust, so it installs a pinned toolchain first when there is none -- the one
-# network step, and the reason `cargo` is not assumed. Locally or in CI, the
-# toolchain already on PATH is used.
+# Vercel's build image may have Rust without the WebAssembly target. Install
+# a pinned toolchain when absent, and add the target to an existing toolchain.
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -17,8 +15,13 @@ if ! command -v cargo >/dev/null 2>&1; then
     . "$HOME/.cargo/env"
 fi
 
-cargo build --release --target wasm32-unknown-unknown
+if command -v rustup >/dev/null 2>&1; then
+    rustup target add wasm32-unknown-unknown
+fi
+
+cargo build --locked --release --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/losos_proxy.wasm api/losos_proxy.wasm
 
-# Vercel wants an output directory even when every path is a function.
+# Vercel rejects an empty output directory even when every route is a function.
 mkdir -p public
+printf '%s\n' 'LosOS GHCR proxy' > public/index.txt
