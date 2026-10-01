@@ -15,10 +15,10 @@ build *crates:
 
   # This tree's plugins, and the ones pm's own tree carries that this OS
   # needs: sysupdate and sysext read the transfer and extension definitions
-  # overlay/ and nixos/ ship, and systemd classifies the unit tools
-  # (systemctl, systemd-tmpfiles, systemd-sysusers) a recipe calls. pm's
-  # are built from the pm checkout at PM_ROOT -- the same commit PM_REF
-  # pins -- so there is no copy of them here to drift. zig is left out:
+  # nixos/ ships, and systemd classifies the unit tools (systemctl,
+  # systemd-tmpfiles, systemd-sysusers) a recipe calls. pm's are built from
+  # the pm checkout at PM_ROOT, which should be the commit nixos/pkgs/pm.nix
+  # pins, so there is no copy of them here to drift. zig is left out:
   # nothing here builds with it.
   ours=(losos-image losos-mkosi losos-nix losos-systemd)
   pms=(sysext sysupdate systemd)

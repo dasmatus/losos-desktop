@@ -1,8 +1,6 @@
 //! A pm plugin that teaches pm about mkosi.
 //!
-//! `mkosi` is not in pm's fingerprint table -- it is listed by name in this
-//! repository's `docs/pm-constraints.md` among the things an OS build reaches for
-//! reflexively and pm refuses (C2) -- so before this plugin, a build file that
+//! `mkosi` is not in pm's fingerprint table, so before this plugin, a build file that
 //! called it aborted before any step ran, with a diagnostic naming the command and
 //! nothing else.
 //!

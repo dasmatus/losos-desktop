@@ -2,10 +2,10 @@
 # recipes into .cpkg archives and runs their entrypoints in a sandbox, and
 # pmd serves it over D-Bus.
 #
-# The image takes the OS from nixpkgs, but keeps pm as what a user of the
-# running system builds and runs software with. Pinned to a commit, moved on
-# purpose rather than followed, because its plugin contract has changed under
-# this repository before.
+# The image takes the OS from nixpkgs and keeps pm as the tool a user of the
+# running system builds and runs software with. It is pinned to a commit and
+# moved by hand, because pm's plugin contract has changed under this
+# repository before.
 {
   lib,
   rustPlatform,

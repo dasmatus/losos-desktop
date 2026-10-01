@@ -53,9 +53,8 @@ matching something else.
 
 ## `losos-mkosi` — classify-command, and symbols
 
-`mkosi` is not in pm's fingerprint table either — `docs/pm-constraints.md`
-lists it by name among the things an OS build reaches for reflexively and pm
-refuses (C2). This names it, so the image layer can call it:
+`mkosi` is not in pm's fingerprint table either, so pm refuses a build file
+that calls it. This plugin names it, so a build file can:
 
 ```
 $ pm explain build.yaml
@@ -139,6 +138,15 @@ the writing `nix-store` operations (another store); `nix flake update`, `lock`,
 moves by hand). An option before the subcommand whose value it does not know
 fails safe: the value is read as the subcommand and nothing is classified.
 
+A flake reference that can move gets no verdict either, so nixpkgs reaches a
+pm build only through a pin. `nixpkgs#hello`, `flake:nixpkgs`,
+`github:NixOS/nixpkgs/nixos-26.05`, a tarball URL without `narHash=`, a
+`git+` URL without `rev=`, `--override-input` with any of those, and a
+`<nixpkgs>` lookup path all resolve to whatever is newest. A path, a commit,
+and `--file` are classified. This flake's `.#pm-payloads.<name>` is the way in:
+any nixpkgs package at the pinned revision, static against musl, laid out as
+a pm package's `/dest` (`docs/nixos.md`, "nixpkgs in a pm build").
+
 Its symbols are the paths NixOS fixes — `store`, `current-system`,
 `booted-system`, `system-bin` — for a package that installs something referring
 to them. Only the store is visible inside the jail.
@@ -202,25 +210,24 @@ just plugins sysupdate           # one of pm's, from $PM_ROOT/plugins
 ```
 
 Seven: this tree's four, and three of pm's own — `sysext`, `sysupdate` and
-`systemd` — built from the pm checkout at `PM_ROOT` (by default `../pm`, the
-commit `PM_REF` pins) rather than copied here to drift. They read the
-sysupdate transfers and sysext definitions `overlay/` and `nixos/` ship and
-name the systemd tools a recipe calls. pm's `zig` is left out: nothing here
+`systemd` — built from the pm checkout at `PM_ROOT` (by default `../pm`, which
+should be the commit `nixos/pkgs/pm.nix` pins) rather than copied here to
+drift. They read the sysupdate transfers and sysext definitions `nixos/`
+ships and name the systemd tools a recipe calls. pm's `zig` is left out: nothing here
 builds with it. pm consults plugins in file-name order and takes the first
 verdict, so where `losos-image` and pm's `sysext` both name a tool
-(`systemd-repart`, `mkfs.erofs`), `losos-image` answers; all nine recipes
-explain the same with and without pm's three. The NixOS image carries all
+(`systemd-repart`, `mkfs.erofs`), `losos-image` answers. The NixOS image carries all
 seven, unsigned, in `/run/current-system/sw/share/pm/plugins`
 (`nixos/pkgs/pm-plugins.nix`).
 
-The top-level `just sign` recipe — via `tools/Justfile`'s `sign-all` recipe —
-installs whatever is in `dist/` into the repo-local trust store and signs it
-there.
-Without that pm loads no plugins at all, and a recipe calling `mkosi` is
+pm loads plugins only from `~/.config/pm/plugins`, and only ones signed by a
+key that user trusts; `docs/nixos.md`, "pm's plugins", has the two commands.
+Without that pm loads no plugins at all, and a build file calling `mkosi` is
 refused with "no built-in fingerprint matches", which reads as a problem with
-the recipe rather than with a component that was never installed.
+the build file rather than with a component that was never installed.
 
-`tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's.
-That is not something pm can catch: from pm's side a plugin built against an
-older contract is simply a plugin, right up to the point where a record gains
-a field and every component stops loading.
+Nothing checks any more that `wit/plugin.wit` here still matches pm's. A
+Python gate did, and it went with the pm recipe tree. pm cannot catch the
+mismatch either: from pm's side a plugin built against an older contract is
+simply a plugin, right up to the point where a record gains a field and every
+component stops loading. Copy pm's `wit/plugin.wit` here when `PM_ROOT` moves.

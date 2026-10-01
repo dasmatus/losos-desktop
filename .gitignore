@@ -1,18 +1,13 @@
-# Build output. All of it, ignored at the root, because every branch below
-# generates some and none of it belongs in the history.
-#
-# `plugins/` and `proxy/` are cargo workspaces: target/ holds the wasm32 core
-# modules and the host-side encoder artifacts, and dist/ holds the components
-# those are encoded into. Neither is source. A compiled artifact in a git tree
-# is a second copy of something already described by the files beside it, and
-# it goes stale silently. `just plugins` builds them; nothing reads them from
-# the tree.
+# Build output. `plugins/` and `proxy/` are cargo workspaces. target/ holds the
+# wasm32 core modules and the host-side encoder, and dist/ holds the
+# components built from them. A compiled copy in git goes stale without anyone
+# noticing, and `just plugins` rebuilds them, so neither is committed.
 target/
 plugins/dist/
 
-# nix-direnv caches the dev shell in .direnv/, and `nix build` leaves result
-# symlinks; `nix run .#vm` writes a disk and a firmware variable store beside
-# wherever it was run.
+# nix-direnv caches the dev shell in .direnv/, `nix build` leaves result
+# symlinks, and `nix run .#vm` writes a disk and a firmware variable store into
+# the directory it ran in.
 .direnv/
 result
 result-*

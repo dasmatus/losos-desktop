@@ -1,8 +1,8 @@
-# Short names for what CI runs. Every recipe is one nix command, or the plugin
-# build; `nix` itself is the interface, and these only save typing it.
+# Short names for the commands CI runs. Each recipe is one nix command, except
+# `plugins`. Running nix directly does the same thing.
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# `just plugins -- losos-nix` forwards the `--` as the first argument; the
+# `just plugins -- losos-nix` forwards the `--` as the first argument, and the
 # plugin Justfile drops it.
 set positional-arguments
 
@@ -15,8 +15,8 @@ default:
 build target="image":
   nix build -L ".#{{target}}"
 
-# Both architectures evaluated, losos-security's tests, and on a builder with
-# KVM the VM boot test.
+# Evaluates both architectures, runs losos-security's tests, and on a builder
+# with KVM boots the image in a VM.
 check:
   nix flake check -L
 
@@ -27,7 +27,8 @@ fmt:
 vm:
   nix run .#vm
 
-# pm's plugins as WebAssembly components, into plugins/dist. The image builds
-# its own copies (nixos/pkgs/pm-plugins.nix); this is for a pm outside it.
+# Builds pm's plugins as WebAssembly components into plugins/dist, for a pm
+# installed outside the image. The image builds its own copies in
+# nixos/pkgs/pm-plugins.nix.
 plugins *args:
   just --justfile "{{repo}}/plugins/Justfile" --working-directory "{{repo}}" build "$@"

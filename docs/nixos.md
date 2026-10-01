@@ -1,23 +1,23 @@
 # LosOS Desktop on NixOS
 
-`flake.nix` and `nixos/` are the operating system: a GNOME desktop that is
-systemd end to end, image-based, updated by `systemd-sysupdate`, with every
-user a `systemd-homed` LUKS volume. nixpkgs 26.05, pinned in `flake.lock`,
-provides the packages; this repository spends its effort on how they are wired
-together. It is musl and compiles everything from source: the build takes no
-binaries from cache.nixos.org, only from the project's own cache of what its
-CI compiled.
+`flake.nix` and `nixos/` are the operating system. It is a GNOME desktop that
+uses systemd for everything it can, installs as an image, updates with
+`systemd-sysupdate`, and makes every user a `systemd-homed` LUKS volume.
+nixpkgs 26.05, pinned in `flake.lock`, provides the packages, and this
+repository decides how they fit together. The build targets musl and compiles
+everything from source. It takes no binaries from cache.nixos.org, only from
+the project's own cache of what its CI compiled.
 
-This tree used to build the same OS a second way, as a from-source
-distribution of ninety-odd pm recipes. Those are gone (the table at the end of
-this file says where each piece went), and with them the one thing they did
-that nixpkgs does not: every package was compiled with cross-DSO control-flow
-integrity and ThinLTO, from a toolchain the tree configured itself. nixpkgs'
-hardening on this platform is fortify, the stack protector and stack clash
-protection, RELRO and bind-now, and zeroed call-used registers (read off a
-derivation's `NIX_HARDENING_ENABLE`), and no CFI. What is left of this repository's own
-code is `src/losos-security` and `src/losos-swap`, built by `nixos/pkgs/`. pm
-ships in the image as the system manager.
+This repository used to build the same OS a second time, as a from-source
+distribution of ninety-odd pm recipes. The table at the end of this file says
+where each of its pieces went. One thing went with it and has no replacement.
+The recipe tree compiled every package with cross-DSO control-flow integrity
+and ThinLTO, from a toolchain it configured itself. nixpkgs on this platform
+enables fortify, the stack protector, stack clash protection, RELRO, bind-now
+and zeroed call-used registers, going by a derivation's
+`NIX_HARDENING_ENABLE`, and no CFI. The only code of this repository's own
+left is `src/losos-security` and `src/losos-swap`, which `nixos/pkgs/`
+builds. pm ships in the image as the system manager.
 
 ## What this trusts from outside
 
@@ -167,6 +167,60 @@ building substitutes from the project's cache. `nixos-rebuild`, `nix profile`,
 unclassified: this OS is updated by systemd-sysupdate, never by switching a
 generation, and a pin moves by hand.
 
+## nixpkgs in a pm build
+
+All of nixpkgs is reachable from a pm build file, at the revision
+`flake.lock` pins and built the way this OS builds it: from source, against
+musl. The flake's `legacyPackages` is the image's own package set, so
+`.#ripgrep` is nixpkgs' ripgrep, and the same store path the image would carry.
+`.#pm-payloads.ripgrep` is what a pm package can actually hold
+(`nixos/pkgs/pm-payloads.nix`): the same package from `pkgsStatic`, every output
+merged into `usr/bin`, `usr/sbin`, `usr/libexec` and `usr/share`.
+
+Static, because pm extracts a package at `/pkg` and runs it in a jail whose
+`/nix/store` is the host's or nothing: a dynamic program names its loader and
+libraries by store path. The payload sets `allowedReferences = [ ]`, so Nix
+itself refuses one in which any file still names a store path, and says which.
+`gnugrep` is refused that way, because `egrep` is a script whose shebang is
+bash's store path. That is the check working: such a package could not run
+from `/pkg`.
+
+A build file that installs one:
+
+```yaml
+name: ripgrep
+version: ['15', '1', '0']
+dependencies: []
+steps:
+- stage: Build
+  dl_urls: null
+  name: build
+  run:
+  - nix --store /build/nix build --out-link /build/payload github:dasmatus/losos-desktop/<commit>#pm-payloads.ripgrep
+- stage: Install
+  dl_urls: null
+  name: stage
+  run:
+  - find /build/nix/nix/store -maxdepth 1 -type d -name *-pm-payload-ripgrep-* -exec cp -rT {}/usr /dest/usr ;
+```
+
+The second step is `find` rather than `cp /build/payload/usr`, because the
+out-link points at `/nix/store/...` and in pm's jail that is the host's store,
+not the one at `/build/nix` the step built into. There is no shell, so the
+pattern reaches `find` unexpanded.
+
+`losos-nix` holds the flake reference to the same rule as a pin
+(`plugins/README.md`): a commit, a path, or a URL with `narHash=` is classified;
+`nixpkgs#ripgrep`, `github:NixOS/nixpkgs/nixos-26.05`, `<nixpkgs>` and anything
+else that resolves to whatever is newest gets no verdict, and pm refuses the
+build file before it runs.
+
+Untested beyond evaluation and the payload builder itself: both architectures
+evaluate `.#pm-payloads.<name>`, and the builder, run against nixpkgs' own
+cached static packages, produced a static `hello` and refused `gnugrep`. No pm
+build has run the steps above, and CI does not build any payload, so the first
+one of each package compiles its whole static closure.
+
 ## Where the OS lives
 
 The one structural change is where the operating system is.
@@ -204,10 +258,10 @@ That buys two things the pm tree wrote down as limits:
 
 | pm tree (removed) | NixOS | Notes |
 |---|---|---|
-| `recipes/10-systemd/linux`, `losos.config` | nixpkgs' kernel, `hardware.nix` | nixpkgs' `common-config.nix` sets what systemd needs, `CONFIG_HIDRAW` included; zswap, built in but off, is turned on with `zswap.enabled=1` |
-| `recipes/10-systemd/nvidia-open` | `nvidiaPackages.stable.open` in `hardware.nix` | the same open kernel modules from source, same `nvidia_drm` options; no proprietary userspace, as before |
-| `recipes/00-*` through `30-gnome`, `manifest/`, `share/` | nixpkgs 26.05 | every package the recipes built; the build-system patches they carried existed for the CFI toolchain and have no counterpart |
-| `recipes/30-gnome/gnome-control-center` patches | `nixos/pkgs/patches/gnome-control-center/` | kept, not applied: see below |
+| `recipes/10-systemd/linux`, `losos.config` | nixpkgs' kernel, `hardware.nix` | nixpkgs' `common-config.nix` already sets what systemd needs, `CONFIG_HIDRAW` included. zswap is built in and off, and `boot.zswap.enable` turns it on |
+| `recipes/10-systemd/nvidia-open` | `nvidiaPackages.stable.open` in `hardware.nix` | the same open kernel modules, built from source, with the same `nvidia_drm` options. No proprietary userspace, as before |
+| `recipes/00-*` through `30-gnome`, `manifest/`, `share/` | nixpkgs 26.05 | every package the recipes built. Their build-system patches existed only for the CFI toolchain |
+| `recipes/30-gnome/gnome-control-center` patches | `nixos/pkgs/patches/gnome-control-center/` | kept and not applied, see "What is not done" |
 | `recipes/90-image/losos-image` (mkosi), `plugins/` | `nixos/modules/image.nix` (`image/repart.nix`) | the same `systemd-repart`; no fingerprint table to get past, so no plugins |
 | `mkuki.py`, `files/cmdline` | `boot.uki`, verity-store module | the UKI carries `usrhash=` |
 | `overlay/usr/lib/repart.d/` | `systemd.repart.partitions` in `disk.nix` | runs in the initrd, as before |
@@ -226,7 +280,7 @@ That buys two things the pm tree wrote down as limits:
 | `manifest/architectures.yaml` | `losos.arch` in `options.nix` | x86_64 and aarch64 |
 | `tools/configure --version --channel` | `losos.version`, `losos.channel` | the flake derives the version from the commit date |
 | `tools/vm-test` | `nixos/tests/boot.nix` | boots the real image under UEFI |
-| `tools/` gates, `Containerfile`, `./do` | `nix flake check`, `nix fmt` | nothing to lint past: no fingerprint table, no generated recipes |
+| `tools/` gates, `Containerfile`, `./do` | `nix flake check`, `nix fmt` | the gates checked generated recipes against pm's fingerprint table, and neither exists now |
 | pm, the system manager | pm, the system manager (`pm.nix`) | pinned to a commit |
 
 ## Everything systemd, and the exceptions
@@ -284,7 +338,7 @@ SHA256SUMS
 ```
 
 CI pushes it to GHCR as one OCI artifact per architecture with `oras`, and
-the publish job moves it to the `nightly` GitHub release. The GitHub release
+the publish job copies it to the `nightly` GitHub release. The GitHub release
 is the default URL sysupdate reads, because systemd-sysupdate
 cannot fetch from an OCI registry; `proxy/` is the other way (see "Binary
 cache").
@@ -300,8 +354,8 @@ bytes the image boots.
   directories read-only, so a step whose tools come from the store runs: a
   `losos-nix` step (`nix eval`, `nix hash`) ran that way in pm's jail on a
   Nix-provisioned host. What still finds nothing is a recipe that names FHS
-  paths, `/bin/cat` or a compiler under `/usr`, as every recipe the pm tree
-  had did; in this image `/usr` is the Nix store's partition and `/bin` holds
+  paths, `/bin/cat` or a compiler under `/usr`, as every recipe in the old pm
+  tree did; in this image `/usr` is the Nix store's partition and `/bin` holds
   only `sh`. So pm itself runs here (`pm --help`, `pm source-path`, signing,
   `explain`), and the boot test checks it is installed, but a recipe written
   for an FHS host does not build on it. For the same reason seven of pm's test targets
@@ -311,16 +365,16 @@ bytes the image boots.
 - **A complete from-source build.** Both architectures evaluate, and the
   musl toolchain compiles here, but no one has built the whole musl image
   yet: that is what CI's budgeted, cache-filling runs converge on.
-- **No stable channel.** CI publishes `nightly` from `main` only. A `stable`
-  release needs a second release output with `losos.channel = "stable"`,
-  which the flake does not have yet.
+- **No stable channel.** CI publishes `nightly` from `main` and nothing else.
+  A `stable` release needs a second release output built with
+  `losos.channel = "stable"`, and the flake has only the one.
 
 - **Signing.** `losos.update.pubring` is unset, so sysupdate installs updates
   without verifying `SHA256SUMS.gpg`, and the build warns. Secure Boot signing
   of the UKI is not done either; as in the pm tree, a key belongs to whoever
   owns the machine.
-- **The two gnome-control-center patches** (`nixos/pkgs/patches/`). They are
-  kept because nothing upstream has them. They are written against
+- **The two gnome-control-center patches** in `nixos/pkgs/patches/`. Nothing
+  upstream has them, so they stay. They are written against
   gnome-control-center 51.0, and nixpkgs 26.05 carries 50.4, which moved the
   System panel to Blueprint; neither applies. The factory reset is reachable
   through `systemctl start factory-reset.target` and the Varlink API, and the

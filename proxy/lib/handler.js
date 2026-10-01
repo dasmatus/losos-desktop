@@ -138,6 +138,18 @@ export function handler(core, env, fetchImpl = fetch) {
     if (!blob.ok) {
       return text(502, body(`blob: ${blob.status}\n`), "no-store");
     }
+    if (kind === "inline") {
+      // Bytes, never text: SHA256SUMS.gpg is a binary OpenPGP signature, and
+      // decoding it as UTF-8 would replace what is not valid UTF-8 and break
+      // it. SHA256SUMS and its signature move with every release.
+      const signature = title.endsWith(".gpg");
+      return new Response(body(await blob.arrayBuffer()), {
+        headers: {
+          "content-type": signature ? "application/pgp-signature" : "text/plain; charset=utf-8",
+          "cache-control": "public, max-age=60",
+        },
+      });
+    }
     const content = await blob.text();
     if (kind === "narinfo") {
       const rewritten = core.narinfo(`${tag}\n${content}`);
@@ -149,7 +161,6 @@ export function handler(core, env, fetchImpl = fetch) {
         headers: { "content-type": "text/x-nix-narinfo", "cache-control": "public, max-age=86400" },
       });
     }
-    // SHA256SUMS and its signature move with every release.
-    return text(200, body(content), "public, max-age=60");
+    return text(502, body(`unknown kind ${kind}\n`), "no-store");
   };
 }

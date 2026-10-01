@@ -1,9 +1,8 @@
 # The operating-system half of the security report, on the system bus.
 #
-# Built from src/losos-security. Cargo.lock pins every crate with its
-# SHA-256, and importCargoLock turns that into fixed-output fetches, so the
-# pin `cargo build --locked` would enforce is enforced by nix instead of by
-# cargo.
+# Built from src/losos-security. Cargo.lock pins every crate with its SHA-256,
+# and importCargoLock turns each pin into a fixed-output fetch, so nix enforces
+# the pins that `cargo build --locked` would.
 {
   lib,
   rustPlatform,

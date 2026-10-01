@@ -2,8 +2,8 @@
 #
 # repart can size a partition from a number and not from the machine it is
 # running on, so this writes one 25-swap.conf into a directory repart also
-# reads. The source is src/losos-swap: one C file and a meson file, no
-# dependencies. Nothing in nixpkgs does this, so it stays ours.
+# reads. The source is src/losos-swap, one C file and a meson file with no
+# dependencies. nixpkgs has nothing that does this.
 {
   lib,
   stdenv,

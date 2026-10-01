@@ -1,13 +1,14 @@
-# Build, check and publish the OS: the NixOS flake, on musl, from source.
+# Build, check and publish the OS, which is the NixOS flake, on musl, from
+# source.
 #
-# Every package comes from nixpkgs 26.05, pinned by flake.lock, and is compiled
-# by the runner or taken from this project's own binary cache in GHCR, served
-# by proxy/ (docs/nixos.md, "Binary cache"). cache.nixos.org is switched off,
-# not merely outranked: it carries glibc builds this OS is not made of.
+# nixpkgs 26.05, pinned by flake.lock, provides every package. The runner
+# compiles each one or takes it from this project's own binary cache in GHCR,
+# which proxy/ serves (docs/nixos.md, "Binary cache"). cache.nixos.org is
+# switched off entirely, because its binaries are glibc builds and this OS is
+# musl.
 #
-# Deliberately plain. Every job runs on a hosted Ubuntu runner and does its
-# work through the same entry points a person would -- `nix`, `oras` -- so what
-# fails here fails the same way at a desk.
+# Every job runs on a hosted Ubuntu runner and calls `nix` or `oras` directly,
+# the same commands a person would run, so a failure here reproduces at a desk.
 name: ci
 
 on:
@@ -16,29 +17,25 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Read-only by default: a pull request's run executes branch code. The jobs
-# that write ask for it themselves.
+# Read-only by default, because a pull request's run executes branch code. The
+# jobs that write ask for it themselves.
 permissions:
   contents: read
 
-# A newer push to a pull request supersedes the run already going; the runs
-# that publish queue instead of being killed half-way through an upload.
+# A newer push to a pull request cancels the run already going. Runs that
+# publish queue instead, so none is killed half-way through an upload.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The flake, built and checked on both architectures. It is musl and built
-  # from source, so its only substituter is this project's own cache in GHCR,
-  # through proxy/.
-  #
-  # From an empty cache the whole OS is thousands of derivations, far more
-  # than one runner's six hours. So the build has a budget, and whatever
-  # finished is pushed to the cache whether or not the rest did: each run
-  # starts where the last one stopped. A run that ran out of time with no
-  # failed derivation says so and passes; one where a derivation failed is
-  # red. `nix flake check` runs, and the release is pushed to GHCR for the
-  # publish job, only once the build completes.
+  # The flake, built and checked on both architectures. From an empty cache
+  # the whole OS is thousands of derivations, far more than one runner's six
+  # hours, so the build has a time budget. Whatever finished goes to the cache
+  # whether or not the rest did, and the next run starts from there. A run
+  # that ran out of time with nothing failed passes with a warning; a failed
+  # derivation turns it red. Once a build completes, the job checks formatting
+  # and the flake, and hands the release to `push` as an artifact.
   flake:
     strategy:
       fail-fast: false
@@ -48,15 +45,19 @@ jobs:
           - runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 355
+    # packages: write is for the cache push, which has to run here because the
+    # store it reads is on this runner. The token reaches only that step, and
+    # oras logs out at the end of it. Everything the build compiles runs inside
+    # the Nix sandbox as a build user, which sees neither the step environment
+    # nor the runner's home directory. The release itself is pushed by `push`,
+    # which runs no build code at all.
     permissions:
       contents: read
       packages: write
-    outputs:
-      complete: ${{ steps.build.outputs.complete }}
     env:
       # Repository variables, set once proxy/ is deployed and a signing key
       # exists (docs/nixos.md, "Binary cache"). Without them the flake still
-      # builds, from source every time, and nothing is pushed.
+      # builds, from source every time, and nothing goes to the cache.
       NIX_CACHE_URL: ${{ vars.LOSOS_PROXY_URL }}
       NIX_CACHE_PUBLIC_KEY: ${{ vars.NIX_CACHE_PUBLIC_KEY }}
       NIX_VERSION: "2.34.8"
@@ -68,14 +69,14 @@ jobs:
             /usr/local/share/boost /usr/local/share/powershell
           df -h /
 
-      # The official installer, pinned, in place of a third party's action.
-      # This Nix binary is the one thing the flake job takes prebuilt: Nix is
-      # what builds Nix, and `.#nix` is the musl one from source for a build
-      # host that wants it after this bootstrap.
+      # The official installer, pinned, rather than a third party's action.
+      # This Nix is the one prebuilt thing the job uses, because Nix is what
+      # builds Nix. `.#nix` is the musl Nix from source, for a build host that
+      # wants it after this bootstrap.
       #
-      # substituters is set to the project's cache alone, or to nothing:
-      # without the line, Nix's default is cache.nixos.org, which carries
-      # glibc builds this OS is not made of and was not compiled here.
+      # substituters is set to the project's cache alone or to nothing. Left
+      # unset, Nix would default to cache.nixos.org.
+      #
       # The boot test asks for the kvm feature, and only the x86_64 runner has
       # /dev/kvm.
       - name: Install Nix
@@ -103,6 +104,13 @@ jobs:
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+
+      # Everything in the store at this point came prebuilt from the
+      # installer. The cache push leaves it out, so the cache holds only what
+      # this job compiled and the pinned sources it fetched to do so.
+      - name: Note what came prebuilt
+        run: nix path-info --all > "$RUNNER_TEMP/prebuilt.txt"
 
       - name: Build the release
         id: build
@@ -115,19 +123,19 @@ jobs:
           if [ "$status" = 0 ]; then
             echo "complete=true" >> "$GITHUB_OUTPUT"
           elif [ "$status" = 124 ] && ! grep -q "^error: builder for .* failed" build.log; then
-            echo "::warning::The build ran out of time with nothing failed; what finished is pushed to the cache and the next run continues from there."
+            echo "::warning::The build ran out of time with nothing failed. What finished goes to the cache, and the next run continues from there."
             echo "complete=false" >> "$GITHUB_OUTPUT"
           else
             grep -A20 "^error: builder for .* failed" build.log | head -80 || true
             exit 1
           fi
 
-      # Every valid path, not only the release's closure: after a run that
-      # ran out of time the closure is not realised, but what was built is on
-      # disk and is exactly what the next run would otherwise compile again.
-      # A pull request never pushes; its run reads the cache and writes nothing.
+      # Every path the build added goes to the cache, not only the release's
+      # closure. After a run that ran out of time the closure is not complete,
+      # but what was built is on disk, and the next run would otherwise
+      # compile it again. A pull request reads the cache and writes nothing.
       - uses: oras-project/setup-oras@v1
-        if: always() && github.event_name != 'pull_request'
+        if: always() && github.event_name != 'pull_request' && env.NIX_CACHE_URL != ''
       - name: Push what was built to the cache
         if: always() && github.event_name != 'pull_request' && env.NIX_CACHE_URL != ''
         env:
@@ -135,17 +143,18 @@ jobs:
           NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
         run: |
           if [ -z "$NIX_CACHE_SIGNING_KEY" ]; then
-            echo "::warning::NIX_CACHE_SIGNING_KEY is not set; nothing is pushed to the cache."
+            echo "::warning::NIX_CACHE_SIGNING_KEY is not set, so nothing goes to the cache."
             exit 0
           fi
+          trap 'rm -f "$RUNNER_TEMP/cache.sec"; oras logout ghcr.io || true' EXIT
           printf '%s' "$GHCR_TOKEN" \
             | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           umask 077
           printf '%s' "$NIX_CACHE_SIGNING_KEY" > "$RUNNER_TEMP/cache.sec"
           tools/nix-cache-push --all \
+            --exclude-from "$RUNNER_TEMP/prebuilt.txt" \
             --repository "ghcr.io/${GITHUB_REPOSITORY,,}/nix-cache" \
             --secret-key-file "$RUNNER_TEMP/cache.sec"
-          rm -f "$RUNNER_TEMP/cache.sec"
 
       - name: Check formatting
         if: steps.build.outputs.complete == 'true'
@@ -154,35 +163,76 @@ jobs:
         if: steps.build.outputs.complete == 'true'
         run: nix flake check -L
 
-      # GHCR is the handoff to the publish job, so the images are not
-      # re-uploaded as workflow artifacts. A pull request never pushes, and
-      # neither does a run whose build did not finish.
-      - name: Push the release to GHCR
-        id: push
+      # The release goes to `push` as an artifact, with its architecture and
+      # version beside it. Only a completed build whose flake check passed
+      # gets this far, and on x86_64 that check includes the VM boot test.
+      - name: Collect the release
+        id: collect
         if: github.event_name != 'pull_request' && steps.build.outputs.complete == 'true'
+        run: |
+          arch=$(uname -m)
+          mkdir -p "$RUNNER_TEMP/release"
+          cp -L release/* "$RUNNER_TEMP/release/"
+          nix eval --raw ".#nixosConfigurations.losos-desktop-$arch.config.losos.version" \
+            > "$RUNNER_TEMP/release/.version"
+          echo "arch=$arch" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: steps.collect.outputs.arch != ''
+        with:
+          name: release-${{ steps.collect.outputs.arch }}
+          path: ${{ runner.temp }}/release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 3
+
+  # Pushes each architecture's release to GHCR. This is the only job that
+  # holds packages: write next to release files, and it checks out and builds
+  # nothing, so no code from the branch runs beside the token.
+  push:
+    needs: [flake]
+    if: always() && github.event_name != 'pull_request' && needs.flake.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: oras-project/setup-oras@v1
+      - uses: actions/download-artifact@v4
+        with: { pattern: "release-*", path: built }
+
+      - name: Push the releases to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          arch=$(uname -m)
-          version=$(nix eval --raw ".#nixosConfigurations.losos-desktop-$arch.config.losos.version")
+          shopt -s nullglob
+          dirs=(built/release-*)
+          if [ ${#dirs[@]} = 0 ]; then
+            echo "No architecture finished a build, so there is nothing to push."
+            exit 0
+          fi
           printf '%s' "$GHCR_TOKEN" \
             | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          cd -P release
-          oras push "ghcr.io/${GITHUB_REPOSITORY,,}/images:nightly-$version-$arch" \
-            --artifact-type application/vnd.losos.release.v1 \
-            --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            --annotation "org.opencontainers.image.version=$version" \
-            --format json \
-            -- * | jq -r .reference > "$GITHUB_WORKSPACE/release-ref-$arch.txt"
-          echo "arch=$arch" >> "$GITHUB_OUTPUT"
-          echo "- $arch: \`$(cat "$GITHUB_WORKSPACE/release-ref-$arch.txt")\`" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p refs
+          for dir in "${dirs[@]}"; do
+            arch=${dir#built/release-}
+            version=$(cat "$dir/.version")
+            (
+              cd "$dir"
+              oras push "ghcr.io/${GITHUB_REPOSITORY,,}/images:nightly-$version-$arch" \
+                --artifact-type application/vnd.losos.release.v1 \
+                --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+                --annotation "org.opencontainers.image.version=$version" \
+                --format json \
+                -- * | jq -r .reference
+            ) > "refs/release-ref-$arch.txt"
+            echo "- $arch: \`$(cat "refs/release-ref-$arch.txt")\`" >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - uses: actions/upload-artifact@v4
-        if: steps.push.outputs.arch != ''
         with:
-          name: release-ref-${{ steps.push.outputs.arch }}
-          path: release-ref-${{ steps.push.outputs.arch }}.txt
-          if-no-files-found: error
+          name: release-refs
+          path: refs/
+          if-no-files-found: ignore
           retention-days: 3
 
   # The GHCR proxy: its decisions in Rust, then the handler against a fake
@@ -194,12 +244,13 @@ jobs:
         working-directory: proxy
     steps:
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test
       - run: sh build.sh
       - run: node --test test/*.test.js
 
-  # The one check branch protection looks for, so a skipped or cancelled leg
+  # The one check branch protection looks for, so a skipped or cancelled job
   # never reads as green.
   ci:
     needs: [flake, proxy]
@@ -214,14 +265,14 @@ jobs:
           test "$FLAKE" = success
           test "$PROXY" = success
 
-  # Publish to the nightly GitHub release and move the channel's tag in GHCR,
-  # the two places an image's sysupdate reads from (the second through proxy/,
-  # since sysupdate cannot speak OCI). Only an architecture whose build
-  # finished, and whose flake check -- the VM boot test on x86_64 -- passed,
-  # reached GHCR at all, so that is the gate.
+  # Replaces the nightly GitHub release and moves the channel's tag in GHCR.
+  # Those are the two places an image's sysupdate reads from, the second
+  # through proxy/, because sysupdate cannot speak OCI. Only an architecture
+  # that finished its build and passed its flake check reached GHCR, so that
+  # is the gate.
   publish:
-    needs: [flake]
-    if: always() && github.event_name != 'pull_request' && needs.flake.result != 'cancelled'
+    needs: [push]
+    if: always() && needs.push.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -229,7 +280,8 @@ jobs:
     steps:
       - uses: oras-project/setup-oras@v1
       - uses: actions/download-artifact@v4
-        with: { pattern: "release-ref-*", path: refs, merge-multiple: true }
+        continue-on-error: true
+        with: { name: release-refs, path: refs }
 
       - name: Pull the releases from GHCR
         id: pulled
@@ -245,22 +297,21 @@ jobs:
             [ -f "$ref" ] || continue
             oras pull "$(cat "$ref")" --output "pulled/$arch"
             cat "pulled/$arch/SHA256SUMS" >> sums
-            find "pulled/$arch" -type f ! -name SHA256SUMS -exec mv -n -t release {} +
+            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name .version -exec mv -n -t release {} +
           done
-          # Every file name carries its architecture, so the manifests merge by
-          # concatenation; sysupdate reads one SHA256SUMS per channel.
+          # Every file name carries its architecture, so the two manifests
+          # merge by concatenation. sysupdate reads one SHA256SUMS per channel.
           sort -u -k2 sums > release/SHA256SUMS
           if [ -s release/SHA256SUMS ]; then
             echo "any=true" >> "$GITHUB_OUTPUT"
             ls -l release
           else
             echo "any=false" >> "$GITHUB_OUTPUT"
-            echo "No architecture reached GHCR; nothing to publish."
+            echo "No architecture reached GHCR, so there is nothing to publish."
           fi
 
-      # `images:<channel>-<arch>` is what proxy/ serves at
-      # /updates/<channel>/<arch>/, so it moves only here, and to exactly the
-      # artifact the release below is made from.
+      # proxy/ serves `images:nightly-<arch>` at /updates/nightly/<arch>/, so
+      # the tag moves only here, to the artifact the release below is made of.
       - name: Move the channel tags in GHCR
         if: steps.pulled.outputs.any == 'true'
         run: |
@@ -270,8 +321,9 @@ jobs:
             oras tag "$(cat "$ref")" "nightly-$arch"
           done
 
-      # The release tag is the channel and is replaced rather than renamed:
-      # sysupdate's source URL is baked into the image updating itself.
+      # The release tag is the channel name, and it is replaced rather than
+      # renamed, because sysupdate's source URL is baked into the image that
+      # is updating itself.
       - name: Publish to the channel release
         if: steps.pulled.outputs.any == 'true'
         env:
