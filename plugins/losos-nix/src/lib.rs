@@ -261,28 +261,49 @@ fn program(word: &str) -> &str {
     word.rsplit('/').next().unwrap_or(word)
 }
 
-/// The words of `args` that are not options or option values.
-fn operands<'a>(args: &[&'a str]) -> Vec<&'a str> {
-    let mut operands = Vec::new();
+/// `args` split into the words that are operands and the options that stand
+/// on their own, with every option's values consumed.
+///
+/// A value is neither: in `nix eval --argstr mode --offline`, `--offline` is the
+/// string a Nix expression receives, not the switch. After `--` every word is
+/// an operand.
+struct Parsed<'a> {
+    operands: Vec<&'a str>,
+    flags: Vec<&'a str>,
+}
+
+fn parse<'a>(args: &[&'a str]) -> Parsed<'a> {
+    let mut parsed = Parsed {
+        operands: Vec::new(),
+        flags: Vec::new(),
+    };
     let mut words = args.iter();
     while let Some(word) = words.next() {
+        if *word == "--" {
+            parsed.operands.extend(words.by_ref());
+            break;
+        }
         if !word.starts_with('-') {
-            operands.push(*word);
+            parsed.operands.push(*word);
             continue;
         }
         // `--store=/build/nix` carries its value in the same word.
         if word.contains('=') {
+            parsed.flags.push(*word);
             continue;
         }
         let takes = VALUED_OPTIONS
             .iter()
             .find(|(name, _)| name == word)
             .map_or(0, |(_, n)| *n);
+        if takes == 0 {
+            parsed.flags.push(*word);
+        }
         for _ in 0..takes {
             words.next();
         }
     }
-    operands
+    parsed
 }
 
 /// Whether a flake reference names content rather than a name for content.
@@ -331,11 +352,11 @@ fn overrides<'a>(args: &[&'a str]) -> Vec<&'a str> {
 
 /// Classify the new `nix` command line.
 fn decide_nix(args: &[&str]) -> Decision {
-    let operands = operands(args);
+    let Parsed { operands, flags } = parse(args);
     let Some(&subcommand) = operands.first() else {
         return Decision::Unknown;
     };
-    let offline = args.contains(&"--offline");
+    let offline = flags.contains(&"--offline");
 
     if let Some((_, reason)) = REFUSED.iter().find(|(name, _)| *name == subcommand) {
         return Decision::Refuse(reason);
@@ -552,6 +573,24 @@ mod tests {
         assert_eq!(
             decide("nix build --offline .#image"),
             classified("build-offline", false)
+        );
+    }
+
+    #[test]
+    fn only_the_switch_is_offline_not_a_value_or_an_operand() {
+        assert_eq!(
+            decide("nix eval --argstr mode --offline .#x"),
+            classified("eval", true)
+        );
+        // After `--` it is an installable, and a name that resolves through
+        // the registry at that.
+        assert_eq!(
+            decide("nix build .#x -- --offline"),
+            Decision::Refuse(UNLOCKED)
+        );
+        assert_eq!(
+            decide("nix eval --offline --argstr mode x .#x"),
+            classified("eval-offline", false)
         );
     }
 

@@ -67,9 +67,11 @@ pub enum Kind {
     /// Redirected to GHCR's signed blob URL, so a NAR or a disk image is never
     /// streamed through the proxy.
     Redirect,
-    /// Fetched and passed through, for a small text file whose client may not
-    /// follow a redirect off the host it was pointed at.
-    Text,
+    /// Fetched and passed through byte for byte, for a small file whose client
+    /// may not follow a redirect off the host it was pointed at. Bytes rather
+    /// than text because `SHA256SUMS.gpg` is a binary OpenPGP signature, which
+    /// a decode to UTF-8 and back would corrupt.
+    Inline,
 }
 
 /// What `/nix-cache-info` says. Priority 30 puts it ahead of a default
@@ -153,7 +155,7 @@ pub fn route(path: &str) -> Route {
             // sysupdate reads SHA256SUMS (and its signature) itself and follows
             // no redirect it did not expect; the images are what is large.
             let kind = if file.starts_with("SHA256SUMS") {
-                Kind::Text
+                Kind::Inline
             } else {
                 Kind::Redirect
             };
@@ -186,7 +188,7 @@ pub fn plan(path: &str) -> String {
             let kind = match kind {
                 Kind::Narinfo => "narinfo",
                 Kind::Redirect => "redirect",
-                Kind::Text => "text",
+                Kind::Inline => "inline",
             };
             format!("layer {repository} {tag} {title} {kind}")
         }
@@ -353,7 +355,7 @@ mod tests {
     fn release_files_come_from_the_moving_tag() {
         assert_eq!(
             plan("/updates/nightly/x86_64/SHA256SUMS"),
-            "layer images nightly-x86_64 SHA256SUMS text"
+            "layer images nightly-x86_64 SHA256SUMS inline"
         );
         assert_eq!(
             plan("/updates/stable/aarch64/losos-desktop_1.2_aarch64.efi"),
