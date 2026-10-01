@@ -2,8 +2,8 @@
 #
 # repart can size a partition from a number and not from the machine it is
 # running on, so this writes one 25-swap.conf into a directory repart also
-# reads. The source is the pm tree's own, built here by the same meson file:
-# one C file, no dependencies, and no reason to have two copies of it.
+# reads. The source is src/losos-swap: one C file and a meson file, no
+# dependencies. Nothing in nixpkgs does this, so it stays ours.
 {
   lib,
   stdenv,
@@ -15,7 +15,7 @@ stdenv.mkDerivation {
   pname = "losos-swap";
   version = "0.1.0";
 
-  src = ../../recipes/10-core/losos-swap/files;
+  src = ../../src/losos-swap;
 
   nativeBuildInputs = [
     meson

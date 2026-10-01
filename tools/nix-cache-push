@@ -1,196 +1,157 @@
-#!/usr/bin/env python3
-"""Push Nix store paths into GHCR, one OCI artifact per path, for proxy/ to serve.
+#!/usr/bin/env bash
+# Push Nix store paths into GHCR, one OCI artifact per path, for proxy/ to serve.
+#
+# The flake builds from source (docs/nixos.md, "Binary cache"), so what one CI
+# run compiled is the only thing that saves the next one from compiling it
+# again. This puts it where the proxy looks: `nix copy --to file://` writes each
+# path's signed narinfo and its NAR, and each pair becomes
+# `<repository>:<store hash>`, with the two files as layers titled by their own
+# names. The proxy maps `/<hash>.narinfo` and `/nar/<hash>/<file>` onto exactly
+# that.
+#
+# A path whose tag already exists is skipped without being copied, so a run
+# pushes only what it built. `--all` pushes every valid path in the store, which
+# is what CI wants after a build that ran out of time: whatever finished is kept.
+#
+#   tools/nix-cache-push --repository ghcr.io/owner/name/nix-cache \
+#       --secret-key-file key.sec ./result
+#   tools/nix-cache-push --repository ... --secret-key-file ... --all
+#
+# Needs `nix` and `oras` on PATH, with `oras` already logged in. The secret key
+# never leaves this host: nix signs each narinfo while writing it, and the
+# signature covers the store path, the NAR's hash and size and its references --
+# which is why the proxy may rewrite the URL line and a client still verifies it.
+#
+# Bash rather than the Python it replaced: everything here is a call to nix or
+# oras, and the only thing Python did itself was ask the registry whether a tag
+# exists, which `oras manifest fetch` answers as well.
+set -euo pipefail
 
-The flake builds from source (docs/nixos.md, "Binary cache"), so what one CI run
-compiled is the only thing that saves the next one from compiling it again. This
-puts it where the proxy looks: `nix copy --to file://` writes each path's signed
-narinfo and its NAR, and each pair becomes `<repository>:<store hash>`, with the
-two files as layers titled by their own names. The proxy maps `/<hash>.narinfo`
-and `/nar/<hash>/<file>` onto exactly that.
+usage() {
+  sed -n 's/^#   //p' "$0" >&2
+  exit 2
+}
 
-A path whose tag already exists is skipped without being copied, so a run pushes
-only what it built. `--all` pushes every valid path in the store, which is what
-CI wants after a build that ran out of time: whatever finished is kept.
+repository='' key='' all='' dry_run='' jobs=8 batch=200
+installables=()
+while [ $# -gt 0 ]; do
+  case $1 in
+    --repository) repository=$2; shift 2 ;;
+    --secret-key-file) key=$2; shift 2 ;;
+    --all) all=1; shift ;;
+    --jobs) jobs=$2; shift 2 ;;
+    --batch) batch=$2; shift 2 ;;
+    # Copy and sign, print the pushes, push nothing and ask no registry.
+    --dry-run) dry_run=1; shift ;;
+    -h|--help) usage ;;
+    -*) echo "nix-cache-push: unknown option $1" >&2; usage ;;
+    *) installables+=("$1"); shift ;;
+  esac
+done
+[ -n "$repository" ] && [ -n "$key" ] || usage
+[ -n "$all" ] || [ ${#installables[@]} -gt 0 ] || usage
+case $repository in
+  ghcr.io/?*/?*) ;;
+  *) echo "nix-cache-push: $repository: expected ghcr.io/<owner>/<name>/..." >&2; exit 2 ;;
+esac
+key=$(realpath "$key")
+[ -s "$key" ] || { echo "nix-cache-push: the secret key file is empty" >&2; exit 1; }
 
-  tools/nix-cache-push --repository ghcr.io/owner/name/nix-cache \\
-      --secret-key-file key.sec ./result
-  tools/nix-cache-push --repository ... --secret-key-file ... --all
+# Dependencies before the paths that refer to them. A binary cache refuses a
+# path whose references it does not hold, so the order things are copied in is
+# not free: `nix-store --query --requisites` prints a closure in that order,
+# and keeping each path's first appearance keeps it across xargs' chunks.
+# The pattern is the one the proxy serves: a store path, nothing below one.
+work=$(mktemp -d "${TMPDIR:-/tmp}/nix-cache-push.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+path_re='^/nix/store/[0-9a-df-np-sv-z]{32}-[^/]+$'
+if [ -n "$all" ]; then
+  nix path-info --all
+else
+  nix path-info "${installables[@]}"
+fi | grep -E "$path_re" | xargs -r nix-store --query --requisites \
+  | awk '!seen[$0]++' > "$work/paths"
 
-Needs `nix` and `oras` on PATH, and GHCR_TOKEN (a token that may write packages)
-for the existence checks; `oras` must already be logged in. The secret key never
-leaves this host: nix signs each narinfo while writing it, and the signature
-covers the store path, the NAR's hash and size and its references -- which is
-why the proxy may rewrite the URL line and a client still verifies it.
-"""
+# A tag that is not there yet -- or a repository that does not exist yet,
+# which GHCR answers the same way -- is a path to push. Checked in parallel,
+# then filtered back through the ordered list.
+if [ -n "$dry_run" ]; then
+  cp "$work/paths" "$work/missing"
+else
+  # shellcheck disable=SC2016 # expanded by the inner sh, not here
+  REPO=$repository xargs -r -P "$jobs" -I{} sh -c \
+    'oras manifest fetch --descriptor "$REPO:$(basename "$1" | cut -c1-32)" >/dev/null 2>&1 || echo "$1"' \
+    _ {} < "$work/paths" > "$work/absent"
+  awk 'NR == FNR { absent[$0] = 1; next } $0 in absent' "$work/absent" "$work/paths" > "$work/missing"
+fi
+total=$(wc -l < "$work/paths")
+todo=$(wc -l < "$work/missing")
+echo "nix-cache-push: $total path(s), $todo not yet in $repository"
+[ "$todo" -gt 0 ] || exit 0
 
-import argparse
-import base64
-import concurrent.futures
-import json
-import os
-import re
-import shutil
-import subprocess
-import sys
-import tempfile
-import urllib.error
-import urllib.request
-from pathlib import Path
+# One file cache for the whole run, so a batch's references copied by an
+# earlier batch are still there. Only the NARs are deleted between batches;
+# the narinfos are a few hundred bytes each.
+staging="$work/cache"
+mkdir -p "$staging"
+to="file://$staging?compression=zstd&parallel-compression=true&secret-key=$key"
 
-STORE_PATH = re.compile(r"^/nix/store/([0-9a-df-np-sv-z]{32})-[^/]+$")
-ARTIFACT_TYPE = "application/vnd.losos.nix-cache.v1"
+# A reference already in GHCR is not copied again, but the file cache still
+# has to know it exists or nix refuses everything that refers to it. So it
+# gets a narinfo with no NAR behind it, written from the local store and never
+# pushed: it only has to satisfy the reference check.
+awk 'NR == FNR { missing[$0] = 1; next } !($0 in missing)' "$work/missing" "$work/paths" \
+  | while read -r p; do
+      {
+        echo "StorePath: $p"
+        echo "URL: nar/absent.nar"
+        echo "Compression: none"
+        echo "NarHash: $(nix-store --query --hash "$p")"
+        echo "NarSize: $(nix-store --query --size "$p")"
+        printf 'References:'
+        nix-store --query --references "$p" | xargs -r -n1 basename | sed 's/^/ /' | tr -d '\n'
+        echo
+      } > "$staging/$(basename "$p" | cut -c1-32).narinfo"
+    done
 
+# Push one narinfo and its NAR as `<repository>:<hash>`. oras titles each
+# layer with the path it was given and the proxy looks layers up by title, so
+# both files are linked bare into a directory of their own rather than pushed
+# as `nar/<file>`.
+push_one() {
+  local staging=$1 hash=$2 narinfo nar bundle
+  narinfo="$staging/$hash.narinfo"
+  nar="$staging/$(sed -n 's/^URL: //p' "$narinfo")"
+  bundle="$staging/push/$hash"
+  mkdir -p "$bundle"
+  ln "$narinfo" "$bundle/"
+  ln "$nar" "$bundle/"
+  set -- oras push "$REPO:$hash" --artifact-type application/vnd.losos.nix-cache.v1 \
+    "$hash.narinfo:application/x-nix-narinfo" "$(basename "$nar"):application/x-nix-nar"
+  if [ -n "$DRY_RUN" ]; then
+    echo "$*"
+  else
+    (cd "$bundle" && "$@" >/dev/null)
+  fi
+  rm -rf "$bundle"
+}
+export -f push_one
 
-def store_hash(path):
-    """The hash part of a path `store_paths` already filtered by STORE_PATH."""
-    match = STORE_PATH.match(path)
-    assert match, path
-    return match.group(1)
-
-
-def run(*argv, **kwargs):
-    return subprocess.run(argv, check=True, text=True, **kwargs)
-
-
-def store_paths(installables, everything):
-    """The valid store paths to consider, closures included."""
-    if everything:
-        argv = ["nix", "path-info", "--all"]
-    else:
-        argv = ["nix", "path-info", "--recursive", *installables]
-    out = run(*argv, stdout=subprocess.PIPE).stdout.split()
-    return sorted({p for p in out if STORE_PATH.match(p)})
-
-
-class Registry:
-    """Just enough of the OCI distribution API to ask whether a tag exists."""
-
-    def __init__(self, repository):
-        host, _, self.name = repository.partition("/")
-        if host != "ghcr.io" or not self.name:
-            sys.exit(f"nix-cache-push: {repository}: expected ghcr.io/<owner>/<name>/...")
-        secret = os.environ.get("GHCR_TOKEN", "")
-        request = urllib.request.Request(
-            f"https://ghcr.io/token?service=ghcr.io&scope=repository:{self.name}:pull"
-        )
-        if secret:
-            basic = base64.b64encode(f"token:{secret}".encode()).decode()
-            request.add_header("Authorization", f"Basic {basic}")
-        with urllib.request.urlopen(request) as response:
-            self.token = json.load(response)["token"]
-
-    def has(self, tag):
-        request = urllib.request.Request(
-            f"https://ghcr.io/v2/{self.name}/manifests/{tag}",
-            method="HEAD",
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Accept": "application/vnd.oci.image.manifest.v1+json",
-            },
-        )
-        try:
-            with urllib.request.urlopen(request):
-                return True
-        except urllib.error.HTTPError as error:
-            # A repository that does not exist yet answers 404 or, on GHCR,
-            # sometimes 401 for an anonymous token: nothing is in it either way.
-            if error.code in (401, 403, 404):
-                return False
-            raise
-
-
-def push_one(staging, repository, store_hash, dry_run):
-    """Push one narinfo and its NAR as `<repository>:<store_hash>`."""
-    narinfo = staging / f"{store_hash}.narinfo"
-    url = next(
-        line[len("URL: ") :]
-        for line in narinfo.read_text().splitlines()
-        if line.startswith("URL: ")
-    )
-    nar = staging / url
-    # oras titles each layer with the path it was given, and the proxy looks
-    # layers up by title, so both files must be named bare: link them into a
-    # directory of their own rather than pushing `nar/<file>`.
-    bundle = staging / "push" / store_hash
-    bundle.mkdir(parents=True)
-    os.link(narinfo, bundle / narinfo.name)
-    os.link(nar, bundle / nar.name)
-    argv = [
-        "oras", "push", f"{repository}:{store_hash}",
-        "--artifact-type", ARTIFACT_TYPE,
-        f"{narinfo.name}:application/x-nix-narinfo",
-        f"{nar.name}:application/x-nix-nar",
-    ]
-    if dry_run:
-        print(" ".join(argv))
-    else:
-        run(*argv, cwd=bundle, stdout=subprocess.DEVNULL)
-    shutil.rmtree(bundle)
-    return store_hash
-
-
-def main():
-    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    parser.add_argument("--repository", required=True)
-    parser.add_argument("--secret-key-file", required=True, type=Path)
-    parser.add_argument("--all", action="store_true", help="every valid store path")
-    parser.add_argument("--jobs", type=int, default=8, help="concurrent oras pushes")
-    parser.add_argument("--batch", type=int, default=200, help="paths staged at a time")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="copy and sign, print the pushes, push nothing (and ask no registry)",
-    )
-    parser.add_argument(
-        "--staging", type=Path, help="keep the signed file cache here (default: temporary)"
-    )
-    parser.add_argument("installables", nargs="*")
-    args = parser.parse_args()
-    if not args.all and not args.installables:
-        parser.error("name what to push, or --all")
-
-    paths = store_paths(args.installables, args.all)
-    if args.dry_run:
-        missing = paths
-    else:
-        registry = Registry(args.repository)
-        missing = [p for p in paths if not registry.has(store_hash(p))]
-    print(f"nix-cache-push: {len(paths)} path(s), {len(missing)} not yet in {args.repository}")
-    if not missing:
-        return 0
-
-    key = args.secret_key_file.resolve()
-    if not key.read_text().strip():
-        sys.exit("nix-cache-push: the secret key file is empty")
-    # In batches, because a runner's disk holds the store once and not a
-    # compressed copy of all of it besides: each batch is copied, pushed and
-    # deleted before the next is written.
-    pushed = 0
-    for start in range(0, len(missing), args.batch):
-        batch = missing[start : start + args.batch]
-        staging = args.staging or Path(tempfile.mkdtemp(prefix="nix-cache-push."))
-        try:
-            # zstd: fast to write on a runner that is also building, and nix
-            # reads it natively. --no-recursive because the batch already lists
-            # exactly the paths to send; a closure would re-send what is there.
-            run(
-                "nix", "copy", "--no-recursive", "--stdin",
-                "--to",
-                f"file://{staging}?compression=zstd&parallel-compression=true&secret-key={key}",
-                input="\n".join(batch),
-            )
-            hashes = [store_hash(p) for p in batch]
-            with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-                pushed += len(
-                    list(pool.map(lambda h: push_one(staging, args.repository, h, args.dry_run), hashes))
-                )
-        finally:
-            if not args.staging:
-                shutil.rmtree(staging, ignore_errors=True)
-        print(f"nix-cache-push: pushed {pushed}/{len(missing)}", flush=True)
-    print(f"nix-cache-push: pushed {len(missing)} path(s)")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+# In batches, because a runner's disk holds the store once and not a compressed
+# copy of all of it besides: each batch is copied, pushed and its NARs deleted
+# before the next is written. zstd is fast to write on a runner that is also
+# building, and nix reads it natively. --no-recursive because the list already
+# holds exactly the paths to send, in an order that satisfies each one's
+# references.
+pushed=0
+split -l "$batch" "$work/missing" "$work/batch."
+for chunk in "$work"/batch.*; do
+  nix copy --no-recursive --stdin --to "$to" < "$chunk"
+  # shellcheck disable=SC2016 # expanded by the inner bash, not here
+  xargs -r -n1 basename < "$chunk" | cut -c1-32 \
+    | REPO=$repository DRY_RUN=$dry_run xargs -r -P "$jobs" -I{} bash -c 'push_one "$1" "$2"' _ "$staging" {}
+  rm -rf "$staging/nar"
+  pushed=$((pushed + $(wc -l < "$chunk")))
+  echo "nix-cache-push: pushed $pushed/$todo"
+done
+echo "nix-cache-push: pushed $todo path(s)"

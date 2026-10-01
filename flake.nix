@@ -1,10 +1,10 @@
 # LosOS Desktop as NixOS.
 #
-# The same OS the pm recipes under recipes/ describe -- a GNOME desktop that is
-# systemd end to end, image-based, updated by systemd-sysupdate and with every
-# user a systemd-homed LUKS volume -- expressed as a NixOS configuration
-# instead of a from-source distribution. docs/nixos.md says what maps to what
-# and what changed on the way; nixos/ holds the modules.
+# A GNOME desktop that is systemd end to end, image-based, updated by
+# systemd-sysupdate and with every user a systemd-homed LUKS volume, expressed
+# as a NixOS configuration. It replaced a from-source distribution of pm
+# recipes; docs/nixos.md says what maps to what and what changed on the way,
+# and nixos/ holds the modules.
 #
 #   nix build                      the disk image (.#image)
 #   nix build .#installer          the same image, booting the installer

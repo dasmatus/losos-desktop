@@ -6,6 +6,7 @@
   imports = [
     ./options.nix
     ./boot.nix
+    ./hardware.nix
     ./image.nix
     ./disk.nix
     ./update.nix
