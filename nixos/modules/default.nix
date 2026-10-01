@@ -6,6 +6,7 @@
   imports = [
     ./options.nix
     ./boot.nix
+    ./hardware.nix
     ./image.nix
     ./disk.nix
     ./update.nix
@@ -16,10 +17,13 @@
     ./pm.nix
     ./installer.nix
     ./testing.nix
-    ./musl.nix
   ];
 
   nixpkgs.overlays = [ (import ../pkgs) ];
+
+  # The image does not include Nix or nixos-rebuild, so the manual is not useful
+  # on the installed system.
+  documentation.nixos.enable = false;
 
   # The NixOS release the option defaults above were written against.
   system.stateVersion = "26.05";

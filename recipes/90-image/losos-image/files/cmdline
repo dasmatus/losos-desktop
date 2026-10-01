@@ -1,1 +1,0 @@
-quiet rw systemd.machine_id=firstboot console=tty0

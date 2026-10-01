@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
-# Copy an installable's sources from cache.nixos.org, and check each against
-# the hash nixpkgs pins for it.
+# Preload an installable's fixed-output inputs from cache.nixos.org, checking
+# copied outputs against the hash declared by their derivations.
 #
-# The build takes no binaries from cache.nixos.org (docs/nixos.md), so every
-# source tarball, git checkout and crate is a fixed-output derivation that
-# fetches from upstream. A cold build fetches more than two thousand of them,
-# and one upstream timing out or answering 5xx fails the whole run before
-# anything compiles. cache.nixos.org holds nearly all of them, because a
-# fixed-output path depends only on its name and hash, never on libc.
+# The closure's fixed-output paths include upstream sources and can include
+# pinned bootstrap tools or upstream prebuilt compilers. A cold build fetches
+# more than two thousand upstream inputs, and one upstream timing out or
+# answering 5xx fails the whole run before anything compiles. cache.nixos.org
+# holds nearly all of them, because a fixed-output path depends only on its
+# name and hash, never on libc.
 #
-# Only those paths are copied, each by its exact store path, so nothing else
-# from cache.nixos.org enters the store. Some of its narinfos carry no CA
-# field and so cannot verify themselves. Every copied path is hashed here
-# against the hash its derivation declares, and one that differs is deleted
-# and fails the run. A source this script trusts is therefore exactly what
-# fetching it from upstream would have accepted. Whatever cache.nixos.org
-# lacks is left for the build, which fetches it from upstream as before.
+# Only fixed-output paths are copied, each by its exact store path. Some of
+# cache.nixos.org's narinfos carry no CA field and cannot verify themselves, so
+# every copied flat or NAR output is hashed here against its declared hash.
+# A mismatch or unsupported hash method is deleted and fails the run. Whatever
+# cache.nixos.org lacks is left for the build to fetch from upstream.
 #
 #   tools/nix-fetch-sources .#release
 #
@@ -62,7 +60,7 @@ paste -d' ' "$work/outs" "$work/fods" | cut -d' ' -f1,3,4 >"$work/all"
 while read -r out method hash; do
   [ -e "$out" ] || printf '%s %s %s\n' "$out" "$method" "$hash" >>"$work/missing"
 done <"$work/all"
-echo "nix-fetch-sources: $(wc -l <"$work/all") sources, $(wc -l <"$work/missing") not in the store"
+echo "nix-fetch-sources: $(wc -l <"$work/all") fixed-output paths, $(wc -l <"$work/missing") not in the store"
 if [ -n "$dry_run" ]; then
   cut -d' ' -f1 "$work/missing"
   exit 0
@@ -81,8 +79,8 @@ while read -r out method hash; do
   case $method in
     flat) got=$(nix hash file --sri --type "$algo" "$out") ;;
     nar) got=$(nix hash path --sri --type "$algo" "$out") ;;
-    # Text-hashed and git-hashed outputs are not sources. Nothing fetched is
-    # either, so one here is left out rather than trusted.
+    # Text-hashed and git-hashed outputs use other hash semantics, so this
+    # script rejects them rather than trusting an unchecked result.
     *) got='' ;;
   esac
   if [ "$got" = "$hash" ]; then

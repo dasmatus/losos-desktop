@@ -250,9 +250,9 @@ impl Guest for LososSystemd {
             ],
             // No symbols, for the same reason this plugin has an empty ceiling:
             // it reads units, it does not tell a build file where to put them.
-            // The paths this OS uses live in overlay/ and manifest/, which are
-            // the tree's own statement of them -- publishing a second copy here
-            // would create two answers to one question.
+            // The paths this OS uses live in nixos/, which is the tree's own
+            // statement of them. A second copy here would be a second answer
+            // to one question.
             symbols: vec![],
         }
     }
