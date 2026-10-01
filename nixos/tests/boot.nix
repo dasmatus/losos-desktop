@@ -37,6 +37,11 @@
         memorySize = 3072;
       };
 
+      # The VM's first-boot disk is /dev/vda. Repart cannot infer it from
+      # /sysroot before the root partition exists.
+      boot.initrd.systemd.repart.device = "/dev/vda";
+      boot.initrd.systemd.services.systemd-repart.after = lib.mkForce [ "dev-vda.device" ];
+
       # The VM module empties swapDevices with the same override it uses on
       # fileSystems. Put back what disk.nix gives the real image, so the test
       # boots the same fstab and zswap has the backing device it asserts on.
