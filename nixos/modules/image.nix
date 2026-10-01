@@ -28,8 +28,8 @@ let
   inherit (config.image.repart.verityStore) partitionIds;
   inherit (config.system.boot.loader) ukiFile;
 
-  # nixpkgs 26.05 hard-codes unshare in repart-image.nix. Materialize the
-  # backport here so it also applies when the VM test imports this module.
+  # nixpkgs 26.05 hard-codes unshare in repart-image.nix. Add a local per-image
+  # switch here so it also applies when the VM test imports this module.
   nixpkgsImageModules = "${modulesPath}/image";
   patchNixpkgsModule =
     name: replacements:
@@ -101,7 +101,7 @@ let
         "    useUnshare = lib.mkOption {"
         "      type = lib.types.bool;"
         "      default = true;"
-        "      description = \"Enables user namespace creation to simulate root-owned nodes during image building. Required by some filesystems like btrfs; disable in restricted sandboxes.\";"
+        "      description = \"Run repart under an unshared user namespace; disable when the build environment prohibits nested user namespaces.\";"
         "    };"
         ""
         "    package = lib.mkPackageOption pkgs \"systemd-repart\" {"
@@ -178,8 +178,8 @@ in
   image.repart = {
     name = id;
 
-    # These userspace formatters do not need a nested user namespace, which
-    # cannot be created inside the hosted runner's Nix sandbox.
+    # The vfat ESP and erofs /usr formatter do not need a nested user namespace,
+    # which cannot be created inside the hosted runner's Nix sandbox.
     useUnshare = false;
 
     # /usr is the Nix store on erofs, with a dm-verity hash tree beside it
