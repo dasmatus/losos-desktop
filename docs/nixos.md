@@ -264,7 +264,7 @@ That buys two things the pm tree wrote down as limits:
 | `overlay/usr/lib/tmpfiles.d/losos.conf` | `systemd.tmpfiles.settings` in `services.nix` | |
 | `overlay/usr/lib/systemd/network/20-wired.network` | `systemd.network.networks."20-wired"` | same match and settings |
 | `overlay/etc/crypttab`, `overlay/etc/fstab` | `environment.etc.crypttab`, `swapDevices` | |
-| `user@.service.d/10-oomd.conf` | `systemd.oomd`, `systemd.services."user@"` | |
+| `user@.service.d/10-oomd.conf` | `systemd.oomd`, `systemd.slices.user` | |
 | `losos-security.service`, its D-Bus files | `services.nix` | same sandbox, line for line |
 | `50-losos-factory-reset.rules` | `security.polkit.extraConfig` in `disk.nix` | same rule |
 | `losos-selftest.service`, `losos-ota-test.service` | `testing.nix` | same kernel command line conditions |
