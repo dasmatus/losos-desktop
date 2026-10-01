@@ -28,6 +28,91 @@ let
   inherit (config.image.repart.verityStore) partitionIds;
   inherit (config.system.boot.loader) ukiFile;
 
+  # nixpkgs 26.05 hard-codes unshare in repart-image.nix. Materialize the
+  # backport here so it also applies when the VM test imports this module.
+  nixpkgsImageModules = "${modulesPath}/image";
+  patchNixpkgsModule =
+    name: replacements:
+    let
+      source = builtins.readFile "${nixpkgsImageModules}/${name}";
+      patched = lib.foldl' (
+        source: replacement:
+        assert lib.assertMsg (lib.hasInfix replacement.from source)
+          "Pinned nixpkgs ${name} is missing expected text: ${replacement.from}";
+        builtins.replaceStrings [ replacement.from ] [ replacement.to ] source
+      ) source replacements;
+    in
+    builtins.toFile name patched;
+
+  repartImageModule = patchNixpkgsModule "repart-image.nix" [
+    {
+      from = "  createEmpty ? true,\n";
+      to = "  createEmpty ? true,\n  useUnshare ? true,\n";
+    }
+    {
+      from = "in\nstdenvNoCC.mkDerivation (";
+      to = "  fakerootCommand = if useUnshare then \"unshare --map-root-user fakeroot\" else \"fakeroot\";\nin\nstdenvNoCC.mkDerivation (";
+    }
+    {
+      from = builtins.concatStringsSep "\n" [
+        "    nativeBuildInputs = ["
+        "      systemd"
+        "      util-linux"
+        "      fakeroot"
+        "    ]"
+        "    ++ lib.optionals (compression.enable) ["
+      ];
+      to = builtins.concatStringsSep "\n" [
+        "    nativeBuildInputs = ["
+        "      systemd"
+        "      fakeroot"
+        "    ]"
+        "    ++ lib.optionals useUnshare ["
+        "      util-linux"
+        "    ]"
+        "    ++ lib.optionals (compression.enable) ["
+      ];
+    }
+    {
+      from = "      unshare --map-root-user fakeroot systemd-repart \\\n";
+      to = "      " + "$" + "{fakerootCommand} systemd-repart \\\n";
+    }
+    {
+      from = "./amend-repart-definitions.py";
+      to = "${nixpkgsImageModules}/amend-repart-definitions.py";
+    }
+  ];
+  repartModule = patchNixpkgsModule "repart.nix" [
+    {
+      from = "./repart-verity-store.nix";
+      to = "${nixpkgsImageModules}/repart-verity-store.nix";
+    }
+    {
+      from = "./file-options.nix";
+      to = "${nixpkgsImageModules}/file-options.nix";
+    }
+    {
+      from = "pkgs.callPackage ./repart-image.nix {";
+      to = "pkgs.callPackage ${repartImageModule} {";
+    }
+    {
+      from = "    package = lib.mkPackageOption pkgs \"systemd-repart\" {";
+      to = builtins.concatStringsSep "\n" [
+        "    useUnshare = lib.mkOption {"
+        "      type = lib.types.bool;"
+        "      default = true;"
+        "      description = \"Enables user namespace creation to simulate root-owned nodes during image building. Required by some filesystems like btrfs; disable in restricted sandboxes.\";"
+        "    };"
+        ""
+        "    package = lib.mkPackageOption pkgs \"systemd-repart\" {"
+      ];
+    }
+    {
+      from = "                finalPartitions\n                ;";
+      to = "                finalPartitions\n                useUnshare\n                ;";
+    }
+  ];
+
   id = config.system.image.id;
   systemdBoot = "${config.systemd.package}/lib/systemd/boot/efi/systemd-boot${arch.efi}.efi";
 
@@ -78,7 +163,7 @@ let
       '';
 in
 {
-  imports = [ "${modulesPath}/image/repart.nix" ];
+  imports = [ repartModule ];
 
   system.image = {
     id = "losos-desktop";
@@ -92,6 +177,10 @@ in
 
   image.repart = {
     name = id;
+
+    # These userspace formatters do not need a nested user namespace, which
+    # cannot be created inside the hosted runner's Nix sandbox.
+    useUnshare = false;
 
     # /usr is the Nix store on erofs, with a dm-verity hash tree beside it
     # whose root hash is baked into the UKI's command line as usrhash=. That

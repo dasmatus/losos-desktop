@@ -131,9 +131,8 @@ xargs -r nix-store --query --references < "$work/missing" | sort -u \
         echo "Compression: none"
         echo "NarHash: $(nix-store --query --hash "$p")"
         echo "NarSize: $(nix-store --query --size "$p")"
-        printf 'References:'
-        nix-store --query --references "$p" | xargs -r -n1 basename | sed 's/^/ /' | tr -d '\n'
-        echo
+        refs=$(nix-store --query --references "$p" | xargs -r -n1 basename | paste -sd' ' -)
+        printf 'References: %s\n' "$refs"
       } > "$staging/$(basename "$p" | cut -c1-32).narinfo"
     done
 
