@@ -1,8 +1,7 @@
 //! A pm plugin that teaches pm about Nix.
 //!
-//! This repository builds the same OS twice: the pm chain, and the NixOS flake
-//! beside it (`docs/nixos.md`). pm stays the system manager on both, which means
-//! pm is also what a user reaches for to drive the flake -- a build file whose
+//! pm is the system manager in this NixOS image (`docs/nixos.md`), and users can
+//! use it to drive the flake -- a build file whose
 //! steps are `nix flake check` and `nix build .#image`. pm's fingerprint table
 //! knows neither word, so before this plugin such a file was refused before any
 //! step ran (C2), with a diagnostic naming the command and nothing else.
@@ -39,8 +38,8 @@
 //! # nixpkgs, through the pin and nowhere else
 //!
 //! The flake's `legacyPackages` is the whole of nixpkgs at the revision
-//! `flake.lock` pins, built against musl -- the same package set the image is
-//! made of -- and `.#pm-payloads.<name>` is any of those packages linked
+//! `flake.lock` pins, built for the image's stock glibc platform -- the same
+//! package set it is made of -- and `.#pm-payloads.<name>` is any of those packages linked
 //! statically and checked by Nix itself to refer to nothing in the store, which
 //! is what a pm package extracted at `/pkg` can actually run (docs/nixos.md,
 //! "nixpkgs in a pm build"). That makes all of nixpkgs reachable from a pm build

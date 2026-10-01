@@ -7,8 +7,8 @@
 //!   NAR per store path; `tools/nix-cache-push` puts each pair in GHCR as one
 //!   OCI artifact, `nix-cache:<store hash>`. Nix asks a cache for
 //!   `/<hash>.narinfo` and then for whatever its `URL:` names, and this maps
-//!   both onto that artifact. It replaces a hosted cache for builds, CI's and
-//!   anyone's, and it is the only substituter the flake trusts.
+//!   both onto that artifact. It serves paths CI uploads, alongside
+//!   cache.nixos.org for stock nixpkgs packages.
 //! * **systemd-sysupdate's update source.** CI pushes each release as an OCI
 //!   artifact already (`images:<channel>-<version>-<arch>`), and also under
 //!   the moving tag `<channel>-<arch>`. `/updates/<channel>/<arch>/<file>`

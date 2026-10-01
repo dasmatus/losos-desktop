@@ -17,10 +17,6 @@
   # source for them exists (docs/nixos.md, "What this trusts from outside").
   hardware.enableRedistributableFirmware = true;
 
-  # No NVIDIA kernel module. nvidia.ko, open or not, serves NVIDIA's own
-  # userspace, which is prebuilt against glibc and cannot load into a musl
-  # process. Mesa's NVK drives NVIDIA GPUs through the in-tree nouveau driver
-  # instead. Shipping nvidia.ko as well would let it claim the GPU first and
-  # leave GNOME with no driver it can use. The pm tree built the open modules
-  # anyway, which was the same mistake.
+  # Use nouveau and Mesa's NVK for NVIDIA GPUs. The proprietary NVIDIA driver
+  # is not enabled in this image.
 }

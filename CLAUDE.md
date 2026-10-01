@@ -5,9 +5,10 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 ## What this is
 
 `losos-desktop` is a GNOME desktop OS written as a NixOS configuration. It
-installs as an image, uses systemd for everything it can, and runs on musl.
+installs as an image, uses systemd for everything it can, and uses nixpkgs'
+stock glibc packages.
 `flake.nix` and `nixos/` are the OS. nixpkgs 26.05, pinned in `flake.lock`,
-provides the packages, and the build compiles every one from source.
+provides stock packages, normally substituted from cache.nixos.org.
 [`pm`](https://github.com/dichhead/pm) ships in the image as the system
 manager.
 
@@ -32,14 +33,13 @@ nix eval --raw .#nixosConfigurations.losos-desktop-x86_64.config.system.build.to
 nix eval --raw .#nixosConfigurations.losos-desktop-aarch64.config.system.build.toplevel.drvPath
 ```
 
-That runs every module and assertion in a few minutes. A full build from an
-empty cache compiles the whole OS and takes days, so don't start one to check
-a module edit.
+That runs every module and assertion in a few minutes. A full image build
+still takes time, so don't start one to check a module edit.
 
 ## Layout
 
 - `nixos/modules/` has one file per concern: `boot`, `disk`, `update`,
-  `accounts`, `desktop`, `services`, `hardware`, `installer`, `musl`, `pm` and
+  `accounts`, `desktop`, `services`, `hardware`, `installer`, `pm` and
   a few more. `default.nix` imports them all.
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
   plugins, `losos-security`, `losos-swap`, and the pm payload builder.
@@ -56,17 +56,9 @@ a module edit.
 
 ## Gotchas that bite silently
 
-- **The host platform is musl.** `nixpkgs.hostPlatform` is `musl64` or
-  `aarch64-multiplatform-musl`. A package that assumes glibc evaluates fine
-  and then fails on the builder. musl has no NSS, so `getpwnam()` cannot see a
-  systemd-homed user, and GDM won't list one until someone writes an nscd
-  forwarder that answers from `io.systemd.UserDatabase` (`docs/nixos.md`,
-  "musl"). Nothing prebuilt against glibc loads at all. That includes NVIDIA's
-  userspace, so NVIDIA GPUs run on nouveau and Mesa's NVK, and the image
-  ships no `nvidia.ko`.
-- **cache.nixos.org is off.** Its binaries are glibc builds. A build
-  substitutes only from the project's own cache and refuses any path not
-  signed by the key it was given.
+- **Use nixpkgs' standard platforms and packages.** `nixpkgs.hostPlatform` is
+  `x86_64-linux` or `aarch64-linux`; avoid libc-specific platform or package
+  overrides so stock closures substitute from cache.nixos.org.
 - **`/usr` is the Nix store, on dm-verity.** The root hash is `usrhash=` on the
   UKI's command line, so a different `/usr` needs a different UKI, and root
   holds only state. An update is a new `/usr` from systemd-sysupdate. Nothing
@@ -75,9 +67,6 @@ a module edit.
   step that runs nix uses `nix --store /build/nix ...`. The `losos-nix` plugin
   denies network to a step that passes `--offline`. pm grants network per
   build file, so one networked step puts the whole file on the host network.
-- **`writeShellApplication` runs ShellCheck, which is written in Haskell.** On
-  musl that means bootstrapping GHC, which `musl.nix` turns off. Don't add a
-  shell wrapper that brings it back.
 
 ## What was here, and is not coming back
 
@@ -96,8 +85,8 @@ cited.
 ## CI
 
 `.github/workflows/ci.yml` is the only workflow. `flake` builds `.#release`
-from source for each architecture within a time budget and pushes whatever
-finished to the GHCR cache, so each run picks up where the last stopped. When
+for each architecture within a time budget and pushes project-built paths to
+the GHCR cache. When
 a build completes it checks formatting and the flake, and outside a pull
 request hands the release to `push` as an artifact. `push` uploads it to
 GHCR. It is the only job holding `packages: write` beside release files, and

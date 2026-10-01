@@ -1,8 +1,8 @@
 # Any nixpkgs package, as what a pm package installs.
 #
 # `pm-payloads.<name>` is nixpkgs' `<name>` from the pinned tree, linked
-# statically against musl and laid out as a pm package's /dest: usr/bin,
-# usr/sbin, usr/libexec and usr/share, every output of the package merged. A pm
+# statically from nixpkgs' pkgsStatic and laid out as a pm package's /dest:
+# usr/bin, usr/sbin, usr/libexec and usr/share, every output merged. A pm
 # build file reaches it through losos-nix (`nix build .#pm-payloads.<name>`)
 # and copies the result into /dest (docs/nixos.md, "nixpkgs in a pm build").
 #

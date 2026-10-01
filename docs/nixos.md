@@ -3,10 +3,10 @@
 `flake.nix` and `nixos/` are the operating system. It is a GNOME desktop that
 uses systemd for everything it can, installs as an image, updates with
 `systemd-sysupdate`, and makes every user a `systemd-homed` LUKS volume.
-nixpkgs 26.05, pinned in `flake.lock`, provides the packages, and this
-repository decides how they fit together. The build targets musl and compiles
-everything from source. It takes no binaries from cache.nixos.org, only from
-the project's own cache of what its CI compiled.
+nixpkgs 26.05, pinned in `flake.lock`, provides the stock glibc package set,
+and this repository decides how those packages fit together. Builds use
+cache.nixos.org by default; the project's own cache can provide project-built
+paths as well.
 
 This repository used to build the same OS a second time, as a from-source
 distribution of ninety-odd pm recipes. The table at the end of this file says
@@ -26,17 +26,11 @@ Everything the flake builds from, besides this repository:
 - **nixpkgs 26.05**, the channel tarball from `channels.nixos.org`, pinned by
   `narHash` in `flake.lock`. Its expressions are read, not trusted blindly:
   a different tarball fails the hash.
-- **The upstream sources nixpkgs fetches**, each pinned by hash in nixpkgs.
-  With no substituter but the project's own, every package is compiled from
-  them.
-- **What a from-source build starts from.** On x86_64, nothing prebuilt at
-  all for C: nixpkgs' minimal bootstrap grows the compiler from
-  stage0-posix's hand-auditable hex seed through tinycc to gcc. On aarch64,
-  nixpkgs' musl bootstrap tools, a small static toolchain pinned by hash in
-  `pkgs/stdenv/linux/bootstrap-files/`, which builds the real compiler and is
-  then discarded. rustc and Go are self-hosting and start, as any from-source
-  build of them does, from upstream's own prebuilt compiler of the previous
-  release.
+- **Stock package binaries from cache.nixos.org.** nixpkgs' normal glibc
+  package set is used without libc-specific package overrides, so available
+  package closures can be substituted rather than rebuilt locally.
+- **Upstream sources nixpkgs fetches**, each pinned by hash in nixpkgs, for
+  packages that must be built locally.
 - **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
   (`nixos/pkgs/pm.nix`), and **crates.io**, for its and losos-security's
   dependencies, each pinned by `Cargo.lock` and checked by hash.
@@ -44,13 +38,13 @@ Everything the flake builds from, besides this repository:
   source. It is prebuilt by the hardware vendors, and nothing can compile it.
   `hardware.nix` ships it because amdgpu and nouveau cannot start current
   GPUs without it.
-- **The project's binary cache** in GHCR, through `proxy/` (below): paths
-  this project's CI compiled and signed. A client checks every narinfo
-  against the one public key it was told to trust, so the proxy and GHCR
-  carry bytes but cannot vouch for them.
+- **The project's binary cache** in GHCR, through `proxy/` (below): optional
+  paths the CI job stores and signs. A client checks every narinfo against
+  the public key it was told to trust, so the proxy and GHCR carry bytes but
+  cannot vouch for them.
 - **In CI only:** the official Nix installer from `releases.nixos.org`,
   pinned by version. Nix is what builds Nix, so this binary is the one
-  bootstrap; `.#nix` is the musl Nix from source for a build host after it.
+  bootstrap; `.#nix` is the nixpkgs Nix package for a build host after it.
 
 ## Building
 
@@ -63,40 +57,20 @@ nix flake check        # both architectures, losos-security's tests, and
                        # (on a builder with KVM) a VM boot test
 ```
 
-From an empty cache that is the whole OS from source: about 2,560
-derivations for one architecture's release, a compiler bootstrap, LLVM,
-rustc, WebKit, SpiderMonkey and the kernel among them -- days on one
-machine, not hours. With the project's cache configured (below), a build
-compiles only what changed. The image is built by `systemd-repart` inside
+The stock nixpkgs closure is substituted from cache.nixos.org when available;
+the image and project-specific packages are built locally unless present in
+the project's cache (below). The image is built by `systemd-repart` inside
 the build sandbox; it needs no loop device, no root and no KVM. Only the VM
 test needs KVM.
 
-## musl
+## glibc and stock packages
 
-`flake.nix` sets the host platform to `x86_64-unknown-linux-musl` or
-`aarch64-unknown-linux-musl`. Only the host changes, so this is a native
-build of a musl nixpkgs, not a cross build, and any builder of the same
-architecture runs it. Both architectures evaluate, image and release
-included, with no package refusing the platform.
-
-`nixos/modules/musl.nix` holds what follows from it:
-
-- **No GHC.** ShellCheck (behind `writeShellApplication`'s lint) and pandoc
-  (behind two packages' man pages) are Haskell, and pulled a musl GHC and a
-  hundred Haskell libraries into the build; nixpkgs' own switch for platforms
-  without GHC turns both off. The NixOS manual goes too, because rendering it
-  runs Nix itself. Together that is 354 fewer derivations.
-- **glibc appears once, as source.** NixOS's setuid wrapper copies glibc's
-  list of unsafe environment variables out of the glibc tarball at build
-  time. Nothing links against glibc.
-- **Accounts are the gap.** musl has no NSS, so `nss-systemd` is not built
-  and `getpwnam()` reads `/etc/passwd` and then asks an nscd socket. A
-  systemd-homed user is in neither unless whatever answers that socket asks
-  systemd's userdb, and nsncd, which answers it today, looks users up with
-  the same musl `getpwnam()`. So GDM will not see a homed user on this build.
-  The fix is small and specific: an nscd-protocol forwarder that answers from
-  `io.systemd.UserDatabase` over Varlink. It is not written yet, and the build
-  prints a warning until it is.
+`flake.nix` selects nixpkgs' standard `x86_64-linux` and `aarch64-linux`
+platforms. The NixOS configuration uses nixpkgs' stock glibc packages; its
+only overlay adds this repository's own packages. In particular, ShellCheck
+and the package-generated documentation retain nixpkgs' defaults. glibc NSS
+lets GDM and ordinary account lookups see systemd-homed users through
+`nss-systemd` and the configured nscd forwarder.
 
 ## Binary cache
 
@@ -120,12 +94,13 @@ fetches. It serves two things from this project's GHCR namespace:
 To use it for a build:
 
 ```
-substituters = https://<proxy>/
-trusted-public-keys = <the public half of NIX_CACHE_SIGNING_KEY>
+substituters = https://cache.nixos.org/ https://<proxy>/
+trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= <the public half of NIX_CACHE_SIGNING_KEY>
 ```
 
-`substituters` replaces cache.nixos.org rather than adding to it; with it
-unset, Nix's default is cache.nixos.org, whose glibc builds this OS is not.
+Keep cache.nixos.org in the substituter list when adding the project cache.
+Without the optional project cache, Nix's default cache.nixos.org remains
+enabled.
 
 What has to be set up once, outside the repository:
 
@@ -140,8 +115,11 @@ What has to be set up once, outside the repository:
    stored as the secret `NIX_CACHE_SIGNING_KEY`; its public half, from `nix
    key convert-secret-to-public`, as the variable `NIX_CACHE_PUBLIC_KEY`.
 4. **`LOSOS_PROXY_URL`**, the deployment's URL without a trailing slash, as a
-   repository variable. Until it is set, CI builds from source every time,
-   pushes nothing, and images update from the GitHub release as before.
+   repository variable. This lets CI and local builds fetch paths through the
+   proxy alongside cache.nixos.org. CI uploads its signed cache paths to GHCR
+   whenever `NIX_CACHE_SIGNING_KEY` is configured, even if this URL is unset;
+   the proxy can serve them once configured. Images update from the GitHub
+   release as before.
 
 Before setting `LOSOS_PROXY_URL`, check the public deployment without a
 Vercel login: `/nix-cache-info` must return the cache metadata, an absent
@@ -184,8 +162,8 @@ generation, and a pin moves by hand.
 ## nixpkgs in a pm build
 
 All of nixpkgs is reachable from a pm build file, at the revision
-`flake.lock` pins and built the way this OS builds it: from source, against
-musl. The flake's `legacyPackages` is the image's own package set, so
+`flake.lock` pins and built for the same stock glibc platform as this OS.
+The flake's `legacyPackages` is the image's own package set, so
 `.#ripgrep` is nixpkgs' ripgrep, and the same store path the image would carry.
 `.#pm-payloads.ripgrep` is what a pm package can actually hold
 (`nixos/pkgs/pm-payloads.nix`): the same package from `pkgsStatic`, every output
@@ -273,7 +251,7 @@ That buys two things the pm tree wrote down as limits:
 | pm tree (removed) | NixOS | Notes |
 |---|---|---|
 | `recipes/10-systemd/linux`, `losos.config` | nixpkgs' kernel, `hardware.nix` | nixpkgs' `common-config.nix` already sets what systemd needs, `CONFIG_HIDRAW` included. zswap is built in and off, and `boot.zswap.enable` turns it on |
-| `recipes/10-systemd/nvidia-open` | nouveau, in nixpkgs' kernel | dropped. `nvidia.ko` only serves NVIDIA's glibc userspace, which the image leaves out, and Mesa's NVK uses nouveau. `hardware.nix` says why |
+| `recipes/10-systemd/nvidia-open` | nouveau, in nixpkgs' kernel | not configured; Mesa's NVK uses nouveau. `hardware.nix` says why |
 | `recipes/00-*` through `30-gnome`, `manifest/`, `share/` | nixpkgs 26.05 | every package the recipes built. Their build-system patches existed only for the CFI toolchain |
 | `recipes/30-gnome/gnome-control-center` patches | `nixos/pkgs/patches/gnome-control-center/` | kept and not applied, see "What is not done" |
 | `recipes/90-image/losos-image` (mkosi), `plugins/` | `nixos/modules/image.nix` (`image/repart.nix`) | the same `systemd-repart`; no fingerprint table to get past, so no plugins |
@@ -305,8 +283,8 @@ NixOS requires one:
 
 - **nsncd.** The `homed` module asserts `services.nscd.enable`: NixOS routes
   NSS through a forwarder so a libc can find `nss-systemd` in the store. It is
-  stateless and holds no idea of its own about who exists. On musl it has
-  nothing to forward to; "musl" above says what that costs.
+  stateless and holds no idea of its own about who exists. glibc's NSS uses it
+  to find `nss-systemd`.
 - **nftables.** systemd has no packet filter. The pm tree shipped none at all;
   this keeps NixOS's firewall and opens mDNS and LLMNR for resolved.
 - **A PAM stack.** The pm tree shipped none, and `docs/limits.md` said nothing
@@ -374,11 +352,8 @@ bytes the image boots.
   `explain`), and the boot test checks it is installed, but a recipe written
   for an FHS host does not build on it. For the same reason seven of pm's test targets
   are skipped in the nix build (the list is in `nixos/pkgs/pm.nix`).
-- **A homed login on musl.** See "musl": it needs an nscd forwarder backed by
-  systemd's userdb, which is not written.
-- **A complete from-source build.** Both architectures evaluate, and the
-  musl toolchain compiles here, but no one has built the whole musl image
-  yet: that is what CI's budgeted, cache-filling runs converge on.
+- **A complete image build.** CI builds release images within its runner time
+  budget; local image builds may take longer.
 - **No stable channel.** CI publishes `nightly` from `main` and nothing else.
   A `stable` release needs a second release output built with
   `losos.channel = "stable"`, and the flake has only the one.
