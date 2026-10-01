@@ -302,12 +302,16 @@ jobs:
           # Every file name carries its architecture, so the two manifests
           # merge by concatenation. sysupdate reads one SHA256SUMS per channel.
           sort -u -k2 sums > release/SHA256SUMS
-          if [ -s release/SHA256SUMS ]; then
+          # The step below deletes the old release before creating the new
+          # one. Publishing with one architecture missing would delete that
+          # architecture's last good files while its GHCR tag still pointed
+          # at them, so a run publishes both or neither.
+          if [ -f refs/release-ref-x86_64.txt ] && [ -f refs/release-ref-aarch64.txt ]; then
             echo "any=true" >> "$GITHUB_OUTPUT"
             ls -l release
           else
             echo "any=false" >> "$GITHUB_OUTPUT"
-            echo "No architecture reached GHCR, so there is nothing to publish."
+            echo "::warning::Only some architectures reached GHCR, so the nightly release stays as it was."
           fi
 
       # proxy/ serves `images:nightly-<arch>` at /updates/nightly/<arch>/, so

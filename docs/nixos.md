@@ -108,8 +108,10 @@ fetches. It serves two things from this project's GHCR namespace:
   path through it against a fake registry; the tests are in `proxy/test/`.
 - **Updates.** `/updates/<channel>/<arch>/<file>` serves a file of
   `images:<channel>-<arch>`, which CI's publish job moves to each release
-  that passed verification. `losos.update.baseUrl` points the image's
-  sysupdate transfers there.
+  that passed verification. Setting `losos.update.baseUrl` to
+  `<proxy>/updates/<channel>/<arch>/` points an image's sysupdate transfers
+  there. Nothing sets it yet, so a published image still updates from the
+  GitHub release, the option's default.
 
 To use it for a build:
 
@@ -259,7 +261,7 @@ That buys two things the pm tree wrote down as limits:
 | pm tree (removed) | NixOS | Notes |
 |---|---|---|
 | `recipes/10-systemd/linux`, `losos.config` | nixpkgs' kernel, `hardware.nix` | nixpkgs' `common-config.nix` already sets what systemd needs, `CONFIG_HIDRAW` included. zswap is built in and off, and `boot.zswap.enable` turns it on |
-| `recipes/10-systemd/nvidia-open` | `nvidiaPackages.stable.open` in `hardware.nix` | the same open kernel modules, built from source, with the same `nvidia_drm` options. No proprietary userspace, as before |
+| `recipes/10-systemd/nvidia-open` | nouveau, in nixpkgs' kernel | dropped. `nvidia.ko` only serves NVIDIA's glibc userspace, which the image leaves out, and Mesa's NVK uses nouveau. `hardware.nix` says why |
 | `recipes/00-*` through `30-gnome`, `manifest/`, `share/` | nixpkgs 26.05 | every package the recipes built. Their build-system patches existed only for the CFI toolchain |
 | `recipes/30-gnome/gnome-control-center` patches | `nixos/pkgs/patches/gnome-control-center/` | kept and not applied, see "What is not done" |
 | `recipes/90-image/losos-image` (mkosi), `plugins/` | `nixos/modules/image.nix` (`image/repart.nix`) | the same `systemd-repart`; no fingerprint table to get past, so no plugins |

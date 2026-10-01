@@ -61,8 +61,9 @@ a module edit.
   and then fails on the builder. musl has no NSS, so `getpwnam()` cannot see a
   systemd-homed user, and GDM won't list one until someone writes an nscd
   forwarder that answers from `io.systemd.UserDatabase` (`docs/nixos.md`,
-  "musl"). Nothing prebuilt against glibc loads at all, NVIDIA's userspace
-  included, which is why `hardware.nix` takes only the open kernel modules.
+  "musl"). Nothing prebuilt against glibc loads at all. That includes NVIDIA's
+  userspace, so NVIDIA GPUs run on nouveau and Mesa's NVK, and the image
+  ships no `nvidia.ko`.
 - **cache.nixos.org is off.** Its binaries are glibc builds. A build
   substitutes only from the project's own cache and refuses any path not
   signed by the key it was given.
