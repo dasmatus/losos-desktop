@@ -247,7 +247,9 @@ purpose: hosted Ubuntu runners, and every step through the same entry points a
 person uses. The `pm` job builds the build host from the `Containerfile`,
 then runs pm's build, `just plugins`, `just check`, `just fetch` and `just
 build` in it via `tools/container run`, per architecture, and names the
-release. Outside a pull request it pushes that to GHCR with `oras`; `verify`
+release. Outside a pull request `push` uploads that to GHCR with `oras`, from a
+job of its own so the token that can write a package never sits beside the
+upstream build systems `pm` runs; `verify`
 boots it and applies an update with `tools/vm-test`, and `publish` replaces
 the `nightly` (or, for a `v*` tag, `stable`) GitHub release and moves the
 `images:<channel>-<arch>` tag `proxy/` serves updates from. The `flake` job

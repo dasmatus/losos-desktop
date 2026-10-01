@@ -51,9 +51,11 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    # Read-only on every event, a push to main included. This job runs ninety
+    # upstream build systems, and none of them needs a token that can write a
+    # package; the push job below holds that, and runs none of them.
     permissions:
       contents: read
-      packages: write
     outputs:
       channel: ${{ steps.channel.outputs.name }}
     steps:
@@ -138,66 +140,43 @@ jobs:
           python3 tools/container run -- just release-manifest -- \
             --arch ${{ matrix.arch }} --version "$VERSION" release
           ls -l release
+          # The push job's version, carried with the files it names rather than
+          # as a job output: a matrix job's output is whichever leg wrote last,
+          # and the two legs can straddle midnight.
+          # Written from inside the build host, which owns out/. Single quotes
+          # on purpose: $1 is the inner shell's.
+          # shellcheck disable=SC2016
+          python3 tools/container run -- sh -euc \
+            'printf "VERSION=%s\n" "$1" > out/release.env' _ "$VERSION"
 
-      # GHCR is the handoff to the verify and publish jobs, so the images are
-      # not re-uploaded as workflow artifacts. A pull request never pushes.
-      - uses: oras-project/setup-oras@v1
-        if: github.event_name != 'pull_request'
-
-      - name: Push the release to GHCR
-        id: push
-        if: github.event_name != 'pull_request'
-        working-directory: losos-desktop/release
-        env:
-          CHANNEL: ${{ steps.channel.outputs.name }}
-          VERSION: ${{ steps.channel.outputs.version }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          printf '%s' "$GHCR_TOKEN" \
-            | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          oras push "ghcr.io/${GITHUB_REPOSITORY,,}/images:$CHANNEL-$VERSION-${{ matrix.arch }}" \
-            --artifact-type application/vnd.losos.release.v1 \
-            --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            --annotation "org.opencontainers.image.version=$VERSION" \
-            --format json \
-            -- * | jq -r .reference > "$GITHUB_WORKSPACE/release-ref-${{ matrix.arch }}.txt"
-          ref=$(cat "$GITHUB_WORKSPACE/release-ref-${{ matrix.arch }}.txt")
-          echo "reference=$ref" >> "$GITHUB_OUTPUT"
-          echo "- ${{ matrix.arch }}: \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        if: steps.push.outputs.reference != ''
-        with:
-          name: release-ref-${{ matrix.arch }}
-          path: release-ref-${{ matrix.arch }}.txt
-          if-no-files-found: error
-          retention-days: 3
-
-      # The built packages, signed and published beside the image, so a
-      # machine running pm can pull them. Signed with the repo-local key
-      # `just sign` keeps under .pm-config, which nothing trusts by default:
-      # README.md says how a consumer opts in.
-      - name: Sign and publish the packages to GHCR
+      # Signing needs no token: the key is the repo-local one `just sign` keeps
+      # under .pm-config, which nothing trusts by default (README.md says how
+      # a consumer opts in).
+      - name: Sign the packages
         if: github.event_name != 'pull_request'
         working-directory: losos-desktop
-        env:
-          CHANNEL: ${{ steps.channel.outputs.name }}
-          VERSION: ${{ steps.channel.outputs.version }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REGISTRY_AUTH_FILE: ${{ runner.temp }}/packages-auth.json
         run: |
           # Single quotes on purpose: $PM and $PWD are the container's.
           # shellcheck disable=SC2016
           python3 tools/container run -- sh -euc \
             'export XDG_CONFIG_HOME="$PWD/.pm-config"; for p in out/pkgs/*.cpkg; do "$PM" sign "$p"; done'
-          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
-          printf '%s' "$GHCR_TOKEN" | skopeo login --authfile "$REGISTRY_AUTH_FILE" \
-            --username "$GITHUB_ACTOR" --password-stdin ghcr.io
-          python3 tools/pm-oci publish \
-            --repository "ghcr.io/${GITHUB_REPOSITORY,,}/packages" \
-            --tag "$CHANNEL-$VERSION-${{ matrix.arch }}" --arch ${{ matrix.arch }} \
-            --source-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Handed to the push job as an artifact rather than pushed from here, so
+      # the token that can write to GHCR is never in a job that runs upstream
+      # code. A pull request uploads nothing and pushes nothing.
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: pm-${{ matrix.arch }}
+          path: |
+            losos-desktop/release/
+            losos-desktop/out/release.env
+            losos-desktop/out/pkgs/*.cpkg
+            losos-desktop/out/pkgs/*.cpkg.sig
+          if-no-files-found: error
+          # The images are compressed already.
+          compression-level: 0
+          retention-days: 3
 
       - name: Disk after the build
         if: always()
@@ -234,11 +213,79 @@ jobs:
             tail -n 120 "$f"
           done
 
+  # Push what the pm build made to GHCR, the handoff to verify and publish.
+  # The only pm job with a token that can write a package, and it builds
+  # nothing: it uploads files the build job already finished.
+  push:
+    needs: [pm]
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: losos-desktop, persist-credentials: false }
+      - uses: actions/download-artifact@v4
+        with: { name: "pm-${{ matrix.arch }}", path: losos-desktop }
+      - uses: oras-project/setup-oras@v1
+      - name: Read the version the build named its files with
+        run: cat losos-desktop/out/release.env >> "$GITHUB_ENV"
+
+      - name: Push the release to GHCR
+        id: push
+        working-directory: losos-desktop/release
+        env:
+          CHANNEL: ${{ needs.pm.outputs.channel }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" \
+            | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          oras push "ghcr.io/${GITHUB_REPOSITORY,,}/images:$CHANNEL-$VERSION-${{ matrix.arch }}" \
+            --artifact-type application/vnd.losos.release.v1 \
+            --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --annotation "org.opencontainers.image.version=$VERSION" \
+            --format json \
+            -- * | jq -r .reference > "$GITHUB_WORKSPACE/release-ref-${{ matrix.arch }}.txt"
+          ref=$(cat "$GITHUB_WORKSPACE/release-ref-${{ matrix.arch }}.txt")
+          echo "reference=$ref" >> "$GITHUB_OUTPUT"
+          echo "- ${{ matrix.arch }}: \`$ref\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.push.outputs.reference != ''
+        with:
+          name: release-ref-${{ matrix.arch }}
+          path: release-ref-${{ matrix.arch }}.txt
+          if-no-files-found: error
+          retention-days: 3
+
+      # The signed packages, beside the image, so a machine running pm can
+      # pull them.
+      - name: Publish the packages to GHCR
+        working-directory: losos-desktop
+        env:
+          CHANNEL: ${{ needs.pm.outputs.channel }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_AUTH_FILE: ${{ runner.temp }}/packages-auth.json
+        run: |
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          printf '%s' "$GHCR_TOKEN" | skopeo login --authfile "$REGISTRY_AUTH_FILE" \
+            --username "$GITHUB_ACTOR" --password-stdin ghcr.io
+          python3 tools/pm-oci publish \
+            --repository "ghcr.io/${GITHUB_REPOSITORY,,}/packages" \
+            --tag "$CHANNEL-$VERSION-${{ matrix.arch }}" --arch ${{ matrix.arch }} \
+            --source-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
   # Boot what the pm build made, and apply an update to it. A sysupdate
   # transfer that matches nothing reports "no update available" rather than
   # failing, so applying one is the only proof the definitions are right.
   verify:
-    needs: [pm]
+    needs: [push]
     if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
@@ -368,6 +415,13 @@ jobs:
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+
+      # Everything in the store now came from the installer, prebuilt. The
+      # push below leaves it out, so the cache holds only what this job
+      # compiled (and the pinned sources it fetched to do so).
+      - name: Note what came prebuilt
+        run: nix path-info --all > "$RUNNER_TEMP/prebuilt.txt"
 
       - name: Build the release
         id: build
@@ -387,9 +441,10 @@ jobs:
             exit 1
           fi
 
-      # Every valid path, not only the release's closure: after a run that
-      # ran out of time the closure is not realised, but what was built is on
-      # disk and is exactly what the next run would otherwise compile again.
+      # Every valid path the build added, not only the release's closure:
+      # after a run that ran out of time the closure is not realised, but what
+      # was built is on disk and is exactly what the next run would otherwise
+      # compile again.
       # A pull request never pushes; its run reads the cache and writes nothing.
       - uses: oras-project/setup-oras@v1
         if: always() && github.event_name != 'pull_request' && env.NIX_CACHE_URL != ''
@@ -408,6 +463,7 @@ jobs:
           umask 077
           printf '%s' "$NIX_CACHE_SIGNING_KEY" > "$RUNNER_TEMP/cache.sec"
           python3 tools/nix-cache-push --all \
+            --exclude-from "$RUNNER_TEMP/prebuilt.txt" \
             --repository "ghcr.io/${GITHUB_REPOSITORY,,}/nix-cache" \
             --secret-key-file "$RUNNER_TEMP/cache.sec"
           rm -f "$RUNNER_TEMP/cache.sec"
@@ -436,13 +492,14 @@ jobs:
   # The one check branch protection looks for, so a skipped or cancelled leg
   # never reads as green.
   ci:
-    needs: [pm, verify, flake, proxy]
+    needs: [pm, push, verify, flake, proxy]
     if: always()
     runs-on: ubuntu-24.04
     steps:
       - name: Require every job
         env:
           PM: ${{ needs.pm.result }}
+          PUSH: ${{ needs.push.result }}
           VERIFY: ${{ needs.verify.result }}
           FLAKE: ${{ needs.flake.result }}
           PROXY: ${{ needs.proxy.result }}
@@ -450,7 +507,8 @@ jobs:
           test "$PM" = success
           test "$FLAKE" = success
           test "$PROXY" = success
-          # verify does not run on a pull request, which never pushes an image.
+          # push and verify do not run on a pull request, which never pushes.
+          test "$PUSH" = success || test "$PUSH" = skipped
           test "$VERIFY" = success || test "$VERIFY" = skipped
 
   # Publish the pm build to the channel's GitHub release and move the
@@ -459,12 +517,12 @@ jobs:
   # whatever reached GHCR even if verification failed, because that is what the
   # person dispatching asked for; a push to main or a tag keeps the gate.
   publish:
-    needs: [pm, verify]
+    needs: [pm, push, verify]
     if: >-
       always() && github.event_name != 'pull_request' &&
-      needs.pm.result != 'skipped' && needs.pm.result != 'cancelled' &&
+      needs.push.result != 'skipped' && needs.push.result != 'cancelled' &&
       (github.event_name == 'workflow_dispatch' ||
-       (needs.pm.result == 'success' && needs.verify.result == 'success'))
+       (needs.push.result == 'success' && needs.verify.result == 'success'))
     runs-on: ubuntu-24.04
     permissions:
       contents: write

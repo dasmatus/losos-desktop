@@ -11,6 +11,9 @@ const NARINFO = `StorePath: /nix/store/${HASH}-hello\nURL: nar/${NAR}\nNarHash: 
 const D1 = `sha256:${"1".repeat(64)}`;
 const D2 = `sha256:${"2".repeat(64)}`;
 const D3 = `sha256:${"3".repeat(64)}`;
+const D4 = `sha256:${"4".repeat(64)}`;
+// Not valid UTF-8 anywhere: the bytes a binary OpenPGP signature starts with.
+const SIGNATURE = new Uint8Array([0x89, 0x02, 0x33, 0x04, 0x00, 0x01, 0x08, 0xff, 0xfe, 0x80]);
 const layer = (digest, title) => ({
   digest,
   annotations: { "org.opencontainers.image.title": title },
@@ -20,10 +23,11 @@ const ARTIFACTS = {
   [`dasmatus/losos-desktop/nix-cache:${HASH}`]: [layer(D1, `${HASH}.narinfo`), layer(D2, NAR)],
   "dasmatus/losos-desktop/images:nightly-x86_64": [
     layer(D3, "SHA256SUMS"),
+    layer(D4, "SHA256SUMS.gpg"),
     layer(D2, "losos-desktop_1_x86_64.efi"),
   ],
 };
-const BLOBS = { [D1]: NARINFO, [D3]: "abc  losos-desktop_1_x86_64.efi\n" };
+const BLOBS = { [D1]: NARINFO, [D3]: "abc  losos-desktop_1_x86_64.efi\n", [D4]: SIGNATURE };
 
 function registry(log = []) {
   return async (url, init = {}) => {
@@ -84,6 +88,13 @@ test("sysupdate's SHA256SUMS is served inline, its images redirected", async () 
   assert.equal(await sums.text(), BLOBS[D3]);
   const efi = await get(h, "updates/nightly/x86_64/losos-desktop_1_x86_64.efi");
   assert.equal(efi.status, 302);
+});
+
+test("SHA256SUMS.gpg comes back byte for byte", async () => {
+  const response = await get(handler(core, env, registry()), "updates/nightly/x86_64/SHA256SUMS.gpg");
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/pgp-signature");
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), SIGNATURE);
 });
 
 test("a crafted path never reaches the registry", async () => {

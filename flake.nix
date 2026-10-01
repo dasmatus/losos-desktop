@@ -10,6 +10,7 @@
 #   nix build .#installer          the same image, booting the installer
 #   nix build .#release            what a GitHub release uploads, with SHA256SUMS
 #   nix run .#vm                   boot the image in QEMU with UEFI firmware
+#   nix build .#pm-payloads.<pkg>  any nixpkgs package, static, for a pm build file
 #   nix flake check                evaluate both architectures, test losos-security,
 #                                  and (with KVM) boot the image
 {
@@ -115,6 +116,16 @@
           nix = ours.nix;
           default = build.image;
         }
+      );
+
+      # The whole of nixpkgs at the pinned revision, as this OS builds it: musl,
+      # from source, with this repository's overlay. `nix build .#<package>`
+      # reaches any of it, and `.#pm-payloads.<package>` is the same package
+      # static and laid out for a pm build file to install (docs/nixos.md,
+      # "nixpkgs in a pm build"). It is the system's own package set, so a
+      # package here and the same package in the image are one store path.
+      legacyPackages = forAllSystems (
+        system: _: self.nixosConfigurations."losos-desktop-${archOf system}".pkgs
       );
 
       checks = forAllSystems (

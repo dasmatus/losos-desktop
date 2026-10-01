@@ -14,7 +14,8 @@ CI wants after a build that ran out of time: whatever finished is kept.
 
   tools/nix-cache-push --repository ghcr.io/owner/name/nix-cache \\
       --secret-key-file key.sec ./result
-  tools/nix-cache-push --repository ... --secret-key-file ... --all
+  tools/nix-cache-push --repository ... --secret-key-file ... --all \\
+      --exclude-from store-before-build.txt
 
 Needs `nix` and `oras` on PATH, and GHCR_TOKEN (a token that may write packages)
 for the existence checks; `oras` must already be logged in. The secret key never
@@ -112,20 +113,25 @@ def push_one(staging, repository, store_hash, dry_run):
     # layers up by title, so both files must be named bare: link them into a
     # directory of their own rather than pushing `nar/<file>`.
     bundle = staging / "push" / store_hash
+    # A kept --staging may still hold this bundle from a run whose push failed;
+    # linking over it would fail, and stop the retry --staging is there for.
+    shutil.rmtree(bundle, ignore_errors=True)
     bundle.mkdir(parents=True)
-    os.link(narinfo, bundle / narinfo.name)
-    os.link(nar, bundle / nar.name)
-    argv = [
-        "oras", "push", f"{repository}:{store_hash}",
-        "--artifact-type", ARTIFACT_TYPE,
-        f"{narinfo.name}:application/x-nix-narinfo",
-        f"{nar.name}:application/x-nix-nar",
-    ]
-    if dry_run:
-        print(" ".join(argv))
-    else:
-        run(*argv, cwd=bundle, stdout=subprocess.DEVNULL)
-    shutil.rmtree(bundle)
+    try:
+        os.link(narinfo, bundle / narinfo.name)
+        os.link(nar, bundle / nar.name)
+        argv = [
+            "oras", "push", f"{repository}:{store_hash}",
+            "--artifact-type", ARTIFACT_TYPE,
+            f"{narinfo.name}:application/x-nix-narinfo",
+            f"{nar.name}:application/x-nix-nar",
+        ]
+        if dry_run:
+            print(" ".join(argv))
+        else:
+            run(*argv, cwd=bundle, stdout=subprocess.DEVNULL)
+    finally:
+        shutil.rmtree(bundle, ignore_errors=True)
     return store_hash
 
 
@@ -144,12 +150,23 @@ def main():
     parser.add_argument(
         "--staging", type=Path, help="keep the signed file cache here (default: temporary)"
     )
+    parser.add_argument(
+        "--exclude-from",
+        type=Path,
+        help="a file of store paths never to push, one per line, such as the store before a build",
+    )
     parser.add_argument("installables", nargs="*")
     args = parser.parse_args()
     if not args.all and not args.installables:
         parser.error("name what to push, or --all")
 
     paths = store_paths(args.installables, args.all)
+    if args.exclude_from:
+        # The cache holds what was compiled here. With --all, a store also holds
+        # what arrived prebuilt -- the Nix that runs the build, from its
+        # installer -- and signing that would vouch for bytes nobody here made.
+        excluded = set(args.exclude_from.read_text().split())
+        paths = [p for p in paths if p not in excluded]
     if args.dry_run:
         missing = paths
     else:
