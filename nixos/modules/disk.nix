@@ -42,6 +42,14 @@ in
   # so shipping it is all the wiring needed.
   boot.initrd.systemd.additionalUpstreamUnits = [ "initrd-usr-fs.target" ];
 
+  # repart formats what it creates by running mkfs.ext4 and mkswap from the
+  # initrd's PATH, and neither was there: no fileSystems entry names root or
+  # /home, since gpt-auto finds them, so nothing told NixOS the initrd needs
+  # ext4. Declaring it brings e2fsprogs and the module; mkswap comes alone,
+  # because the rest of util-linux has no business in the initrd.
+  boot.initrd.supportedFilesystems.ext4 = true;
+  boot.initrd.systemd.extraBin.mkswap = "${pkgs.util-linux}/bin/mkswap";
+
   boot.initrd.systemd.services.systemd-repart = {
     # NixOS orders repart after sysroot.mount by default, because without a
     # device argument repart discovers the disk from what is mounted. On the
