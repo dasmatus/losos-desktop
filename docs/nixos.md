@@ -40,6 +40,10 @@ Everything the flake builds from, besides this repository:
 - **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
   (`nixos/pkgs/pm.nix`), and **crates.io**, for its and losos-security's
   dependencies, each pinned by `Cargo.lock` and checked by hash.
+- **Device firmware**, from nixpkgs' `linux-firmware`, pinned by hash like any
+  source. It is prebuilt by the hardware vendors, and nothing can compile it.
+  `hardware.nix` ships it because amdgpu and nouveau cannot start current
+  GPUs without it.
 - **The project's binary cache** in GHCR, through `proxy/` (below): paths
   this project's CI compiled and signed. A client checks every narinfo
   against the one public key it was told to trust, so the proxy and GHCR

@@ -11,6 +11,12 @@
   # it on the command line and in sysfs, with zstd as the compressor.
   boot.zswap.enable = true;
 
+  # GPU firmware from linux-firmware. amdgpu needs it to start any AMD GPU,
+  # and nouveau needs NVIDIA's GSP firmware for Turing and newer. Without it
+  # both fall back to llvmpipe. These are prebuilt vendor blobs, because no
+  # source for them exists (docs/nixos.md, "What this trusts from outside").
+  hardware.enableRedistributableFirmware = true;
+
   # No NVIDIA kernel module. nvidia.ko, open or not, serves NVIDIA's own
   # userspace, which is prebuilt against glibc and cannot load into a musl
   # process. Mesa's NVK drives NVIDIA GPUs through the in-tree nouveau driver
