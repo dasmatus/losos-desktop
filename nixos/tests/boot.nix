@@ -118,7 +118,12 @@
           machine.succeed("getent passwd alice")
 
       with subtest("sysupdate sees the installed version"):
-          machine.succeed("${nodes.machine.systemd.package}/lib/systemd/systemd-sysupdate list | grep -q '1'")
+          # The test VM has no route to the release feed, and without
+          # --offline sysupdate fails on the download before listing what is
+          # installed.
+          machine.succeed(
+              "${nodes.machine.systemd.package}/lib/systemd/systemd-sysupdate --offline list | grep -q '1'"
+          )
 
       with subtest("pm is installed as the system manager"):
           machine.succeed("pm --help")
