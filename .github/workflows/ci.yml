@@ -124,11 +124,13 @@ jobs:
       # Every path the build added goes to the cache, not only the release's
       # closure. After a run that ran out of time the closure is not complete,
       # but what was built is on disk, and the next run would otherwise
-      # compile it again. A pull request reads the cache and writes nothing.
+      # build it again. A pull request reads the cache and writes nothing.
+      # Uploading is independent of NIX_CACHE_URL: the GHCR paths can be served
+      # by the proxy later, even when CI is not configured to fetch through it.
       - uses: oras-project/setup-oras@v1
-        if: always() && github.event_name != 'pull_request' && env.NIX_CACHE_URL != ''
+        if: always() && github.event_name != 'pull_request'
       - name: Push what was built to the cache
-        if: always() && github.event_name != 'pull_request' && env.NIX_CACHE_URL != ''
+        if: always() && github.event_name != 'pull_request'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NIX_CACHE_SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}

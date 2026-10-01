@@ -115,9 +115,11 @@ What has to be set up once, outside the repository:
    stored as the secret `NIX_CACHE_SIGNING_KEY`; its public half, from `nix
    key convert-secret-to-public`, as the variable `NIX_CACHE_PUBLIC_KEY`.
 4. **`LOSOS_PROXY_URL`**, the deployment's URL without a trailing slash, as a
-   repository variable. Until it is set, CI still substitutes stock nixpkgs
-   packages from cache.nixos.org but does not push paths to GHCR. Images
-   update from the GitHub release as before.
+   repository variable. This lets CI and local builds fetch paths through the
+   proxy alongside cache.nixos.org. CI uploads its signed cache paths to GHCR
+   whenever `NIX_CACHE_SIGNING_KEY` is configured, even if this URL is unset;
+   the proxy can serve them once configured. Images update from the GitHub
+   release as before.
 
 Before setting `LOSOS_PROXY_URL`, check the public deployment without a
 Vercel login: `/nix-cache-info` must return the cache metadata, an absent
