@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Preload an installable's fixed-output inputs from cache.nixos.org, checking
+# copied outputs against the hash declared by their derivations.
+#
+# The closure's fixed-output paths include upstream sources and can include
+# pinned bootstrap tools or upstream prebuilt compilers. A cold build fetches
+# more than two thousand upstream inputs, and one upstream timing out or
+# answering 5xx fails the whole run before anything compiles. cache.nixos.org
+# holds nearly all of them, because a fixed-output path depends only on its
+# name and hash, never on libc.
+#
+# Only fixed-output paths are copied, each by its exact store path. Some of
+# cache.nixos.org's narinfos carry no CA field and cannot verify themselves, so
+# every copied flat or NAR output is hashed here against its declared hash.
+# A mismatch or unsupported hash method is deleted and fails the run. Whatever
+# cache.nixos.org lacks is left for the build to fetch from upstream.
+#
+#   tools/nix-fetch-sources .#release
+#
+# Other options: --jobs N (parallel copies, 16), --dry-run (list what would
+# be copied).
+#
+# Needs `nix` and `jq` on PATH, and runs `nix copy` and `nix store delete`
+# through sudo, because a daemon client that is not a trusted user cannot
+# pass --no-check-sigs.
+set -euo pipefail
+
+usage() {
+  sed -n 's/^#   //p' "$0" >&2
+  exit 2
+}
+
+jobs=16 dry_run='' installable=''
+while [ $# -gt 0 ]; do
+  case $1 in
+    --jobs) jobs=$2; shift 2 ;;
+    --dry-run) dry_run=1; shift ;;
+    -h|--help) usage ;;
+    -*) echo "nix-fetch-sources: unknown option $1" >&2; usage ;;
+    *) [ -z "$installable" ] || usage; installable=$1; shift ;;
+  esac
+done
+[ -n "$installable" ] || usage
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# Every fixed-output derivation in the closure, as "<drv> <method> <hash>".
+# A fixed output has exactly one output, `out`, so the lists below line up.
+nix derivation show -r "$installable" \
+  | jq -r '(.derivations // .) | to_entries[]
+      | select(.value.outputs.out.hash? != null)
+      | "\(.key) \(.value.outputs.out.method // "flat") \(.value.outputs.out.hash)"' \
+  | sed 's|^\([^/]\)|/nix/store/\1|' >"$work/fods"
+cut -d' ' -f1 "$work/fods" | xargs -r nix-store --query --outputs >"$work/outs"
+paste -d' ' "$work/outs" "$work/fods" | cut -d' ' -f1,3,4 >"$work/all"
+
+# What the store already holds stays as it is.
+: >"$work/missing"
+while read -r out method hash; do
+  [ -e "$out" ] || printf '%s %s %s\n' "$out" "$method" "$hash" >>"$work/missing"
+done <"$work/all"
+echo "nix-fetch-sources: $(wc -l <"$work/all") fixed-output paths, $(wc -l <"$work/missing") not in the store"
+if [ -n "$dry_run" ]; then
+  cut -d' ' -f1 "$work/missing"
+  exit 0
+fi
+
+# A path cache.nixos.org lacks fails its copy, and the build fetches it later.
+# shellcheck disable=SC2016 # $1 is the inner shell's, not this one's.
+cut -d' ' -f1 "$work/missing" \
+  | xargs -r -P "$jobs" -n 1 sh -c \
+    'sudo nix copy --no-recursive --no-check-sigs --from https://cache.nixos.org "$1" 2>/dev/null || true' _
+
+copied=0 bad=0
+while read -r out method hash; do
+  [ -e "$out" ] || continue
+  algo=${hash%%-*}
+  case $method in
+    flat) got=$(nix hash file --sri --type "$algo" "$out") ;;
+    nar) got=$(nix hash path --sri --type "$algo" "$out") ;;
+    # Text-hashed and git-hashed outputs use other hash semantics, so this
+    # script rejects them rather than trusting an unchecked result.
+    *) got='' ;;
+  esac
+  if [ "$got" = "$hash" ]; then
+    copied=$((copied + 1))
+  else
+    echo "nix-fetch-sources: $out: expected $hash, got ${got:-an unchecked $method output}" >&2
+    sudo nix store delete "$out" >/dev/null
+    bad=$((bad + 1))
+  fi
+done <"$work/missing"
+echo "nix-fetch-sources: copied $copied, $(($(wc -l <"$work/missing") - copied - bad)) left to fetch from upstream"
+[ "$bad" = 0 ]

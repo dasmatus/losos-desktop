@@ -98,9 +98,16 @@ jobs:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
 
-      # Record the store before building so the cache push excludes the Nix
-      # installer and its prebuilt closure.
+      # Fixed-output inputs come from cache.nixos.org where it has them, with
+      # copied outputs checked against their hashes. This includes pinned
+      # bootstrap and compiler inputs as well as upstream source archives.
+      - name: Fetch fixed-output inputs
+        run: tools/nix-fetch-sources .#release
+
+      # Record the store after preloading so the cache push excludes both the
+      # Nix installer and every path added by the fetch, even if it failed.
       - name: Note what came prebuilt
+        if: always()
         run: nix path-info --all > "$RUNNER_TEMP/prebuilt.txt"
 
       - name: Build the release

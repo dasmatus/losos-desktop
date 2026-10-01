@@ -31,6 +31,13 @@ Everything the flake builds from, besides this repository:
   package closures can be substituted rather than rebuilt locally.
 - **Upstream sources nixpkgs fetches**, each pinned by hash in nixpkgs, for
   packages that must be built locally.
+- **Fixed-output inputs in the build closure.** CI preloads these from
+  cache.nixos.org where available (`tools/nix-fetch-sources`) to avoid making
+  a cold build depend on every upstream being available. The selection includes
+  source archives and can also include pinned bootstrap tools or upstream
+  prebuilt compilers; it is not source-only. Each copied flat or NAR output is
+  checked against its derivation's hash, and outputs using other hash methods
+  are rejected.
 - **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
   (`nixos/pkgs/pm.nix`), and **crates.io**, for its and losos-security's
   dependencies, each pinned by `Cargo.lock` and checked by hash.
