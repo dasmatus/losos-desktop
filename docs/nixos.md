@@ -110,7 +110,7 @@ What has to be set up once, outside the repository:
    the WebAssembly target when Rust is already installed.
 2. **GHCR**: the `losos-desktop/nix-cache` and `losos-desktop/images`
    packages public, once CI has created them; or a read-only token in
-   Vercel as `GHCR_TOKEN`.
+   Vercel as `GHCR_TOKEN`, with its owner's GitHub login as `GHCR_USERNAME`.
 3. **A signing key**: `nix key generate-secret --key-name losos-desktop-1`,
    stored as the secret `NIX_CACHE_SIGNING_KEY`; its public half, from `nix
    key convert-secret-to-public`, as the variable `NIX_CACHE_PUBLIC_KEY`.

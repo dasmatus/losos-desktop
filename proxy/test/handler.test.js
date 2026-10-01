@@ -123,6 +123,17 @@ test("GHCR_TOKEN is only ever sent to the token endpoint", async () => {
   );
 });
 
+test("GHCR_USERNAME pairs with GHCR_TOKEN, as a personal access token needs", async () => {
+  const log = [];
+  const h = handler(core, { ...env, GHCR_TOKEN: "secret", GHCR_USERNAME: "someone" }, registry(log));
+  await get(h, `${HASH}.narinfo`);
+  const sent = log.filter((l) => JSON.stringify(l.init).includes(btoa("someone:secret")));
+  assert.deepEqual(
+    sent.map((l) => new URL(l.url).pathname),
+    ["/token"],
+  );
+});
+
 test("an unset namespace is a configuration error, not a guess", async () => {
   const response = await get(handler(core, {}, registry()), "nix-cache-info");
   assert.equal(response.status, 500);
