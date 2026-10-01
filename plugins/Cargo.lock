@@ -98,6 +98,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "losos-nix"
+version = "0.1.0"
+dependencies = [
+ "wit-bindgen",
+]
+
+[[package]]
 name = "losos-systemd"
 version = "0.1.0"
 dependencies = [

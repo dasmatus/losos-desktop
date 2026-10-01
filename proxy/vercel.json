@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "sh build.sh",
+  "outputDirectory": "public",
+  "rewrites": [{ "source": "/:path*", "destination": "/api/proxy?path=:path*" }]
+}

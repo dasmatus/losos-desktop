@@ -19,7 +19,7 @@ So this OS ships both halves, in one list.
 
 ## Two providers, one shape
 
-`losos-security` (`recipes/10-core/losos-security/`) runs the OS-level checks
+`losos-security` (`src/losos-security/`) runs the OS-level checks
 and serves them on the system bus as `io.losos.Security1`, answering
 `GetHostSecurityAttrs` — deliberately the same method name, and the same
 `a{sv}` dictionary keys, that fwupd uses. That choice is the whole design: the
@@ -75,7 +75,7 @@ the most flattering possible answer arrived at by testing nothing.
 
 ## The panel change
 
-`recipes/30-gnome/gnome-control-center/files/patches/0002-firmware-security-report-os-level-checks.patch`
+`nixos/pkgs/patches/gnome-control-center/0002-firmware-security-report-os-level-checks.patch`
 does three things:
 
 - Adds a third D-Bus proxy, to `io.losos.Security1`, alongside the two fwupd

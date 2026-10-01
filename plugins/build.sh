@@ -13,10 +13,24 @@ if command -v just >/dev/null 2>&1; then
     exec just --justfile "$here/Justfile" --working-directory "$repo" build "$@"
 fi
 
-crates=${*:-"losos-image losos-mkosi losos-systemd"}
+# The same set as the Justfile's build recipe: this tree's plugins, then the
+# ones pm's own tree carries that this OS needs; see there for why.
+crates=${*:-"losos-image losos-mkosi losos-nix losos-systemd sysext sysupdate systemd"}
 
 mkdir -p "$out"
-cargo build --release --target "$target" $(for c in $crates; do echo "-p $c"; done)
+ours= pms=
+for c in $crates; do
+    if [ -f "$here/$c/Cargo.toml" ]; then
+        ours="$ours -p $c"
+    elif [ -f "$pm_root/plugins/$c/Cargo.toml" ]; then
+        pms="$pms -p $c"
+    else
+        echo "no plugin crate named $c here or in $pm_root/plugins" >&2
+        exit 1
+    fi
+done
+[ -z "$ours" ] || ( cd "$here" && cargo build --release --target "$target" $ours )
+[ -z "$pms" ] || ( cd "$pm_root/plugins" && cargo build --release --target "$target" $pms )
 
 if [ ! -x "$encoder" ]; then
     echo "building pm's component encoder in $pm_root/plugins" >&2
@@ -25,7 +39,11 @@ fi
 
 for crate in $crates; do
     filename=$(printf '%s' "$crate" | tr '-' '_')
-    module="$here/target/$target/release/$filename.wasm"
+    if [ -f "$here/$crate/Cargo.toml" ]; then
+        module="$here/target/$target/release/$filename.wasm"
+    else
+        module="$pm_root/plugins/target/$target/release/$filename.wasm"
+    fi
     "$encoder" "$module" "$out/$crate.wasm"
 done
 

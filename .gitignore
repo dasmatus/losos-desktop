@@ -1,34 +1,15 @@
-# Everything tools/configure generates. The `.in` templates and sources.lock
-# are the tracked truth; out/ is reproducible from them and is never committed.
-/out/
-
-# The repo-local pm trust store the top-level `just sign` recipe creates, via
-# `tools/Justfile`'s `sign-all` recipe. It holds a throwaway signing key that
-# exists only so `pm explain` and `pm build` can verify this tree; it must
-# never be confused with the developer's real ~/.config/pm.
-/.pm-config/
-
-# pm writes archives and detached signatures into its process working
-# directory, which for this repo is out/ — but a stray invocation from the
-# repo root would drop them here.
-*.cpkg
-*.sig
-*.sig.stale
-
-# Build output. All of it, ignored at the root, because every branch below
-# generates some and none of it belongs in the history.
-#
-# `plugins/` is a cargo workspace: target/ holds the wasm32 core modules and the
-# host-side encoder artifacts, and dist/ holds the components those are encoded
-# into. Neither is source. A compiled artifact in a git tree is a second copy of
-# something already described by the files beside it, and it goes stale silently
-# -- the only reason this repository ever needed a hash to tell whether a
-# component matched its sources is that the component was committed at all.
-# `./do plugins` builds them; nothing reads them from the tree.
+# Build output. `plugins/` and `proxy/` are cargo workspaces. target/ holds the
+# wasm32 core modules and the host-side encoder, and dist/ holds the
+# components built from them. A compiled copy in git goes stale without anyone
+# noticing, and `just plugins` rebuilds them, so neither is committed.
 target/
 plugins/dist/
 
-# CPython bytecode. tools/configure and every gate regenerate it on each run,
-# and it differs by interpreter version.
-__pycache__/
-*.pyc
+# nix-direnv caches the dev shell in .direnv/, `nix build` leaves result
+# symlinks, and `nix run .#vm` writes a disk and a firmware variable store into
+# the directory it ran in.
+.direnv/
+result
+result-*
+/losos-desktop.qcow2
+/losos-desktop-efivars.fd

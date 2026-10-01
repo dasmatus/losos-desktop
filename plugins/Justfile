@@ -13,23 +13,44 @@ build *crates:
   out="{{here}}/dist"
   encoder="{{pm_root}}/plugins/target/release/encoder"
 
+  # This tree's plugins, and the ones pm's own tree carries that this OS
+  # needs: sysupdate and sysext read the transfer and extension definitions
+  # nixos/ ships, and systemd classifies the unit tools (systemctl,
+  # systemd-tmpfiles, systemd-sysusers) a recipe calls. pm's are built from
+  # the pm checkout at PM_ROOT, which should be the commit nixos/pkgs/pm.nix
+  # pins, so there is no copy of them here to drift. zig is left out:
+  # nothing here builds with it.
+  ours=(losos-image losos-mkosi losos-nix losos-systemd)
+  pms=(sysext sysupdate systemd)
+
   mkdir -p "$out"
-  if [ "$#" -eq 0 ]; then
-    set -- losos-image losos-mkosi losos-systemd
-  elif [ "${1:-}" = "--" ]; then
+  if [ "${1:-}" = "--" ]; then
     shift
-    if [ "$#" -eq 0 ]; then
-      set -- losos-image losos-mkosi losos-systemd
-    fi
+  fi
+  if [ "$#" -eq 0 ]; then
+    set -- "${ours[@]}" "${pms[@]}"
   fi
 
-  args=()
+  local_args=()
+  pm_args=()
   for crate in "$@"; do
-    args+=( -p "$crate" )
+    if [ -f "{{here}}/$crate/Cargo.toml" ]; then
+      local_args+=( -p "$crate" )
+    elif [ -f "{{pm_root}}/plugins/$crate/Cargo.toml" ]; then
+      pm_args+=( -p "$crate" )
+    else
+      echo "no plugin crate named $crate here or in {{pm_root}}/plugins" >&2
+      exit 1
+    fi
   done
-  # The workspace manifest lives here, not at the repository root that
-  # --working-directory points at, so cargo must run from {{here}}.
-  ( cd "{{here}}" && cargo build --release --target "$target" "${args[@]}" )
+  # Each workspace's manifest lives in its own directory, not at the
+  # repository root that --working-directory points at, so cargo runs there.
+  if [ "${#local_args[@]}" -gt 0 ]; then
+    ( cd "{{here}}" && cargo build --release --target "$target" "${local_args[@]}" )
+  fi
+  if [ "${#pm_args[@]}" -gt 0 ]; then
+    ( cd "{{pm_root}}/plugins" && cargo build --release --target "$target" "${pm_args[@]}" )
+  fi
 
   if [ ! -x "$encoder" ]; then
     echo "building pm's component encoder in {{pm_root}}/plugins" >&2
@@ -38,7 +59,11 @@ build *crates:
 
   for crate in "$@"; do
     filename=${crate//-/_}
-    module="{{here}}/target/$target/release/$filename.wasm"
+    if [ -f "{{here}}/$crate/Cargo.toml" ]; then
+      module="{{here}}/target/$target/release/$filename.wasm"
+    else
+      module="{{pm_root}}/plugins/target/$target/release/$filename.wasm"
+    fi
     "$encoder" "$module" "$out/$crate.wasm"
   done
 
