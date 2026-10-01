@@ -33,6 +33,15 @@ in
     extraArgs = [ "--definitions=/run/repart.d" ];
   };
 
+  # Upstream orders repart After=initrd-usr-fs.target, and the fstab generator
+  # orders /sysusr/usr Before= it, but NixOS's initrd does not ship that target.
+  # Ordering against a unit that does not exist is no ordering at all, so repart
+  # started before /sysusr/usr was mounted, fell back to looking for the disk
+  # under /sysroot, found nothing, and first boot waited out gpt-auto-root for
+  # a root partition nobody had made. initrd.target already Wants= the target,
+  # so shipping it is all the wiring needed.
+  boot.initrd.systemd.additionalUpstreamUnits = [ "initrd-usr-fs.target" ];
+
   boot.initrd.systemd.services.systemd-repart = {
     # NixOS orders repart after sysroot.mount by default, because without a
     # device argument repart discovers the disk from what is mounted. On the
@@ -42,7 +51,7 @@ in
     # initrd-usr-fs.target, Before=initrd-root-fs.target: repart finds the disk
     # through /sysusr/usr, which gpt-auto mounts from the verity-protected /usr
     # partition before root is looked for. Forcing the NixOS addition away
-    # restores exactly that.
+    # restores exactly that, once the target exists (above).
     after = lib.mkForce [ ];
 
     # The installer boots with a tmpfs root and must not repartition the medium
