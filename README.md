@@ -1,13 +1,13 @@
 # losos-desktop
 
-A GNOME desktop operating system that uses systemd for everything it can,
-installs as an image, and runs on musl.
+A GNOME desktop operating system that uses systemd for everything it can and
+installs as an image.
 
 The OS is a NixOS configuration, `flake.nix` plus the modules in `nixos/`.
-nixpkgs 26.05, pinned by `flake.lock`, provides every package, and the build
-compiles each one from source for `x86_64-unknown-linux-musl` or
-`aarch64-unknown-linux-musl`. Nothing comes from cache.nixos.org. The only
-binary cache is this project's own, in GHCR, served through [`proxy/`](proxy/).
+nixpkgs 26.05, pinned by `flake.lock`, provides the stock glibc packages for
+`x86_64-linux` and `aarch64-linux`. Nix uses cache.nixos.org for those packages;
+this project's GHCR cache, served through [`proxy/`](proxy/), can also provide
+paths used by CI.
 [`pm`](https://github.com/dichhead/pm) ships in the image as the system
 manager, the tool a user of the running system builds and runs software with.
 
@@ -48,9 +48,9 @@ nix flake check        # both architectures, losos-security's tests, and the
 `just` has short names for the same commands. `just plugins` builds pm's
 plugin components for a pm installed outside the image.
 
-From an empty cache this compiles the whole OS from source, which takes days
-on one machine. With the project's cache set up (`docs/nixos.md`, "Binary
-cache") a build compiles only what changed.
+Nix substitutes stock nixpkgs packages from cache.nixos.org. The image and
+project-specific packages still build locally unless available from the
+project's cache (`docs/nixos.md`, "Binary cache").
 
 ## What this repository writes itself
 

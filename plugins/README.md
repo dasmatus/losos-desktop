@@ -144,8 +144,8 @@ pm build only through a pin. `nixpkgs#hello`, `flake:nixpkgs`,
 `git+` URL without `rev=`, `--override-input` with any of those, and a
 `<nixpkgs>` lookup path all resolve to whatever is newest. A path, a commit,
 and `--file` are classified. This flake's `.#pm-payloads.<name>` is the way in:
-any nixpkgs package at the pinned revision, static against musl, laid out as
-a pm package's `/dest` (`docs/nixos.md`, "nixpkgs in a pm build").
+any nixpkgs package at the pinned revision, statically linked from `pkgsStatic`,
+laid out as a pm package's `/dest` (`docs/nixos.md`, "nixpkgs in a pm build").
 
 Its symbols are the paths NixOS fixes — `store`, `current-system`,
 `booted-system`, `system-bin` — for a package that installs something referring

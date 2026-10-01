@@ -1,11 +1,8 @@
-# Build, check and publish the OS, which is the NixOS flake, on musl, from
-# source.
+# Build, check and publish the NixOS flake using nixpkgs' stock glibc packages.
 #
-# nixpkgs 26.05, pinned by flake.lock, provides every package. The runner
-# compiles each one or takes it from this project's own binary cache in GHCR,
-# which proxy/ serves (docs/nixos.md, "Binary cache"). cache.nixos.org is
-# switched off entirely, because its binaries are glibc builds and this OS is
-# musl.
+# nixpkgs 26.05, pinned by flake.lock, provides every package. The runner uses
+# cache.nixos.org for stock packages and may also use this project's GHCR cache
+# for paths used by CI (docs/nixos.md, "Binary cache").
 #
 # Every job runs on a hosted Ubuntu runner and calls `nix` or `oras` directly,
 # the same commands a person would run, so a failure here reproduces at a desk.
@@ -56,8 +53,8 @@ jobs:
       packages: write
     env:
       # Repository variables, set once proxy/ is deployed and a signing key
-      # exists (docs/nixos.md, "Binary cache"). Without them the flake still
-      # builds, from source every time, and nothing goes to the cache.
+      # exists (docs/nixos.md, "Binary cache"). The official nixpkgs cache is
+      # always enabled; these variables add the project's cache.
       NIX_CACHE_URL: ${{ vars.LOSOS_PROXY_URL }}
       NIX_CACHE_PUBLIC_KEY: ${{ vars.NIX_CACHE_PUBLIC_KEY }}
       NIX_VERSION: "2.34.8"
@@ -69,13 +66,8 @@ jobs:
             /usr/local/share/boost /usr/local/share/powershell
           df -h /
 
-      # The official installer, pinned, rather than a third party's action.
-      # This Nix is the one prebuilt thing the job uses, because Nix is what
-      # builds Nix. `.#nix` is the musl Nix from source, for a build host that
-      # wants it after this bootstrap.
-      #
-      # substituters is set to the project's cache alone or to nothing. Left
-      # unset, Nix would default to cache.nixos.org.
+      # The official installer is pinned, rather than using a third party's
+      # action. Builds substitute stock packages from nixpkgs' binary cache.
       #
       # The boot test asks for the kvm feature, and only the x86_64 runner has
       # /dev/kvm.
@@ -94,10 +86,10 @@ jobs:
             echo "system-features = $features"
             echo "max-jobs = auto"
             if [ -n "$NIX_CACHE_URL" ] && [ -n "$NIX_CACHE_PUBLIC_KEY" ]; then
-              echo "substituters = $NIX_CACHE_URL"
-              echo "trusted-public-keys = $NIX_CACHE_PUBLIC_KEY"
+              echo "substituters = https://cache.nixos.org/ $NIX_CACHE_URL"
+              echo "trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= $NIX_CACHE_PUBLIC_KEY"
             else
-              echo "substituters ="
+              echo "substituters = https://cache.nixos.org/"
             fi
           } | sudo tee -a /etc/nix/nix.conf
           sudo systemctl restart nix-daemon
@@ -106,9 +98,8 @@ jobs:
       - uses: actions/checkout@v4
         with: { persist-credentials: false }
 
-      # Everything in the store at this point came prebuilt from the
-      # installer. The cache push leaves it out, so the cache holds only what
-      # this job compiled and the pinned sources it fetched to do so.
+      # Record the store before building so the cache push excludes the Nix
+      # installer and its prebuilt closure.
       - name: Note what came prebuilt
         run: nix path-info --all > "$RUNNER_TEMP/prebuilt.txt"
 

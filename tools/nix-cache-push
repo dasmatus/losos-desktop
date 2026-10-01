@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Push Nix store paths to GHCR, one OCI artifact per path, for proxy/ to serve.
 #
-# The flake builds from source (docs/nixos.md, "Binary cache"), so a path one
-# CI run compiled saves the next run from compiling it again only if it lands
-# where the proxy looks. `nix copy --to file://` writes each path's signed
-# narinfo and its NAR. Each pair becomes the tag `<repository>:<store hash>`,
+# CI stores paths it used in the project's cache (docs/nixos.md, "Binary
+# cache"). `nix copy --to file://` writes each path's signed narinfo and its NAR.
+# Each pair becomes the tag `<repository>:<store hash>`,
 # with the two files as layers titled by their own names, and the proxy maps
 # `/<hash>.narinfo` and `/nar/<hash>/<file>` onto that tag.
 #
-# A path whose tag already exists is skipped before anything is copied, so a
-# run pushes only what it built. `--all` takes every valid path in the store.
+# A path whose tag already exists is skipped before anything is copied.
+# `--all` takes every valid path in the store.
 # CI uses it after a build that ran out of time, so whatever finished is kept.
 #
 #   tools/nix-cache-push --repository ghcr.io/owner/name/nix-cache \

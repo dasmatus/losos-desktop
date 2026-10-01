@@ -23,10 +23,6 @@
 
       losos.version = "1";
 
-      # The same musl system flake.nix builds; the test framework would
-      # otherwise hand the node its own glibc package set.
-      nixpkgs.hostPlatform = lib.systems.examples.musl64;
-
       # The first-boot wizard waits on the console for a person, which a test
       # has none of. The user is created by the test script instead.
       services.homed.promptOnFirstBoot = lib.mkForce false;
@@ -107,11 +103,9 @@
               "--disk-size=256M --member-of=wheel --enforce-password-policy=no"
           )
           machine.succeed("userdbctl user alice | grep -q 'Storage: luks'")
-          # The known gap, asserted so this fails the day it closes and says
-          # so: musl has no NSS, so getpwnam() never asks userdbd and a homed
-          # user is invisible to it, and to GDM, until an nscd forwarder backed
-          # by userdb exists (docs/nixos.md, "musl"). Flip it to succeed then.
-          machine.fail("getent passwd alice")
+          # glibc's NSS reaches nss-systemd through the configured nscd
+          # forwarder, so homed users must be visible to ordinary lookups.
+          machine.succeed("getent passwd alice")
 
       with subtest("sysupdate sees the installed version"):
           machine.succeed("${nodes.machine.systemd.package}/lib/systemd/systemd-sysupdate list | grep -q '1'")
