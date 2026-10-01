@@ -100,8 +100,10 @@ networkd config, the kernel command line. The image layer stages it verbatim.
 
 **`flake.nix` and `nixos/` are a second, independent build of the same OS**
 on NixOS, kept beside the pm build rather than instead of it. It is musl and
-compiled from nixpkgs' sources, never cache.nixos.org's binaries; the only
-substituter is the project's own cache in GHCR, which `proxy/` (a Vercel edge
+compiled from nixpkgs' sources, never cache.nixos.org's binaries (CI takes
+only sources from it, each checked against its pinned hash, through
+`tools/nix-fetch-sources`); the only substituter is the project's own cache
+in GHCR, which `proxy/` (a Vercel edge
 function around a Rust-to-WebAssembly core) serves and
 `tools/nix-cache-push` fills (`docs/nixos.md` lists every outside input).
 Its image still ships pm as the system manager, with the plugins, and

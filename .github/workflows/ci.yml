@@ -423,6 +423,13 @@ jobs:
       - name: Note what came prebuilt
         run: nix path-info --all > "$RUNNER_TEMP/prebuilt.txt"
 
+      # Sources come from cache.nixos.org where it has them, each checked
+      # against the hash nixpkgs pins, so one upstream timing out does not
+      # fail a run before anything compiles. Only sources: the build itself
+      # still substitutes from nothing but the project's cache.
+      - name: Fetch sources
+        run: tools/nix-fetch-sources .#release
+
       - name: Build the release
         id: build
         run: |
@@ -486,8 +493,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test
-      - run: sh build.sh
-      - run: node --test test/*.test.js
+      # Builds the module the handler tests load, then runs them.
+      - run: npm test
 
   # The one check branch protection looks for, so a skipped or cancelled leg
   # never reads as green.

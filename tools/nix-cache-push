@@ -71,11 +71,14 @@ class Registry:
         if host != "ghcr.io" or not self.name:
             sys.exit(f"nix-cache-push: {repository}: expected ghcr.io/<owner>/<name>/...")
         secret = os.environ.get("GHCR_TOKEN", "")
+        # GHCR pairs a personal access token with its owner's login. CI's
+        # token works with any name, and GITHUB_ACTOR is set there anyway.
+        user = os.environ.get("GITHUB_ACTOR") or "token"
         request = urllib.request.Request(
             f"https://ghcr.io/token?service=ghcr.io&scope=repository:{self.name}:pull"
         )
         if secret:
-            basic = base64.b64encode(f"token:{secret}".encode()).decode()
+            basic = base64.b64encode(f"{user}:{secret}".encode()).decode()
             request.add_header("Authorization", f"Basic {basic}")
         with urllib.request.urlopen(request) as response:
             self.token = json.load(response)["token"]

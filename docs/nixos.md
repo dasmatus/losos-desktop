@@ -26,7 +26,11 @@ Everything the flake builds from, besides this repository:
   a different tarball fails the hash.
 - **The upstream sources nixpkgs fetches**, each pinned by hash in nixpkgs.
   With no substituter but the project's own, every package is compiled from
-  them.
+  them. CI copies the ones cache.nixos.org holds from there first
+  (`tools/nix-fetch-sources`), because a cold build fetches over two thousand
+  and one upstream timing out would fail the run. Each is hashed against its
+  pinned hash before the build may use it, so it is the same file upstream
+  would have had to serve. Nothing but sources comes from cache.nixos.org.
 - **What a from-source build starts from.** On x86_64, nothing prebuilt at
   all for C: nixpkgs' minimal bootstrap grows the compiler from
   stage0-posix's hand-auditable hex seed through tinycc to gcc. On aarch64,
@@ -128,7 +132,7 @@ What has to be set up once, outside the repository:
    the WebAssembly target when Rust is already installed.
 2. **GHCR**: the `losos-desktop/nix-cache` and `losos-desktop/images`
    packages public, once CI has created them; or a read-only token in
-   Vercel as `GHCR_TOKEN`.
+   Vercel as `GHCR_TOKEN`, with its owner's GitHub login as `GHCR_USERNAME`.
 3. **A signing key**: `nix key generate-secret --key-name losos-desktop-1`,
    stored as the secret `NIX_CACHE_SIGNING_KEY`; its public half, from `nix
    key convert-secret-to-public`, as the variable `NIX_CACHE_PUBLIC_KEY`.
