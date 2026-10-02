@@ -8,7 +8,7 @@
 #
 #   nix build                      the disk image (.#image)
 #   nix build .#installer          the same image, booting the installer
-#   nix build .#release            what a GitHub release uploads, with SHA256SUMS
+#   nix build .#release            the files CI publishes through the proxy
 #   nix run .#vm                   boot the image in QEMU with UEFI firmware
 #   nix build .#pm-payloads.<pkg>  any nixpkgs package, static, for a pm build file
 #   nix flake check                evaluate both architectures, test losos-security,
@@ -52,6 +52,15 @@
         in
         "${lib.substring 0 8 d}.${lib.substring 8 6 d}";
 
+      proxyUrl = builtins.getEnv "LOSOS_PROXY_URL";
+
+      requireProxy =
+        value:
+        if proxyUrl == "" then
+          throw "Set LOSOS_PROXY_URL and pass --impure to build image artifacts."
+        else
+          value;
+
       mkSystem =
         system:
         lib.nixosSystem {
@@ -63,6 +72,15 @@
               nixpkgs.hostPlatform = system;
               losos.version = lib.mkDefault version;
             }
+            (
+              { config, ... }:
+              lib.optionalAttrs (proxyUrl != "") {
+                # The image's update source and the artifact published to the
+                # proxy must agree; the URL is a repository variable in CI.
+                losos.update.baseUrl = lib.mkDefault
+                  "${lib.removeSuffix "/" proxyUrl}/updates/${config.losos.channel}/${archOf system}/";
+              }
+            )
           ];
         };
 
@@ -87,11 +105,11 @@
           ours = self.nixosConfigurations."losos-desktop-${archOf system}".pkgs;
         in
         {
-          image = build.image;
-          installer = build.installerImage;
-          qcow2 = build.qcow2;
-          release = build.releaseArtifacts;
-          uki = build.uki;
+          image = requireProxy build.image;
+          installer = requireProxy build.installerImage;
+          qcow2 = requireProxy build.qcow2;
+          release = requireProxy build.releaseArtifacts;
+          uki = requireProxy build.uki;
           toplevel = build.toplevel;
           inherit (ours)
             pm
@@ -102,7 +120,7 @@
           # The image carries no Nix (an update is a new /usr, not a switch);
           # this package is for a build host that wants matching Nix.
           nix = ours.nix;
-          default = build.image;
+          default = requireProxy build.image;
         }
       );
 
@@ -178,7 +196,7 @@
         {
           vm = {
             type = "app";
-            program = lib.getExe vm;
+            program = lib.getExe (requireProxy vm);
             meta.description = "Boot the LosOS Desktop image in QEMU with UEFI firmware";
           };
         }

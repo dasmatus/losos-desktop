@@ -52,9 +52,9 @@ jobs:
       contents: read
       packages: write
     env:
-      # Repository variables, set once proxy/ is deployed and a signing key
-      # exists (docs/nixos.md, "Binary cache"). The official nixpkgs cache is
-      # always enabled; these variables add the project's cache.
+      # Release images need the public proxy URL; the optional key configures
+      # the project's Nix cache alongside cache.nixos.org.
+      LOSOS_PROXY_URL: ${{ vars.LOSOS_PROXY_URL }}
       NIX_CACHE_URL: ${{ vars.LOSOS_PROXY_URL }}
       NIX_CACHE_PUBLIC_KEY: ${{ vars.NIX_CACHE_PUBLIC_KEY }}
       NIX_VERSION: "2.34.8"
@@ -73,6 +73,10 @@ jobs:
       # /dev/kvm.
       - name: Install Nix
         run: |
+          if [ -z "$LOSOS_PROXY_URL" ]; then
+            echo "::error::LOSOS_PROXY_URL must be set to publish update images through the proxy."
+            exit 1
+          fi
           curl -sSfL --proto '=https' \
             "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
           sh install-nix --daemon --yes --no-channel-add
@@ -114,7 +118,7 @@ jobs:
         id: build
         run: |
           set +e
-          timeout --signal=INT 300m nix build -L --keep-going --out-link release .#release \
+          timeout --signal=INT 300m nix build --impure -L --keep-going --out-link release .#release \
             2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           set -e
@@ -161,7 +165,7 @@ jobs:
         run: nix fmt -- --ci
       - name: Check the flake
         if: steps.build.outputs.complete == 'true'
-        run: nix flake check -L
+        run: nix flake check --impure -L
 
       # The release goes to `push` as an artifact, with its architecture and
       # version beside it. Only a completed build whose flake check passed
@@ -173,7 +177,7 @@ jobs:
           arch=$(uname -m)
           mkdir -p "$RUNNER_TEMP/release"
           cp -L release/* "$RUNNER_TEMP/release/"
-          nix eval --raw ".#nixosConfigurations.losos-desktop-$arch.config.losos.version" \
+          nix eval --impure --raw ".#nixosConfigurations.losos-desktop-$arch.config.losos.version" \
             > "$RUNNER_TEMP/release/.version"
           echo "arch=$arch" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
@@ -274,11 +278,11 @@ jobs:
           test "$FLAKE" = success
           test "$PROXY" = success
 
-  # Replaces the nightly GitHub release and moves the channel's tag in GHCR.
-  # Those are the two places an image's sysupdate reads from, the second
-  # through proxy/, because sysupdate cannot speak OCI. Only an architecture
-  # that finished its build and passed its flake check reached GHCR, so that
-  # is the gate.
+  # Replaces the nightly GitHub release announcement and moves the channel's
+  # tag in GHCR. sysupdate reads the files through proxy/ because GitHub
+  # releases reject assets of 2 GiB or larger. Only an architecture that
+  # finished its build and passed its flake check reached GHCR, so that is
+  # the gate.
   publish:
     needs: [push]
     if: always() && needs.push.result == 'success'
@@ -335,9 +339,8 @@ jobs:
             oras tag "$(cat "$ref")" "nightly-$arch"
           done
 
-      # The release tag is the channel name, and it is replaced rather than
-      # renamed, because sysupdate's source URL is baked into the image that
-      # is updating itself.
+      # The release tag stays the channel name for the announcement; update
+      # images come from the channel tags in GHCR via proxy/.
       - name: Publish to the channel release
         if: steps.pulled.outputs.any == 'true'
         env:
@@ -345,5 +348,4 @@ jobs:
         run: |
           gh release delete nightly --repo "$GITHUB_REPOSITORY" --yes || true
           gh release create nightly --repo "$GITHUB_REPOSITORY" \
-            --title "LosOS nightly" --notes "Rolling nightly channel." \
-            --prerelease release/*
+            --title "LosOS nightly" --notes "Rolling nightly channel." --prerelease
