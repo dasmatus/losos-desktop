@@ -116,7 +116,14 @@ fn install(plan: &Plan, events: &Sender<Event>) -> Result<(), String> {
     // Unmount even when the download failed, so the next attempt can
     // repartition the disk.
     let unmounted = command("umount", &[&mount_point], false, events).map(|_| ());
-    downloaded.and(unmounted)?;
+    match (downloaded, unmounted) {
+        (Ok(()), Ok(())) => {}
+        (Err(download), Ok(())) => return Err(download),
+        (Ok(()), Err(unmount)) => return Err(unmount),
+        (Err(download), Err(unmount)) => {
+            return Err(format!("{download}; cleanup also failed: {unmount}"));
+        }
+    }
     command("sync", &[], false, events)?;
     Ok(())
 }
