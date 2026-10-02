@@ -1,7 +1,7 @@
 // The Vercel edge function. build.sh compiles src/ to ./losos_proxy.wasm
 // beside this file; `?module` is how the edge runtime imports one.
 import module from "./losos_proxy.wasm?module";
-import { bind, handler, type Handler } from "../lib/handler.ts";
+import { bind, handler, type Handler } from "../lib/handler.js";
 
 export const config = { runtime: "edge" };
 
