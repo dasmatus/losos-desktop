@@ -77,8 +77,7 @@
               lib.optionalAttrs (proxyUrl != "") {
                 # The image's update source and the artifact published to the
                 # proxy must agree; the URL is a repository variable in CI.
-                losos.update.baseUrl = lib.mkDefault
-                  "${lib.removeSuffix "/" proxyUrl}/updates/${config.losos.channel}/${archOf system}/";
+                losos.update.baseUrl = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/updates/${config.losos.channel}/${archOf system}/";
               }
             )
           ];
