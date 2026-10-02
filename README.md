@@ -36,13 +36,17 @@ input the build trusts, and what is not done yet.
 
 ## Building
 
+Set `LOSOS_PROXY_URL` to the deployment's base URL (without a trailing slash)
+before running these commands; image-producing outputs read it during impure
+evaluation.
+
 ```sh
-nix build              # the disk image; dd it to a disk and boot
-nix build .#installer  # the same image, booting the installer by default
-nix build .#release    # what a release uploads, with SHA256SUMS
-nix run .#vm           # boot the image in QEMU with UEFI firmware
-nix flake check        # both architectures, losos-security's tests, and the
-                       # VM boot test on a builder with KVM
+nix build --impure              # the disk image; dd it to a disk and boot
+nix build .#installer --impure  # the same image, booting the installer by default
+nix build .#release --impure    # what a release uploads, with SHA256SUMS
+nix run .#vm --impure           # boot the image in QEMU with UEFI firmware
+nix flake check --impure        # both architectures, losos-security's tests, and the
+                                # VM boot test on a builder with KVM
 ```
 
 `just` has short names for the same commands. `just plugins` builds pm's
