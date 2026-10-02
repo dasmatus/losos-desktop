@@ -322,15 +322,19 @@ and `nixos/modules/installer.nix` evaluates it from the OS's configuration.
 It boots by UEFI only: the ISO's appended FAT partition holds the installer's
 UKI as `EFI/BOOT/BOOT<ARCH>.EFI`, with no bootloader in front of it, and the
 initrd mounts the ISO by its volume label and the Nix store from a squashfs
-on it. It carries `wpa_supplicant` and no NetworkManager: networkd and
-resolved bring up whatever link has a carrier, and `losos-installer`
+on it. It carries `wpa_supplicant` and no NetworkManager. networkd runs DHCP
+on every physical wired port, built in or USB, as soon as a cable is in, at
+boot or later, and prefers it over Wi-Fi when both are up; a machine with a
+cable in is online with nothing asked. Otherwise `losos-installer`
 (`src/losos-installer`) talks to `wpa_supplicant` over its control socket to
-scan for and join a Wi-Fi network. Of the firmware NixOS would add, only
+scan for and join a Wi-Fi network, which networkd then runs DHCP on too. Of the firmware NixOS would add, only
 `linux-firmware` is on the medium, because most Wi-Fi cards do not start
 without it.
 
 `losos-installer` is a terminal interface on tty1, with a root shell on tty2
-for anything it does not cover. Once the machine is online it lists the
+for anything it does not cover. Its Network screen shows each wired port as
+having no cable, getting an address, or online, and it moves on by itself as
+soon as the machine is online, by cable or by Wi-Fi. Then it lists the
 disks, leaving out the one the ISO booted from, and asks for `erase` to be
 typed before it touches the one chosen. Then:
 

@@ -1,7 +1,9 @@
 //! The LosOS Desktop installer, on tty1 of the installer ISO.
 //!
 //! Three steps, in order: get online, pick a disk and type `erase`, watch the
-//! install. Getting online is skipped when a cable already did it. Wi-Fi is
+//! install. Getting online is skipped when a cable already did it, or does
+//! it while the Network screen is up: networkd runs DHCP on every wired port
+//! by itself, and this only reports what each port is doing. Wi-Fi is
 //! wpa_supplicant's, driven over its control socket (`wpa.rs`); networkd runs
 //! DHCP on whatever link comes up, so joining a network is all this has to
 //! do. The install is systemd-repart and then systemd-sysupdate (`install.rs`)
@@ -247,6 +249,7 @@ struct App {
     args: Args,
     screen: Screen,
     online: bool,
+    wired: Vec<network::Wired>,
     quit: bool,
 }
 
@@ -256,6 +259,7 @@ impl App {
             args,
             screen: Screen::Network(Wifi::new(true)),
             online: false,
+            wired: Vec::new(),
             quit: false,
         }
     }
@@ -276,6 +280,10 @@ impl App {
 
     fn tick(&mut self) {
         self.online = network::online(Path::new("/run/systemd/netif/state"));
+        self.wired = network::wired(
+            Path::new("/sys/class/net"),
+            Path::new("/run/systemd/netif/links"),
+        );
         match &mut self.screen {
             Screen::Network(wifi) => {
                 wifi.tick();
@@ -346,7 +354,7 @@ impl App {
         frame.render_widget(Paragraph::new(lines), header);
 
         let hints = match &mut self.screen {
-            Screen::Network(wifi) => draw_network(frame, body, wifi, self.online),
+            Screen::Network(wifi) => draw_network(frame, body, wifi, &self.wired, self.online),
             Screen::Disks(choice) => draw_disks(frame, body, choice),
             Screen::Confirm { disk, input } => draw_confirm(frame, body, disk, input),
             Screen::Installing(progress) => draw_installing(frame, body, progress),
@@ -504,7 +512,13 @@ fn selectable<'a>(items: Vec<ListItem<'a>>, title: &'static str) -> List<'a> {
         .highlight_symbol("> ")
 }
 
-fn draw_network(frame: &mut Frame, area: Rect, wifi: &mut Wifi, online: bool) -> &'static str {
+fn draw_network(
+    frame: &mut Frame,
+    area: Rect,
+    wifi: &mut Wifi,
+    wired: &[network::Wired],
+    online: bool,
+) -> &'static str {
     let block = Block::bordered().title(" Network ");
     if let Phase::Passphrase { network, input } = &wifi.phase {
         let text = vec![
@@ -520,10 +534,16 @@ fn draw_network(frame: &mut Frame, area: Rect, wifi: &mut Wifi, online: bool) ->
         return "Enter: join    Esc: back";
     }
 
-    let [top, list_area] =
-        Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(area);
+    let cable = wired
+        .iter()
+        .any(|port| port.state != network::WiredState::NoCable);
     let mut lines = vec![Line::raw(match (&wifi.interface, &wifi.control, &wifi.phase) {
         (None, _, _) if online => "Online through a wired connection.".to_string(),
+        (None, _, _) if cable => "A cable is in. Waiting for an address...".to_string(),
+        (None, _, _) if wired.is_empty() => {
+            "No network device found. Plug in a USB Ethernet adapter; the installer goes on by itself once online."
+                .to_string()
+        }
         (None, _, _) => {
             "No wireless device found. Plug in a network cable; the installer goes on by itself once online."
                 .to_string()
@@ -543,6 +563,16 @@ fn draw_network(frame: &mut Frame, area: Rect, wifi: &mut Wifi, online: bool) ->
     if let Some(message) = &wifi.message {
         lines.push(Line::raw(message.clone()));
     }
+    // A wired port gets its own line, so a machine that stays offline with a
+    // cable in says whether the cable was seen at all.
+    lines.extend(
+        wired
+            .iter()
+            .map(|port| Line::raw(format!("Wired {}: {}", port.name, port.state.label()))),
+    );
+    let height = u16::try_from(lines.len()).unwrap_or(u16::MAX).max(2) + 2;
+    let [top, list_area] =
+        Layout::vertical([Constraint::Length(height), Constraint::Min(3)]).areas(area);
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })

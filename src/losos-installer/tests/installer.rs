@@ -165,6 +165,48 @@ fn wireless_interfaces_have_a_wireless_directory() {
 }
 
 #[test]
+fn wired_ports_and_their_state() {
+    let root = Scratch::new("wired");
+    let port = |name: &str, kind: &str, index: &str, carrier: Option<&str>| {
+        root.write(&format!("sys/{name}/type"), &format!("{kind}\n"));
+        root.write(&format!("sys/{name}/ifindex"), &format!("{index}\n"));
+        fs::create_dir_all(root.0.join(format!("sys/{name}/device"))).unwrap();
+        if let Some(carrier) = carrier {
+            root.write(&format!("sys/{name}/carrier"), &format!("{carrier}\n"));
+        }
+    };
+    // Online, cable without an address yet, cable out, and a link that is
+    // down (no readable carrier).
+    port("enp1s0", "1", "2", Some("1"));
+    port("enp2s0", "1", "3", Some("1"));
+    port("enp3s0", "1", "4", Some("0"));
+    port("enx001122334455", "1", "5", None);
+    // Not wired ports: Wi-Fi, loopback, and a bridge with no device.
+    port("wlp4s0", "1", "6", Some("1"));
+    fs::create_dir_all(root.0.join("sys/wlp4s0/wireless")).unwrap();
+    port("lo", "772", "1", Some("1"));
+    root.write("sys/br0/type", "1\n");
+    root.write("sys/br0/carrier", "1\n");
+    root.write("links/2", "ADMIN_STATE=configured\nOPER_STATE=routable\n");
+    root.write("links/3", "ADMIN_STATE=configuring\nOPER_STATE=carrier\n");
+    root.write("links/6", "OPER_STATE=routable\n");
+
+    let ports = network::wired(&root.0.join("sys"), &root.0.join("links"));
+    let seen: Vec<(&str, network::WiredState)> =
+        ports.iter().map(|w| (w.name.as_str(), w.state)).collect();
+    assert_eq!(
+        seen,
+        [
+            ("enp1s0", network::WiredState::Online),
+            ("enp2s0", network::WiredState::Configuring),
+            ("enp3s0", network::WiredState::NoCable),
+            ("enx001122334455", network::WiredState::NoCable),
+        ]
+    );
+    assert!(network::wired(Path::new("/nonexistent"), Path::new("/nonexistent")).is_empty());
+}
+
+#[test]
 fn control_socket_round_trip() {
     let dir = Scratch::new("ctrl");
     let server_path = dir.0.join("wlan0");

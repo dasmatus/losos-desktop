@@ -3,8 +3,9 @@
 # as `losos`, what to install and from where; iso.nix turns it into the ISO.
 #
 # Nothing of the desktop is here. There is no NetworkManager: networkd runs
-# DHCP on every wired link and on whatever wireless link wpa_supplicant brings
-# up, and the TUI drives wpa_supplicant over its control socket. That is the
+# DHCP on every wired port that has a cable and on whatever wireless link
+# wpa_supplicant brings up, and the TUI drives wpa_supplicant over its control
+# socket. That is the
 # whole network stack, and the only one an install needs.
 {
   config,
@@ -93,9 +94,9 @@ in
   networking = {
     hostName = "losos-installer";
     useNetworkd = true;
-    # nixpkgs' networkd defaults: DHCP on every physical wired link, and on
-    # every wireless station, preferring the cable when there are both.
-    useDHCP = true;
+    # The links are configured below, by name, rather than by nixpkgs'
+    # catch-all defaults, so what a cable gets is written down here.
+    useDHCP = false;
 
     wireless = {
       enable = true;
@@ -107,6 +108,37 @@ in
     # Nothing listens: no SSH, and resolved is told below not to answer on
     # the local network. A packet filter would guard no port.
     firewall.enable = false;
+  };
+
+  systemd.network = {
+    # Any physical wired port, built in or on USB: a cable that is plugged in,
+    # at boot or later, gets an address with nothing asked, and the TUI goes
+    # straight on to the disks. Kind=!* leaves out bridges, bonds and the
+    # like; wireless links have Type=wlan, so they are not matched here.
+    networks."20-wired" = {
+      matchConfig = {
+        Type = "ether";
+        Kind = "!*";
+      };
+      networkConfig.DHCP = "yes";
+      # The lower metric wins, so with a cable and Wi-Fi both up the image
+      # comes down the cable.
+      dhcpV4Config.RouteMetric = 100;
+      ipv6AcceptRAConfig.RouteMetric = 100;
+    };
+
+    # Whatever station wpa_supplicant associates, once someone picks a network
+    # in the TUI.
+    networks."30-wireless" = {
+      matchConfig.WLANInterfaceType = "station";
+      networkConfig.DHCP = "yes";
+      dhcpV4Config.RouteMetric = 600;
+      ipv6AcceptRAConfig.RouteMetric = 600;
+    };
+
+    # Nothing here waits for the network: the TUI watches for it, and a
+    # machine with neither a cable nor Wi-Fi in range must still reach it.
+    wait-online.enable = false;
   };
 
   services.resolved.settings.Resolve = {
