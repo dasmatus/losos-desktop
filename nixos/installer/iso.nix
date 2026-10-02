@@ -94,6 +94,7 @@ in
         upperdir = "/nix/.rw-store/store";
         workdir = "/nix/.rw-store/work";
       };
+      neededForBoot = true;
     };
   };
 
