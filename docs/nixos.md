@@ -55,11 +55,15 @@ Everything the flake builds from, besides this repository:
 
 ## Building
 
+Image-producing outputs require `LOSOS_PROXY_URL` to point at the deployment
+that serves updates. Since the flake reads this environment variable, pass
+`--impure` when building an image, installer, QCOW2, release, UKI, or VM.
+
 ```sh
-nix build              # the disk image: dd it to a disk and boot
-nix build .#installer  # the same image, booting the installer by default
-nix build .#release    # what a release uploads, with SHA256SUMS
-nix run .#vm           # boot the image in QEMU with UEFI firmware
+nix build --impure              # the disk image: dd it to a disk and boot
+nix build .#installer --impure  # the same image, booting the installer by default
+nix build .#release --impure    # the files CI publishes through the proxy
+nix run .#vm --impure           # boot the image in QEMU with UEFI firmware
 nix flake check        # both architectures, losos-security's tests, and
                        # (on a builder with KVM) a VM boot test
 ```
