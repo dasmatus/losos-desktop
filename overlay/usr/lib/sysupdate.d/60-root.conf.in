@@ -7,6 +7,12 @@
 #
 # MatchPartitionType must agree with overlay/usr/lib/repart.d/20-root.conf --
 # both come from manifest/architectures.yaml so they cannot drift.
+#
+# Verification is left at its default (on): sysupdate fetches SHA256SUMS.gpg
+# beside SHA256SUMS and checks it with gpgv against
+# /usr/lib/systemd/import-pubring.pgp, the release key CI signs with
+# (tools/sign-release). The image needs gpgv for that; see docs/images.md,
+# "Signed updates".
 [Transfer]
 ProtectVersion=%A
 

@@ -371,10 +371,12 @@ bytes the image boots.
 - **CI does not publish the flake's release.** `ci.yml` builds and checks it;
   the release is the pm build's.
 
-- **Signing.** `losos.update.pubring` is unset, so sysupdate installs updates
-  without verifying `SHA256SUMS.gpg`, and the build warns. Secure Boot signing
-  of the UKI is not done either; as in the pm tree, a key belongs to whoever
-  owns the machine.
+- **Signing.** `losos.update.pubring` defaults to the pm image's release key
+  (`overlay/usr/lib/systemd/import-pubring.pgp`), so sysupdate verifies
+  `SHA256SUMS.gpg` and both builds accept the same releases. The flake's own
+  release is not published by CI, so nothing yet signs one. Secure Boot signing
+  of the UKI is not done; as in the pm tree, a key belongs to whoever owns the
+  machine.
 - **The two gnome-control-center patches.** They are written against
   gnome-control-center 51.0, and nixpkgs 26.05 carries 50.4, which moved the
   System panel to Blueprint; neither applies. The factory reset is reachable

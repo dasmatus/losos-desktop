@@ -201,3 +201,43 @@ requests build and check but never push, so their images are not booted.
 
 The aggregate `ci` job is the one check to protect `main` with. Nothing merges
 automatically.
+
+## Signed updates
+
+`SHA256SUMS` is the integrity boundary of an OTA, so CI signs it
+(`tools/sign-release`, a detached binary `SHA256SUMS.gpg`) with an Ed25519 key
+held in the repository secret `UPDATE_SIGNING_KEY`. The public half is
+committed as `overlay/usr/lib/systemd/import-pubring.pgp`, which is where
+systemd-sysupdate looks for it; the NixOS build uses the same file. The `push`
+job signs the manifest GHCR serves, `publish` signs the GitHub release's, and a
+missing secret fails the job: an image refuses an unsigned manifest.
+
+The private key was generated once, locally, and a copy kept outside the
+repository (`~/.config/losos-desktop/`, with a revocation certificate). The
+key does not expire, because a keyring baked into shipped images cannot be
+replaced by them; rotating it means shipping an image that trusts both.
+
+Not done: the pm image has no `gpgv`, which sysupdate runs to verify, and this
+tree has no recipe for it (GnuPG pulls in libassuan, libksba and npth). Until
+one exists the pm image cannot apply a signed update; `tools/vm-test` still
+passes `--verify=no`. The NixOS image has not been evaluated with the new
+default either.
+
+## Fragmented releases
+
+A GitHub release asset is capped at 2 GiB, which a root image or an ISO can
+pass. In `publish`, `tools/split-release` cuts every file over 1 GB (decimal)
+into `NAME.part-000`, `NAME.part-001`, ... plus `NAME.parts`, a sha256sum list
+of each fragment and the whole file, and rewrites `SHA256SUMS` to match. The
+shell script `tools/merge-release.sh` ships in the release and puts the file
+back:
+
+    ./merge-release.sh -u https://github.com/<owner>/losos-desktop/releases/download/nightly \
+        -g import-pubring.pgp losos-desktop_<version>_x86_64.iso
+
+It verifies every fragment, joins them, checks the whole file, and with `-g`
+also checks the signature and that `NAME.parts` is the one the signed manifest
+lists. sysupdate cannot join fragments, so a split file is no longer an update
+source on the GitHub release: images update from the whole files GHCR serves
+through `proxy/`, and `LOSOS_PROXY_URL` must be set once the root image passes
+1 GB.

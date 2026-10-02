@@ -50,7 +50,7 @@ TPM2-bound secret meaningful: `systemd-stub` extends PCR 11 with each section,
 so a modified command line changes the measurement and the secret does not
 unseal.
 
-Signing is not done here. That needs a key, and a key belongs to whoever owns
+Signing of the UKI is not done here. That needs a key, and a key belongs to whoever owns
 the machine, not to a build recipe.
 
 ## First boot creates the disk

@@ -236,6 +236,19 @@ jobs:
       - name: Read the version the build named its files with
         run: cat losos-desktop/out/release.env >> "$GITHUB_ENV"
 
+      # Signed here and not in the build job: that one runs upstream code, and
+      # this one only handles files it finished, so the key never sits beside
+      # either. This is the manifest proxy/ serves from GHCR; the GitHub
+      # release's is a different file (fragments, both architectures) and is
+      # signed again in publish. No key is a failure rather than a skip: an
+      # image carries the public half and refuses an unsigned manifest, so an
+      # unsigned release is one that no machine installs.
+      - name: Sign the update manifest
+        working-directory: losos-desktop
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: python3 tools/sign-release release
+
       - name: Push the release to GHCR
         id: push
         working-directory: losos-desktop/release
@@ -528,6 +541,8 @@ jobs:
       contents: write
       packages: write
     steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
       - uses: oras-project/setup-oras@v1
       - uses: actions/download-artifact@v4
         with: { pattern: "release-ref-*", path: refs, merge-multiple: true }
@@ -545,11 +560,18 @@ jobs:
             ref="refs/release-ref-$arch.txt"
             [ -f "$ref" ] || continue
             oras pull "$(cat "$ref")" --output "pulled/$arch"
+            # What push signed must still verify before it is merged into
+            # something new: a manifest that changed in GHCR is not one to
+            # re-sign with the release key.
+            python3 tools/sign-release --check "pulled/$arch"
             cat "pulled/$arch/SHA256SUMS" >> sums
-            find "pulled/$arch" -type f ! -name SHA256SUMS -exec mv -n -t release {} +
+            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name SHA256SUMS.gpg \
+              -exec mv -n -t release {} +
           done
           # Every file name carries its architecture, so the manifests merge by
-          # concatenation; sysupdate reads one SHA256SUMS per channel.
+          # concatenation; sysupdate reads one SHA256SUMS per channel. The
+          # merged file is a new one, so the per-architecture signatures are
+          # left behind and it is signed below.
           sort -u -k2 sums > release/SHA256SUMS
           if [ -s release/SHA256SUMS ]; then
             echo "any=true" >> "$GITHUB_OUTPUT"
@@ -558,6 +580,21 @@ jobs:
             echo "any=false" >> "$GITHUB_OUTPUT"
             echo "No architecture reached GHCR; nothing to publish."
           fi
+
+      # A GitHub release asset is capped at 2 GiB, which a root image or an
+      # ISO can pass, so anything over 1 GB goes up as fragments that
+      # merge-release.sh joins (docs/images.md, "Fragmented releases"). GHCR,
+      # above, keeps the whole files: sysupdate cannot join fragments, so
+      # updates come from there through proxy/. The manifest is rewritten by
+      # the split and signed after it, never before.
+      - name: Fragment the large files and sign the release manifest
+        if: steps.pulled.outputs.any == 'true'
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          python3 tools/split-release release
+          python3 tools/sign-release release
+          ls -l release
 
       # `images:<channel>-<arch>` is what proxy/ serves at
       # /updates/<channel>/<arch>/, so it moves only here, after the gate, and

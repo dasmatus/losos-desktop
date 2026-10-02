@@ -57,13 +57,14 @@ in
 
       pubring = mkOption {
         type = types.nullOr types.path;
-        default = null;
+        default = ../../overlay/usr/lib/systemd/import-pubring.pgp;
+        defaultText = lib.literalExpression "../../overlay/usr/lib/systemd/import-pubring.pgp";
         description = ''
-          The GPG public keyring SHA256SUMS.gpg is verified against. With no
-          keyring, verification is turned off and the build says so with a
-          warning; sysupdate's default is to refuse an unsigned manifest, and
-          an image that shipped with that default and no key would never
-          update at all.
+          The GPG public keyring SHA256SUMS.gpg is verified against; by
+          default the release key the pm image trusts too, so both builds
+          accept the same releases. Set to null to turn verification off, which
+          the build says with a warning. Never leave an image null that goes
+          to anyone else: an unsigned manifest is then installed as is.
         '';
       };
     };

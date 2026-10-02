@@ -126,6 +126,7 @@ lint:
   python3 "{{repo}}/tools/gates/test-container.py"
   python3 "{{repo}}/tools/gates/test-oci.py"
   python3 "{{repo}}/tools/gates/test-release-oci.py"
+  python3 "{{repo}}/tools/gates/test-split-release.py"
   python3 "{{repo}}/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
   python3 "{{repo}}/tools/gates/plugins.py"
   python3 -m basedpyright --project "{{repo}}/basedpyrightconfig.json"

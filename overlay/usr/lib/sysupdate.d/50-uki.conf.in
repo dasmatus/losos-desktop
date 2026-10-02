@@ -14,6 +14,12 @@
 # systemd-sysupdate discovers what versions exist by fetching SHA256SUMS from
 # this directory, which is why tools/release-manifest writes one and why CI
 # uploads it alongside the artifacts.
+#
+# Verification is left at its default (on): sysupdate fetches SHA256SUMS.gpg
+# beside SHA256SUMS and checks it with gpgv against
+# /usr/lib/systemd/import-pubring.pgp, the release key CI signs with
+# (tools/sign-release). The image needs gpgv for that; see docs/images.md,
+# "Signed updates".
 [Transfer]
 ProtectVersion=%A
 

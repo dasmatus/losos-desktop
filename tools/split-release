@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""Cut a release directory's large files into fragments of at most 1 GB.
+
+A GitHub release asset cannot exceed 2 GiB, and a root image or an installer
+ISO can. Registries solve the same problem by shipping an image as layers the
+client reassembles; this does it for plain files. A file over the limit
+becomes
+
+    losos-desktop_1_x86_64.iso.part-000
+    losos-desktop_1_x86_64.iso.part-001   ...
+    losos-desktop_1_x86_64.iso.parts
+
+and tools/merge-release.sh, published beside them, puts the original back. The
+limit is decimal (1,000,000,000 bytes), so a fragment fits under 1 GB however
+the figure is read.
+
+`NAME.parts` is a sha256sum-format file: one line for every fragment, in
+order, and a last line for the whole file. The merge script verifies each
+fragment, joins them, and checks the result against that last line, so a
+truncated download, a missing fragment and a fragment from another release are
+each caught before anything is assembled.
+
+SHA256SUMS is rewritten to match. The whole file's line goes, because the file
+is no longer there and a manifest naming a file the server does not have is a
+404 for whoever reads it; the fragments and the `.parts` file are listed in
+its place so one signature still covers them. The old SHA256SUMS.gpg no longer
+matches and is removed: sign again afterwards (tools/sign-release).
+
+This is for the GitHub release only. systemd-sysupdate downloads one file per
+transfer and cannot join fragments, so an image updates from the whole files
+GHCR serves through proxy/, and its channel must point there once a release
+carries fragments (docs/images.md, "Fragmented releases").
+
+    tools/split-release release
+"""
+
+import argparse
+import hashlib
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+
+LIMIT = 1_000_000_000
+CHUNK = 1 << 20
+# Three digits keep fragments sorting in order as plain text, and a thousand
+# of them is a terabyte -- far past anything a release holds.
+MAX_PARTS = 1000
+MERGE = "merge-release.sh"
+
+# Not data: the manifest, its signature, and what this tool itself writes.
+SKIP_SUFFIXES = (".parts", ".gpg")
+SKIP_NAMES = {"SHA256SUMS", MERGE}
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(CHUNK), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def is_fragment(name):
+    stem, _, tail = name.rpartition(".part-")
+    return bool(stem) and tail.isdigit()
+
+
+def split(path, limit):
+    """Write NAME.part-NNN and NAME.parts beside `path`; return the names."""
+    whole = hashlib.sha256()
+    lines = []
+    names = []
+    with path.open("rb") as source:
+        index = 0
+        while True:
+            name = f"{path.name}.part-{index:03d}"
+            digest = hashlib.sha256()
+            size = 0
+            with (path.parent / name).open("wb") as target:
+                while size < limit:
+                    block = source.read(min(CHUNK, limit - size))
+                    if not block:
+                        break
+                    target.write(block)
+                    digest.update(block)
+                    whole.update(block)
+                    size += len(block)
+            if size == 0:
+                # The previous fragment ended exactly on the limit, so there
+                # is nothing left for this one.
+                (path.parent / name).unlink()
+                break
+            lines.append(f"{digest.hexdigest()}  {name}")
+            names.append(name)
+            index += 1
+            if index >= MAX_PARTS:
+                if source.read(1):
+                    sys.exit(f"split-release: {path.name} needs more than "
+                             f"{MAX_PARTS} fragments of {limit} bytes")
+                break
+    lines.append(f"{whole.hexdigest()}  {path.name}")
+    parts = path.parent / f"{path.name}.parts"
+    parts.write_text("\n".join(lines) + "\n")
+    return names, parts.name
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("directory", help="release directory, changed in place")
+    parser.add_argument("--size", type=int, default=LIMIT, metavar="BYTES",
+                        help=f"largest fragment (default {LIMIT})")
+    args = parser.parse_args()
+    if args.size < 1:
+        sys.exit("split-release: --size must be positive")
+
+    directory = Path(args.directory)
+    manifest = directory / "SHA256SUMS"
+    if not manifest.is_file():
+        sys.exit(f"split-release: no {manifest}; write it first "
+                 "(tools/release-manifest)")
+
+    candidates = [p for p in sorted(directory.iterdir())
+                  if p.is_file() and not p.is_symlink()
+                  and p.name not in SKIP_NAMES
+                  and not p.name.endswith(SKIP_SUFFIXES)
+                  and not is_fragment(p.name)
+                  and p.stat().st_size > args.size]
+
+    # Re-running on a directory already cut would leave a stale `.parts` for a
+    # file that is gone; refuse rather than guess which is current.
+    for path in candidates:
+        if (directory / f"{path.name}.parts").exists():
+            sys.exit(f"split-release: {path.name} already has a .parts file")
+
+    added = {}
+    for path in candidates:
+        names, parts = split(path, args.size)
+        path.unlink()
+        added[path.name] = [*names, parts]
+        print(f"split-release: {path.name} -> {len(names)} fragment(s)")
+
+    # The merge script travels with the release: someone holding fragments
+    # needs it, and fetching it from the repository would be a second thing
+    # to trust.
+    shutil.copy2(REPO / "tools" / MERGE, directory / MERGE)
+
+    kept = [line for line in manifest.read_text().splitlines()
+            if line.strip()
+            and line.split(maxsplit=1)[1].lstrip("*").strip() not in added
+            and not line.endswith(f"  {MERGE}")]
+    for name in [n for names in added.values() for n in names] + [MERGE]:
+        kept.append(f"{sha256(directory / name)}  {name}")
+    manifest.write_text("\n".join(kept) + "\n")
+    (directory / "SHA256SUMS.gpg").unlink(missing_ok=True)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -271,6 +271,11 @@ RUN pacman -Syu --noconfirm --needed \
       `# than an extra package.` \
       python-pefile \
       \
+      `# tools/gates/test-split-release.py signs with a throwaway key and` \
+      `# checks the result with gpgv, the program sysupdate runs; without` \
+      `# them the gate would skip the signing half and say nothing.` \
+      gnupg \
+      \
       `# rustup's installer and tools/fetch-sources both need to fetch, and` \
       `# fetch-sources exists precisely because it can be told about a CA that` \
       `# pm's own downloader cannot.` \
