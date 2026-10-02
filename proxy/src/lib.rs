@@ -1,6 +1,6 @@
 //! The decisions behind the GHCR proxy, compiled to WebAssembly.
 //!
-//! The proxy (`api/proxy.js`) serves two things from one host, both out of this
+//! The proxy (`api/proxy.ts`) serves two things from one host, both out of this
 //! project's GitHub Container Registry namespace:
 //!
 //! * **A Nix binary cache.** `nix copy --to file://...` writes a narinfo and a

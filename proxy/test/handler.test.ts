@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { bind, handler } from "../lib/handler.js";
+import { bind, handler, type Fetch, type Handler } from "../lib/handler.ts";
 
 const HASH = "0c0x1c0lyb5dh3dkw4mv1bmp8vd6gn8f";
 const NAR = "1w1fff338fvdw53sqgamddn1b2xgds473pv6y13gizdbqjv4i5p3.nar.xz";
@@ -14,12 +14,12 @@ const D3 = `sha256:${"3".repeat(64)}`;
 const D4 = `sha256:${"4".repeat(64)}`;
 // Not valid UTF-8 anywhere: the bytes a binary OpenPGP signature starts with.
 const SIGNATURE = new Uint8Array([0x89, 0x02, 0x33, 0x04, 0x00, 0x01, 0x08, 0xff, 0xfe, 0x80]);
-const layer = (digest, title) => ({
+const layer = (digest: string, title: string) => ({
   digest,
   annotations: { "org.opencontainers.image.title": title },
 });
 
-const ARTIFACTS = {
+const ARTIFACTS: Record<string, ReturnType<typeof layer>[]> = {
   [`dasmatus/losos-desktop/nix-cache:${HASH}`]: [layer(D1, `${HASH}.narinfo`), layer(D2, NAR)],
   "dasmatus/losos-desktop/images:nightly-x86_64": [
     layer(D3, "SHA256SUMS"),
@@ -27,15 +27,20 @@ const ARTIFACTS = {
     layer(D2, "losos-desktop_1_x86_64.efi"),
   ],
 };
-const BLOBS = { [D1]: NARINFO, [D3]: "abc  losos-desktop_1_x86_64.efi\n", [D4]: SIGNATURE };
+const BLOBS: Record<string, string | Uint8Array> = { [D1]: NARINFO, [D3]: "abc  losos-desktop_1_x86_64.efi\n", [D4]: SIGNATURE };
 
-function registry(log = []) {
+interface Logged {
+  url: string;
+  init: RequestInit;
+}
+
+function registry(log: Logged[] = []): Fetch {
   return async (url, init = {}) => {
     log.push({ url, init });
     const u = new URL(url);
     if (u.pathname === "/token") return Response.json({ token: "t" });
-    const [, repo, what, ref] = u.pathname.match(/^\/v2\/(.+)\/(manifests|blobs)\/(.+)$/);
-    assert.equal(init.headers.authorization, "Bearer t");
+    const [, repo, what, ref] = u.pathname.match(/^\/v2\/(.+)\/(manifests|blobs)\/(.+)$/)!;
+    assert.equal((init.headers as Record<string, string>).authorization, "Bearer t");
     if (what === "manifests") {
       const layers = ARTIFACTS[`${repo}:${ref}`];
       return layers ? Response.json({ layers }) : new Response("", { status: 404 });
@@ -43,7 +48,7 @@ function registry(log = []) {
     if (init.redirect === "manual") {
       return new Response(null, { status: 307, headers: { location: `https://blob.example/${ref}` } });
     }
-    return new Response(BLOBS[ref]);
+    return new Response(BLOBS[ref] as BodyInit);
   };
 }
 
@@ -52,11 +57,11 @@ const core = bind(
     .instance,
 );
 const env = { GHCR_REPOSITORY: "dasMatus/losos-desktop" };
-const get = (h, path, method = "GET") =>
+const get = (h: Handler, path: string, method = "GET") =>
   h(new Request(`https://cache.example/api/proxy?path=${encodeURIComponent(path)}`, { method }));
 
 test("nix-cache-info needs no registry", async () => {
-  const log = [];
+  const log: Logged[] = [];
   const response = await get(handler(core, env, registry(log)), "nix-cache-info");
   assert.equal(response.status, 200);
   assert.match(await response.text(), /^StoreDir: \/nix\/store\n/);
@@ -98,7 +103,7 @@ test("SHA256SUMS.gpg comes back byte for byte", async () => {
 });
 
 test("a crafted path never reaches the registry", async () => {
-  const log = [];
+  const log: Logged[] = [];
   const h = handler(core, env, registry(log));
   for (const path of ["v2/_catalog", "../x.narinfo", `nar/${HASH}/../../x`, "updates/a/b/c"]) {
     assert.equal((await get(h, path)).status, 404, path);
@@ -113,7 +118,7 @@ test("HEAD answers without a body", async () => {
 });
 
 test("GHCR_TOKEN is only ever sent to the token endpoint", async () => {
-  const log = [];
+  const log: Logged[] = [];
   const h = handler(core, { ...env, GHCR_TOKEN: "secret" }, registry(log));
   await get(h, `${HASH}.narinfo`);
   const sent = log.filter((l) => JSON.stringify(l.init).includes(btoa("token:secret")));
@@ -124,7 +129,7 @@ test("GHCR_TOKEN is only ever sent to the token endpoint", async () => {
 });
 
 test("GHCR_USERNAME pairs with GHCR_TOKEN, as a personal access token needs", async () => {
-  const log = [];
+  const log: Logged[] = [];
   const h = handler(core, { ...env, GHCR_TOKEN: "secret", GHCR_USERNAME: "someone" }, registry(log));
   await get(h, `${HASH}.narinfo`);
   const sent = log.filter((l) => JSON.stringify(l.init).includes(btoa("someone:secret")));

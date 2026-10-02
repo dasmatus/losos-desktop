@@ -1,19 +1,49 @@
 // The proxy's I/O: everything src/lib.rs decides, carried out against GHCR.
 //
-// Kept apart from api/proxy.js so the same code runs under Vercel's edge
-// runtime and under `node --test` with a fake registry (test/handler.test.js).
+// Kept apart from api/proxy.ts so the same code runs under Vercel's edge
+// runtime and under `node --test` with a fake registry (test/handler.test.ts).
 // Nothing here chooses what a path means; it asks the module.
 
 const REGISTRY = "https://ghcr.io";
 const MANIFEST = "application/vnd.oci.image.manifest.v1+json";
 const TITLE = "org.opencontainers.image.title";
 
+// The environment the handler reads: GHCR_REPOSITORY (owner/name, the
+// namespace every artifact lives under) and optionally GHCR_TOKEN and
+// GHCR_USERNAME.
+export interface Env {
+  GHCR_REPOSITORY?: string;
+  GHCR_TOKEN?: string;
+  GHCR_USERNAME?: string;
+}
+
+// What src/lib.rs exports. Each decision takes a string and returns one, both
+// passed through linear memory; the result is a pointer and a length packed
+// into one i64.
+interface Exports {
+  memory: WebAssembly.Memory;
+  alloc(length: number): number;
+  free(ptr: number, length: number): void;
+  plan(ptr: number, length: number): bigint;
+  pick(ptr: number, length: number): bigint;
+  narinfo(ptr: number, length: number): bigint;
+}
+
+export interface Core {
+  plan(path: string): string;
+  pick(input: string): string;
+  narinfo(input: string): string;
+}
+
+export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
+export type Handler = (request: Request) => Promise<Response>;
+
 // Wrap an instantiated losos_proxy.wasm in the three calls it exports.
-export function bind(instance) {
-  const wasm = instance.exports;
+export function bind(instance: WebAssembly.Instance): Core {
+  const wasm = instance.exports as unknown as Exports;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const call = (name, input) => {
+  const call = (name: "plan" | "pick" | "narinfo", input: string): string => {
     const bytes = encoder.encode(input);
     const ptr = wasm.alloc(bytes.length);
     new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
@@ -25,13 +55,19 @@ export function bind(instance) {
     return out;
   };
   return {
-    plan: (path) => call("plan", path),
-    pick: (input) => call("pick", input),
-    narinfo: (input) => call("narinfo", input),
+    plan: (path: string) => call("plan", path),
+    pick: (input: string) => call("pick", input),
+    narinfo: (input: string) => call("narinfo", input),
   };
 }
 
-function text(status, body, cacheControl) {
+// One entry of an OCI manifest's layer list.
+interface Layer {
+  digest: string;
+  annotations?: Record<string, string>;
+}
+
+function text(status: number, body: BodyInit | null, cacheControl: string): Response {
   return new Response(body, {
     status,
     headers: { "content-type": "text/plain; charset=utf-8", "cache-control": cacheControl },
@@ -42,25 +78,23 @@ function text(status, body, cacheControl) {
 // GHCR_TOKEN (a token with read:packages) for a private one. GHCR pairs a
 // personal access token with its owner's login, so GHCR_USERNAME names it.
 // `token` serves for a GitHub Actions token, and is the default.
-async function token(fetchImpl, repository, env) {
+async function token(fetchImpl: Fetch, repository: string, env: Env): Promise<string> {
   const url = `${REGISTRY}/token?service=ghcr.io&scope=repository:${repository}:pull`;
-  const headers = {};
+  const headers: Record<string, string> = {};
   if (env.GHCR_TOKEN) {
     const user = env.GHCR_USERNAME || "token";
     headers.authorization = `Basic ${btoa(`${user}:${env.GHCR_TOKEN}`)}`;
   }
   const response = await fetchImpl(url, { headers });
   if (!response.ok) throw new Error(`token: ${response.status}`);
-  return (await response.json()).token;
+  return ((await response.json()) as { token: string }).token;
 }
 
-// Build the request handler. `env` carries GHCR_REPOSITORY (owner/name, the
-// namespace every artifact lives under) and optionally GHCR_TOKEN and
-// GHCR_USERNAME.
-export function handler(core, env, fetchImpl = fetch) {
+// Build the request handler. `env` is read as described on Env.
+export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler {
   const namespace = (env.GHCR_REPOSITORY || "").toLowerCase();
 
-  return async function handle(request) {
+  return async function handle(request: Request): Promise<Response> {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return text(405, "GET or HEAD\n", "no-store");
     }
@@ -74,7 +108,7 @@ export function handler(core, env, fetchImpl = fetch) {
     const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
     const plan = core.plan(path);
     const head = request.method === "HEAD";
-    const body = (b) => (head ? null : b);
+    const body = <T>(b: T): T | null => (head ? null : b);
 
     if (plan.startsWith("static ")) {
       const newline = plan.indexOf("\n");
@@ -91,11 +125,11 @@ export function handler(core, env, fetchImpl = fetch) {
 
     const [, suffix, tag, title, kind] = plan.split(" ");
     const repository = `${namespace}/${suffix}`;
-    let bearer;
+    let bearer: string;
     try {
       bearer = await token(fetchImpl, repository, env);
     } catch (error) {
-      return text(502, body(`${error.message}\n`), "no-store");
+      return text(502, body(`${(error as Error).message}\n`), "no-store");
     }
     const auth = { authorization: `Bearer ${bearer}` };
 
@@ -110,7 +144,8 @@ export function handler(core, env, fetchImpl = fetch) {
     if (!manifest.ok) {
       return text(502, body(`manifest: ${manifest.status}\n`), "no-store");
     }
-    const layers = ((await manifest.json()).layers || [])
+    const stored = (await manifest.json()) as { layers?: Layer[] };
+    const layers = (stored.layers || [])
       .map((l) => `${l.digest}\t${(l.annotations || {})[TITLE] || ""}`)
       .join("\n");
     const digest = core.pick(`${title}\n${layers}`);

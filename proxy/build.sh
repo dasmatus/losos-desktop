@@ -1,5 +1,5 @@
 #!/bin/sh
-# Compile the proxy's decisions to WebAssembly, where api/proxy.js imports them.
+# Compile the proxy's decisions to WebAssembly, where api/proxy.ts imports them.
 #
 # Vercel's build image may have Rust without the WebAssembly target. Install
 # a pinned toolchain when absent, and add the target to an existing toolchain.
