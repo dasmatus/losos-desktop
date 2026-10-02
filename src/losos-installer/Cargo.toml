@@ -1,0 +1,9 @@
+[package]
+name = "losos-installer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+
+[dependencies]
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+serde_json = "1"

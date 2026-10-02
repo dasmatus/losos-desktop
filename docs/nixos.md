@@ -16,8 +16,8 @@ and ThinLTO, from a toolchain it configured itself. nixpkgs on this platform
 enables fortify, the stack protector, stack clash protection, RELRO, bind-now
 and zeroed call-used registers, going by a derivation's
 `NIX_HARDENING_ENABLE`, and no CFI. The only code of this repository's own
-left is `src/losos-security` and `src/losos-swap`, which `nixos/pkgs/`
-builds. pm ships in the image as the system manager.
+left is `src/losos-security`, `src/losos-swap` and `src/losos-installer`,
+which `nixos/pkgs/` builds. pm ships in the image as the system manager.
 
 ## What this trusts from outside
 
@@ -39,8 +39,8 @@ Everything the flake builds from, besides this repository:
   checked against its derivation's hash, and outputs using other hash methods
   are rejected.
 - **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
-  (`nixos/pkgs/pm.nix`), and **crates.io**, for its and losos-security's
-  dependencies, each pinned by `Cargo.lock` and checked by hash.
+  (`nixos/pkgs/pm.nix`), and **crates.io**, for its, losos-security's and
+  losos-installer's dependencies, each pinned by `Cargo.lock` and checked by hash.
 - **Device firmware**, from nixpkgs' `linux-firmware`, pinned by hash like any
   source. It is prebuilt by the hardware vendors, and nothing can compile it.
   `hardware.nix` ships it because amdgpu and nouveau cannot start current
@@ -61,10 +61,11 @@ that serves updates. Since the flake reads this environment variable, pass
 
 ```sh
 nix build --impure              # the disk image: dd it to a disk and boot
-nix build .#installer --impure  # the same image, booting the installer by default
+nix build .#installer --impure  # the installer ISO (below)
 nix build .#release --impure    # the files CI publishes through the proxy
 nix run .#vm --impure           # boot the image in QEMU with UEFI firmware
-nix flake check        # both architectures, losos-security's tests, and
+nix flake check        # both architectures, losos-security's and
+                       # losos-installer's tests, and
                        # (on a builder with KVM) a VM boot test
 ```
 
@@ -270,7 +271,7 @@ That buys two things the pm tree wrote down as limits:
 | `mkuki.py`, `files/cmdline` | `boot.uki`, verity-store module | the UKI carries `usrhash=` |
 | `overlay/usr/lib/repart.d/` | `systemd.repart.partitions` in `disk.nix` | runs in the initrd, as before |
 | `overlay/usr/lib/sysupdate.d/` | `systemd.sysupdate.transfers` in `update.nix` | UKI plus both `/usr` halves |
-| `overlay/usr/lib/repart.sysinstall.d/`, `systemd-sysinstall` | `installer.nix` | see below |
+| `overlay/usr/lib/repart.sysinstall.d/`, `systemd-sysinstall` | `installer.nix`, `nixos/installer/` | see below |
 | `overlay/usr/lib/systemd/system-preset/10-losos.preset` | the module options themselves | on NixOS a unit is enabled by being wanted, not by a preset |
 | `overlay/usr/lib/sysusers.d/losos.conf` | `systemd.sysusers.enable` over `users.users` | the upstream tool, not NixOS's perl script |
 | `overlay/usr/lib/tmpfiles.d/losos.conf` | `systemd.tmpfiles.settings` in `services.nix` | |
@@ -314,42 +315,74 @@ wizard instead of no way to create the first user at all.
 ## The installer
 
 The pm tree's installer was `systemd-sysinstall`, new in systemd v261. nixpkgs
-26.05 ships 260.4, so `installer.nix` does the same three things by hand with
-the same tools: it asks for a disk with `systemd-ask-password`, runs
-`systemd-repart` with `CopyBlocks=auto` for the `/usr` pair and `CopyFiles=`
-for the ESP, and reboots. The installed system's first boot then creates slot
-B, root, `/home` and swap from `disk.nix`, which is the same path an image
-written with `dd` takes.
+26.05 ships 260.4, so the installer does the same job by hand with the same
+tools. It is its own small live system, `nixos/installer/`, on its own ISO,
+and `nixos/modules/installer.nix` evaluates it from the OS's configuration.
 
-The installer UKI is the ordinary one with `root=tmpfs losos.install
-systemd.unit=losos-install.target` appended. systemd takes the last `root=`,
-so the installer boots with a tmpfs root and never repartitions its own medium.
-When nixpkgs reaches v261, `installer.nix` should shrink to sysinstall's
-drop-in and the repart definitions.
+It boots by UEFI only: the ISO's appended FAT partition holds the installer's
+UKI as `EFI/BOOT/BOOT<ARCH>.EFI`, with no bootloader in front of it, and the
+initrd mounts the ISO by its volume label and the Nix store from a squashfs
+on it. It carries `wpa_supplicant` and no NetworkManager: networkd and
+resolved bring up whatever link has a carrier, and `losos-installer`
+(`src/losos-installer`) talks to `wpa_supplicant` over its control socket to
+scan for and join a Wi-Fi network. Of the firmware NixOS would add, only
+`linux-firmware` is on the medium, because most Wi-Fi cards do not start
+without it.
+
+`losos-installer` is a terminal interface on tty1, with a root shell on tty2
+for anything it does not cover. Once the machine is online it lists the
+disks, leaving out the one the ISO booted from, and asks for `erase` to be
+typed before it touches the one chosen. Then:
+
+1. `systemd-repart --empty=force` lays out the ESP, with systemd-boot and
+   `loader.conf` copied in, and slot A at full size, labelled `_empty`. These
+   are `disk.nix`'s own definitions, so the disk is laid out the way the
+   installed system expects to find it.
+2. `systemd-sysupdate update` fills them with the channel's newest release,
+   from the same URL and through the same transfers as `update.nix`, aimed at
+   the chosen disk instead of `auto` and at the new ESP, mounted under
+   `/run/losos-installer`. With `losos.update.pubring` set, the installer
+   checks `SHA256SUMS.gpg` against it as an update does.
+3. The machine reboots into the installed system, whose first boot creates
+   slot B, root, `/home` and swap from `disk.nix`, the path an image written
+   with `dd` takes.
+
+So an install is an update into an empty slot: what lands on the disk is
+what the channel serves at the time, not a copy of the OS on the medium that
+could have gone stale. The image used to be its own installer, with a second
+UKI that booted it into a tmpfs root and copied its own `/usr` with
+`CopyBlocks=`; that is gone, and so is the `losos.install` condition it
+needed in `disk.nix`. When nixpkgs reaches v261, the installer should be
+measured against `systemd-sysinstall` again.
 
 ## Releases and GHCR
 
 `nix build .#release` writes a flat directory:
 
 ```
-losos-desktop_<v>_x86_64.efi                 the UKI sysupdate installs
-losos-desktop_<v>_usr-x86-64.raw.xz          /usr for a sysupdate slot
-losos-desktop_<v>_usr-x86-64-verity.raw.xz   its hash tree
-losos-desktop_<v>_x86_64.raw.xz              the disk image
-losos-desktop_<v>_x86_64-installer.raw.xz    the installer medium
-losos-desktop_<v>_x86_64.qcow2               the disk image, for a VM
+losos-desktop_<v>_x86_64.efi                        the UKI sysupdate installs
+losos-desktop_<v>_usr-x86-64_<uuid>.raw.xz          /usr for a sysupdate slot
+losos-desktop_<v>_usr-x86-64-verity_<uuid>.raw.xz   its hash tree
+losos-desktop_<v>_x86_64.raw.xz                     the disk image
+losos-desktop_<v>_x86_64-installer.iso              the installer
+losos-desktop_<v>_x86_64.qcow2                      the disk image, for a VM
 SHA256SUMS
 ```
 
 CI pushes it to GHCR as one OCI artifact per architecture with `oras`, and
-the publish job copies it to the `nightly` GitHub release. The GitHub release
-is the default URL sysupdate reads, because systemd-sysupdate
-cannot fetch from an OCI registry; `proxy/` is the other way (see "Binary
-cache").
+`proxy/` serves the newest one to sysupdate, which cannot fetch from an OCI
+registry itself (see "Binary cache"). The publish job then replaces the
+`nightly` GitHub release with the installer ISOs and their lines of
+`SHA256SUMS`, and nothing else: GitHub rejects release assets of 2 GiB or
+more, which `/usr` and the disk image are not far from, and the ISO is what a
+person downloads by hand.
 
 The `/usr` halves are cut out of the finished disk image at the offsets repart
 reported, not built a second time, so the bytes sysupdate installs are the
-bytes the image boots.
+bytes the image boots. Each name carries its partition's UUID, which sysupdate
+reads with `@u` and gives the partition it writes. The initrd finds `/usr` by
+the UUIDs repart derived from `usrhash=`, so a slot that kept the random UUID
+repart created it with would hold the right bytes and never be found.
 
 ## What is not done
 
@@ -388,10 +421,12 @@ bytes the image boots.
   bootloader on the ESP is the one the image shipped.
 - **sysext.** Extensions merge into `/usr`, which here holds little but the
   Nix store, so an extension can add a program and cannot replace one.
-- **Nothing has booted yet.** The disk image and the installer image build,
-  with the layout above, the installer UKI's command line as described, and a
-  `usrhash=` equal to the root hash repart reported. The VM test evaluates
-  and needs KVM, which the machine this was written on did not have; so the
-  first-boot repart run, the gpt-auto root, and the installer have not been
-  seen working. `nix build .#release` was not completed there either, for
+- **Nothing has booted yet.** The disk image builds, with the layout above
+  and a `usrhash=` equal to the root hash repart reported. The VM test
+  evaluates and needs KVM, which the machine this was written on did not
+  have; so the first-boot repart run, the gpt-auto root, and the installer
+  have not been seen working. The installer ISO and its live system evaluate
+  for both architectures and `losos-installer`'s tests pass, but the ISO has
+  not been built, nor sysupdate seen writing to a disk that is not the one
+  running. `nix build .#release` was not completed there either, for
   lack of disk space rather than an error.

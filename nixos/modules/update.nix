@@ -20,12 +20,17 @@ let
   id = config.system.image.id;
 
   # The same partition-label contract image.nix writes: "<id>_<version>".
+  #
+  # The source name carries the partition's UUID (@u), and sysupdate gives the
+  # partition it writes that UUID. It has to: the UKI finds /usr by the UUIDs
+  # repart derived from usrhash=, so a slot that kept the random UUID repart
+  # created it with would hold the right bytes and never be found.
   partition = type: {
     Transfer.ProtectVersion = "%A";
     Source = {
       Type = "url-file";
       Path = cfg.update.baseUrl;
-      MatchPattern = "${id}_@v_${type}.raw.xz";
+      MatchPattern = "${id}_@v_${type}_@u.raw.xz";
     };
     Target = {
       Type = "partition";

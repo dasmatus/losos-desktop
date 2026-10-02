@@ -7,13 +7,15 @@
 # and qemu-img past pm's fingerprint table. NixOS drives the same
 # systemd-repart through image/repart.nix, so that problem does not exist here.
 #
-# Three images come out of one configuration:
+# What comes out of one configuration:
 #
-#   system.build.image           the OS as a disk: write it to a disk and boot
-#   system.build.installerImage  the same bytes plus an installer UKI, which is
-#                                the default boot entry; write it to a USB stick
-#   system.build.releaseArtifacts  what systemd-sysupdate downloads, plus both
-#                                images, with SHA256SUMS
+#   system.build.image             the OS as a disk: write it to a disk and boot
+#   system.build.releaseArtifacts  what systemd-sysupdate downloads, plus the
+#                                  disk image and the installer ISO
+#                                  (installer.nix), with SHA256SUMS
+#
+# The installer used to be this image again, with a second UKI that booted
+# into an install. installer.nix says why it is a separate live system now.
 {
   config,
   lib,
@@ -123,44 +125,6 @@ let
     timeout 3
     editor no
   '';
-
-  # The installer medium boots the installer unless someone picks otherwise.
-  installerLoaderConf = pkgs.writeText "loader.conf" ''
-    timeout 5
-    editor no
-    default ${id}-installer_*
-  '';
-
-  installerUkiFile = "${id}-installer_${version}.efi";
-
-  # The installer UKI is the ordinary one with three words appended. systemd
-  # takes the last root= it is given, so root=tmpfs overrides the gpt-auto root
-  # the ordinary command line names: the installer must not create partitions
-  # on the medium it is about to copy, and a tmpfs root needs none. usrhash is
-  # the same value in both, because both boot the same /usr.
-  #
-  # This is the NixOS verity-store module's own UKI build with a different
-  # command line. It reads the roothash out of the intermediate image rather
-  # than taking it as an argument, so it cannot be built against a /usr other
-  # than the one on the medium.
-  installerUki =
-    pkgs.runCommand installerUkiFile
-      {
-        nativeBuildInputs = [
-          pkgs.buildPackages.jq
-          pkgs.buildPackages.systemdUkify
-        ];
-      }
-      ''
-        mkdir -p $out
-        usrhash=$(jq -r \
-          '.[] | select(.type=="${arch.usrVerity}") | .roothash' \
-          ${config.system.build.intermediateImage}/repart-output.json)
-        ukify build \
-          --config=${config.boot.uki.configFile} \
-          --cmdline="init=${config.system.build.toplevel}/init ${toString config.boot.kernelParams} usrhash=$usrhash root=tmpfs losos.install systemd.unit=losos-install.target" \
-          --output="$out/${installerUkiFile}"
-      '';
 in
 {
   imports = [ repartModule ];
@@ -234,31 +198,19 @@ in
     };
   };
 
-  system.build.installerUki = installerUki;
-
-  system.build.installerImage = config.system.build.image.overrideAttrs (
-    _: previousAttrs: {
-      name = "${id}-installer_${version}";
-      finalPartitions = lib.recursiveUpdate previousAttrs.finalPartitions {
-        ${partitionIds.esp}.contents = {
-          "/EFI/Linux/${installerUkiFile}".source = "${installerUki}/${installerUkiFile}";
-          "/loader/loader.conf".source = installerLoaderConf;
-        };
-      };
-    }
-  );
-
   # What a release uploads. The file names are the contract with update.nix:
   # sysupdate matches them with MatchPattern, so the two are written from the
   # same arch table and cannot drift.
   #
   # The /usr halves are cut out of the finished disk image using the offsets
   # repart itself reported, rather than built a second time, so the bytes
-  # sysupdate installs are the bytes the image boots.
+  # sysupdate installs are the bytes the image boots. Their names carry the
+  # partition UUIDs repart derived from the verity root hash, because that is
+  # how the initrd finds /usr from usrhash= on the command line, and
+  # sysupdate gives a partition the UUID its source's name carries (@u).
   system.build.releaseArtifacts =
     let
       image = config.system.build.image;
-      installer = config.system.build.installerImage;
       raw = "${config.image.baseName}.raw";
       prefix = "${id}_${version}";
     in
@@ -275,20 +227,24 @@ in
         cd $out
 
         extract() {
-          local type=$1 dest=$2 offset size
-          offset=$(jq -r --arg t "$type" '.[] | select(.type==$t) | .offset' ${image}/repart-output.json)
-          size=$(jq -r --arg t "$type" '.[] | select(.type==$t) | .raw_size' ${image}/repart-output.json)
-          dd if=${image}/${raw} of="$dest" bs=1M iflag=skip_bytes,count_bytes \
+          local type=$1 offset size uuid
+          field() {
+            jq -er --arg t "$type" ".[] | select(.type==\$t) | .$1" ${image}/repart-output.json
+          }
+          offset=$(field offset)
+          size=$(field raw_size)
+          uuid=$(field uuid)
+          dd if=${image}/${raw} of="${prefix}_''${type}_$uuid.raw" bs=1M iflag=skip_bytes,count_bytes \
             skip="$offset" count="$size" status=none
-          xz --threads=$NIX_BUILD_CORES "$dest"
+          xz --threads=$NIX_BUILD_CORES "${prefix}_''${type}_$uuid.raw"
         }
 
         cp ${config.system.build.uki}/${ukiFile} ${prefix}_${arch.name}.efi
-        extract ${arch.usr} ${prefix}_${arch.usr}.raw
-        extract ${arch.usrVerity} ${prefix}_${arch.usrVerity}.raw
+        extract ${arch.usr}
+        extract ${arch.usrVerity}
 
         xz --threads=$NIX_BUILD_CORES -c ${image}/${raw} > ${prefix}_${arch.name}.raw.xz
-        xz --threads=$NIX_BUILD_CORES -c ${installer}/${raw} > ${prefix}_${arch.name}-installer.raw.xz
+        cp ${config.system.build.installerIso} ${prefix}_${arch.name}-installer.iso
         qemu-img convert -f raw -O qcow2 ${image}/${raw} ${prefix}_${arch.name}.qcow2
 
         sha256sum -- * > SHA256SUMS

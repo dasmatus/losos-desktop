@@ -62,9 +62,10 @@ in
     # restores exactly that, once the target exists (above).
     after = lib.mkForce [ ];
 
-    # The installer boots with a tmpfs root and must not repartition the medium
-    # it is about to copy. See installer.nix.
-    unitConfig.ConditionKernelCommandLine = "!losos.install";
+    # This was conditioned on `!losos.install`, for an installer that booted
+    # this image with a tmpfs root and must not repartition its own medium.
+    # The installer is a separate live system now (installer.nix), so every
+    # boot of this image is a boot of an installed disk.
 
     serviceConfig.ExecStartPre = "${pkgs.losos-swap}/lib/losos/losos-swap /run/repart.d";
   };
@@ -137,8 +138,8 @@ in
 
   # The swap partition losos-swap describes is encrypted with a fresh random
   # key every boot rather than exposing raw swap blocks on disk. The label is
-  # fixed by losos-swap. nofail because an installer medium has no swap
-  # partition and must not wait for one.
+  # fixed by losos-swap. nofail, so a boot that finds no swap partition does
+  # not wait for one.
   environment.etc.crypttab.text = ''
     swap /dev/disk/by-partlabel/losos-swap /dev/urandom swap,nofail
   '';

@@ -41,11 +41,15 @@ still takes time, so don't start one to check a module edit.
 - `nixos/modules/` has one file per concern: `boot`, `disk`, `update`,
   `accounts`, `desktop`, `services`, `hardware`, `installer`, `pm` and
   a few more. `default.nix` imports them all.
+- `nixos/installer/` is the installer ISO's live system: networkd,
+  `wpa_supplicant` and `losos-installer` on tty1. `modules/installer.nix`
+  evaluates it with the OS's own repart definitions and sysupdate transfers.
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
-  plugins, `losos-security`, `losos-swap`, and the pm payload builder.
+  plugins, `losos-installer`, `losos-security`, `losos-swap`, and the pm
+  payload builder.
   `patches/` holds the two gnome-control-center patches. They target 51.0 and
   nothing applies them (`docs/nixos.md`).
-- `src/` holds the two programs this repository writes. The overlay builds
+- `src/` holds the three programs this repository writes. The overlay builds
   them.
 - `plugins/` holds pm plugins, written in Rust and compiled to WebAssembly
   components. pm asks a plugin about a command only when no built-in
@@ -92,8 +96,9 @@ the GHCR cache. When
 a build completes it checks formatting and the flake, and outside a pull
 request hands the release to `push` as an artifact. `push` uploads it to
 GHCR. It is the only job holding `packages: write` beside release files, and
-it checks out no code. `publish` replaces the `nightly` GitHub release and
-moves the `images:nightly-<arch>` tag that `proxy/` serves updates from.
+it checks out no code. `publish` replaces the `nightly` GitHub release with
+the installer ISOs and moves the `images:nightly-<arch>` tag that `proxy/`
+serves updates from.
 `proxy` tests the proxy and deploys nothing. `ci` is the check branch
 protection reads.
 

@@ -7,12 +7,12 @@
 # ones, and nixos/ holds the modules.
 #
 #   nix build                      the disk image (.#image)
-#   nix build .#installer          the same image, booting the installer
+#   nix build .#installer          the installer ISO: Wi-Fi, a disk, sysupdate
 #   nix build .#release            the files CI publishes through the proxy
 #   nix run .#vm                   boot the image in QEMU with UEFI firmware
 #   nix build .#pm-payloads.<pkg>  any nixpkgs package, static, for a pm build file
-#   nix flake check                evaluate both architectures, test losos-security,
-#                                  and (with KVM) boot the image
+#   nix flake check                evaluate both architectures, test losos-security
+#                                  and losos-installer, and (with KVM) boot the image
 {
   description = "LosOS Desktop: a systemd-native, image-based GNOME desktop on NixOS";
 
@@ -105,7 +105,7 @@
         in
         {
           image = requireProxy build.image;
-          installer = requireProxy build.installerImage;
+          installer = requireProxy build.installerIso;
           qcow2 = requireProxy build.qcow2;
           release = requireProxy build.releaseArtifacts;
           uki = requireProxy build.uki;
@@ -113,6 +113,7 @@
           inherit (ours)
             pm
             pm-plugins
+            losos-installer
             losos-security
             losos-swap
             ;
@@ -139,7 +140,8 @@
           # Building the toplevel evaluates every module and every assertion in
           # them, which is most of what can go wrong in a configuration.
           toplevel = self.packages.${system}.toplevel;
-          # Runs losos-security's own test suite as part of the build.
+          # Run each program's own test suite as part of its build.
+          losos-installer = self.packages.${system}.losos-installer;
           losos-security = self.packages.${system}.losos-security;
           losos-swap = self.packages.${system}.losos-swap;
           pm = self.packages.${system}.pm;
