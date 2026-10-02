@@ -152,6 +152,9 @@
         # without it refuses rather than running for hours.
         // lib.optionalAttrs (system == "x86_64-linux") {
           boot = pkgs.testers.runNixOSTest (import ./nixos/tests/boot.nix { inherit self; });
+          installer-boot = pkgs.testers.runNixOSTest (
+            import ./nixos/tests/installer-boot.nix { inherit self; }
+          );
         }
       );
 
