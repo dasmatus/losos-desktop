@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""Write a libvirt domain for the QCOW2 this repository builds.
+
+`tools/vm-test disk` already boots that image, but it boots it the way a gate
+does: headless, with a serial console, for sixty seconds, to answer one
+question. Looking at the desktop needs the opposite -- a graphical VM that
+survives a reboot, keeps its EFI variables, and can be opened and closed in
+virt-manager like any other machine.
+
+The two disagree on nothing important, deliberately. Both give the firmware the
+qcow2 and nothing else: no kernel on the command line, no ESP staged from
+outside, no `root=`. The image has to be found the way it will be found on
+hardware -- firmware reads the ESP out of the partition table, systemd-boot
+loads the UKI beside it, and `systemd-gpt-auto-generator` finds the root
+filesystem by its GPT type. Handing the VM any of that from the host would make
+it boot and prove nothing.
+
+What this does add over the gate is the things a desktop needs and a headless
+boot check does not: a GPU, a tablet so the pointer is absolute, a sound device,
+and a virtio-rng -- without which GNOME's first boot blocks on entropy for
+long enough that it reads as a hang.
+
+    ./tools/libvirt-domain --disk release/losos-desktop_1.2_x86_64.qcow2 \\
+        > losos.xml
+    virsh --connect qemu:///session define losos.xml
+    virt-manager --connect qemu:///session
+
+`qemu:///session` rather than `qemu:///system`: the session daemon runs as the
+invoking user, so it can read a qcow2 sitting in a home directory, which the
+system daemon -- running as `qemu` and usually confined by SELinux or AppArmor
+-- cannot without being told to.
+"""
+
+import argparse
+import sys
+import uuid
+from pathlib import Path
+from xml.etree import ElementTree
+
+# Machine type and console per architecture, and nothing else: everything below
+# is the same on both.
+#
+# aarch64 has no ISA serial port, so a `<console type='pty'>` with no target
+# type lands on nothing and the guest's console output is silently lost -- the
+# VM boots fine and the log stays empty, which is the most misleading way for
+# this to be wrong.
+MACHINES = {
+    "x86_64": {"machine": "q35", "console": "serial", "gic": False},
+    "aarch64": {"machine": "virt", "console": "virtio", "gic": True},
+}
+
+
+def indent(element, depth=0):
+    """ElementTree.indent, which is 3.9+; this file targets whatever `./do` has."""
+    pad = "\n" + "  " * depth
+    if len(element):
+        if not (element.text or "").strip():
+            element.text = pad + "  "
+        for child in element:
+            indent(child, depth + 1)
+        if not (element.tail or "").strip():
+            element.tail = pad
+        if not (child.tail or "").strip():
+            child.tail = pad
+    elif depth and not (element.tail or "").strip():
+        element.tail = pad
+
+
+def sub(parent, tag, attrib=None, text=None):
+    element = ElementTree.SubElement(parent, tag, attrib or {})
+    if text is not None:
+        element.text = text
+    return element
+
+
+def build(disk, arch, name, memory_mib, vcpus, accel, credentials):
+    profile = MACHINES[arch]
+
+    domain = ElementTree.Element("domain", {"type": "kvm" if accel else "qemu"})
+    sub(domain, "name", text=name)
+    # Derived from the name rather than random, so re-running this does not
+    # define a second machine beside the first one.
+    sub(domain, "uuid", text=str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{name}.losos.invalid")))
+    sub(domain, "memory", {"unit": "MiB"}, str(memory_mib))
+    sub(domain, "vcpu", {"placement": "static"}, str(vcpus))
+
+    # firmware='efi' asks libvirt to pick a UEFI build and an NVRAM template
+    # from its own descriptors, which is the only portable way to spell this:
+    # the OVMF paths differ on every distribution. There is no BIOS fallback
+    # here and there should not be -- the image has no MBR boot sector and
+    # nothing to put in one.
+    os_element = sub(domain, "os", {"firmware": "efi"})
+    sub(os_element, "type", {"arch": arch, "machine": profile["machine"]}, "hvm")
+    firmware = sub(os_element, "firmware")
+    # Secure Boot off. The UKI this repository builds carries a SBAT section
+    # but is not signed with a key any firmware ships, so an image booted with
+    # Secure Boot on stops at "Access Denied" with no further explanation.
+    sub(firmware, "feature", {"enabled": "no", "name": "secure-boot"})
+    # A writable copy of the variable store, so a boot entry written on first
+    # boot is still there on the second. Without it every boot is a first boot,
+    # and an A/B update that depends on a boot counter cannot be tested at all.
+    sub(os_element, "nvram")
+
+    features = sub(domain, "features")
+    sub(features, "acpi")
+    if profile["gic"]:
+        # Version 3, because `virt` with GICv2 caps out at 8 vCPUs and the
+        # failure is a domain that will not start rather than one that is slow.
+        sub(features, "gic", {"version": "3"})
+    else:
+        sub(features, "apic")
+
+    cpu_mode = "host-passthrough" if accel else "custom"
+    cpu = sub(domain, "cpu", {"mode": cpu_mode})
+    if not accel:
+        # Without KVM there is no host CPU to pass through, and `max` is the
+        # only model qemu guarantees exists for every architecture.
+        sub(cpu, "model", {"fallback": "allow"}, "max")
+
+    sub(domain, "on_poweroff", text="destroy")
+    sub(domain, "on_reboot", text="restart")
+    # An image that panics should stay stopped and keep its console. `restart`
+    # here turns a reproducible boot failure into a reboot loop.
+    sub(domain, "on_crash", text="preserve")
+
+    devices = sub(domain, "devices")
+
+    disk_element = sub(devices, "disk", {"type": "file", "device": "disk"})
+    # `driver type` is stated rather than probed: libvirt refuses to guess a
+    # backing format, and a qcow2 attached as raw presents its own header to
+    # the guest as if it were a partition table.
+    sub(disk_element, "driver", {"name": "qemu", "type": "qcow2", "discard": "unmap"})
+    sub(disk_element, "source", {"file": str(Path(disk).resolve())})
+    sub(disk_element, "target", {"dev": "vda", "bus": "virtio"})
+
+    # User-mode networking: no bridge, no host configuration, and it works
+    # under qemu:///session where a bridge does not. The OTA path is reachable
+    # through it, which is the only thing a test VM needs the network for.
+    interface = sub(devices, "interface", {"type": "user"})
+    sub(interface, "model", {"type": "virtio"})
+
+    # Absolute pointer. With a relative one the guest's cursor and the host's
+    # drift apart the moment the desktop starts, and the window has to be
+    # grabbed to be usable.
+    sub(devices, "input", {"type": "tablet", "bus": "usb"})
+    sub(devices, "input", {"type": "keyboard", "bus": "usb"})
+
+    graphics = sub(devices, "graphics", {"type": "spice", "autoport": "yes"})
+    sub(graphics, "image", {"compression": "off"})
+    video = sub(devices, "video")
+    # virtio with 3D off: GNOME runs on llvmpipe, which is slow but works on
+    # every host. virgl needs host drivers this cannot check for, and when they
+    # are missing the guest comes up to a black screen rather than an error.
+    sub(video, "model", {"type": "virtio", "heads": "1"})
+
+    sub(devices, "sound", {"model": "ich9" if arch == "x86_64" else "virtio"})
+
+    # GNOME's first boot generates keys and seeds a keyring. Without a source of
+    # entropy that blocks for minutes on a guest that has just been created and
+    # has no disk history to draw on, which reads as a hang.
+    rng = sub(devices, "rng", {"model": "virtio"})
+    sub(rng, "backend", {"model": "random"}, "/dev/urandom")
+
+    console = sub(devices, "console", {"type": "pty"})
+    sub(console, "target", {"type": profile["console"], "port": "0"})
+
+    # The guest agent's channel. losos ships qemu-guest-agent's socket unit, and
+    # without this device it fails to start on every boot and says so in the
+    # journal, which is noise in the first place anyone looks.
+    channel = sub(devices, "channel", {"type": "unix"})
+    sub(channel, "target", {"type": "virtio", "name": "org.qemu.guest_agent.0"})
+
+    sub(devices, "memballoon", {"model": "virtio"})
+
+    if credentials:
+        # How a systemd guest is configured from outside without touching the
+        # image: systemd-creds reads these out of qemu's fw_cfg before anything
+        # else has started. This is what makes the same qcow2 testable with a
+        # known root password without building a second image that has one.
+        sysinfo = sub(domain, "sysinfo", {"type": "fwcfg"})
+        for item in credentials:
+            key, _, value = item.partition("=")
+            if not value:
+                sys.exit(f"libvirt-domain: --credential wants NAME=VALUE, got {item!r}")
+            sub(sysinfo, "entry", {"name": f"opt/io.systemd.credentials/{key}"}, value)
+
+    return domain
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--disk", required=True, help="the qcow2 to boot")
+    parser.add_argument("--arch", default="x86_64", choices=sorted(MACHINES))
+    parser.add_argument("--name", default="losos", help="the domain's name in libvirt")
+    parser.add_argument("--memory", type=int, default=4096, metavar="MiB",
+                        help="GNOME on llvmpipe is the floor here, not the kernel")
+    parser.add_argument("--vcpus", type=int, default=4)
+    parser.add_argument("--no-kvm", action="store_true",
+                        help="emulate, for a host of a different architecture")
+    parser.add_argument("--credential", action="append", default=[], metavar="NAME=VALUE",
+                        help="a systemd credential, passed through qemu's fw_cfg")
+    parser.add_argument("--output", help="write here instead of to stdout")
+    args = parser.parse_args()
+
+    disk = Path(args.disk)
+    if not disk.is_file():
+        sys.exit(f"libvirt-domain: {disk} does not exist")
+
+    domain = build(disk, args.arch, args.name, args.memory, args.vcpus,
+                   not args.no_kvm, args.credential)
+    indent(domain)
+    text = ElementTree.tostring(domain, encoding="unicode") + "\n"
+
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"libvirt-domain: wrote {args.output}", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

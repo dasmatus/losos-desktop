@@ -1,11 +1,11 @@
-# glib 2.82.1
+# glib 2.90.0
 #
 # The foundation of everything above it. Its GDBus is how GNOME talks to systemd's services.
 name: glib
 version:
 - '2'
-- '82'
-- '1'
+- '90'
+- '0'
 dependencies: []
 steps:
 
@@ -23,7 +23,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/glib /build/src/glib --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=false -Dintrospection=disabled -Dman-pages=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/glib /build/src/glib --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=false -Dintrospection=disabled -Dman-pages=disabled
 
 - stage: Build
   name: compile

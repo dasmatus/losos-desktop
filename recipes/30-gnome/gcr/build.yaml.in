@@ -1,11 +1,11 @@
-# gcr 4.3.0
+# gcr 4.4.1
 #
 # Crypto UI and the PKCS#11 glue gnome-keyring exposes.
 name: gcr
 version:
 - '4'
-- '3'
-- '0'
+- '4'
+- '1'
 dependencies: []
 steps:
 
@@ -23,7 +23,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gcr /build/src/gcr --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dintrospection=false -Dgtk_doc=false
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/gcr /build/src/gcr --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dintrospection=false -Dgtk_doc=false
 
 - stage: Build
   name: compile

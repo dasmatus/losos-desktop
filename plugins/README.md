@@ -1,12 +1,12 @@
 # This distribution's pm plugins
 
-Two WebAssembly components, built against pm's `wit/plugin.wit`
+Four WebAssembly components, built against pm's `wit/plugin.wit`
 ([pm#4](https://github.com/dichhead/pm/pull/4)). pm loads every `*.wasm` in
 `$XDG_CONFIG_HOME/pm/plugins/` and asks it two questions its built-in tables
 cannot always answer.
 
 Read pm's `plugins/README.md` for the sandbox and the trust model. What follows
-is why *these two* exist.
+is why *these four* exist.
 
 ## `losos-image` — classify-command
 
@@ -50,6 +50,111 @@ build step, so nothing expands it, which is exactly what patchelf wants.
 Filesystem builders are named individually (`mkfs.ext4`, not `mkfs*`) so a typo
 is an unrecognised command, which pm reports, rather than a wildcard quietly
 matching something else.
+
+## `losos-mkosi` — classify-command, and symbols
+
+`mkosi` is not in pm's fingerprint table either — `docs/pm-constraints.md`
+lists it by name among the things an OS build reaches for reflexively and pm
+refuses (C2). This names it, so the image layer can call it:
+
+```
+$ pm explain build.yaml
+grants:     Toolchain, Coreutils, Archive
+plugins:    losos-image 0.1.0, losos-mkosi 0.1.0, losos-systemd 0.1.0
+
+COMMAND                                              FINGERPRINT
+mkosi --directory … --output-dir /build/media build  losos-mkosi:mkosi
+```
+
+Again no `Network`, and the ceiling says so. mkosi normally installs a
+distribution's packages, which is a network build; this one does not, because
+the image layer hands it a tree pm has already built (`BaseTrees=`,
+`Distribution=custom`) and there is nothing left to download. That distinction
+matters more here than elsewhere: network in a pm build file is per *file*, not
+per step (C8), so one careless grant would put the whole image layer's jail on
+the host network.
+
+It is also the one plugin here that publishes **symbols** — the handful of
+paths mkosi and the Boot Loader Specification fix, which a build file would
+otherwise spell out:
+
+```
+$ pm plugins
+losos-mkosi 0.1.0 (signed)
+symbols:    5
+  %{losos-mkosi:config} = mkosi.conf
+  %{losos-mkosi:esp} = /efi
+  %{losos-mkosi:loader-dir} = /efi/EFI/systemd
+  %{losos-mkosi:uki-dir} = /efi/EFI/Linux
+  %{losos-mkosi:xbootldr} = /boot
+```
+
+The test for whether something belongs in that list is whether the ecosystem
+fixed it or this distribution chose it. `/efi/EFI/Linux` is where a UKI goes,
+by specification, on every machine; where *this* build writes its output is a
+decision the build file is free to make, so it stays in the build file.
+
+`mkosi-sandbox` is deliberately not classified. mkosi execs it for itself from
+inside a build, where pm's first-word resolution is never consulted, and naming
+it here would suggest a recipe could call it directly — which would mean
+building an image outside mkosi's own bookkeeping.
+
+## `losos-nix` — classify-command, and symbols
+
+pm is the system manager on the NixOS build of this OS as well
+(`docs/nixos.md`), so pm is also what drives the flake — and `nix` is not in
+its fingerprint table. This names the commands that read or build a flake:
+
+```
+$ pm explain build.yaml
+grants:     Toolchain, Coreutils, Archive
+plugins:    losos-image 0.1.0, losos-mkosi 0.1.0, losos-nix 0.1.0, losos-systemd 0.1.0
+
+COMMAND                                                  FINGERPRINT
+nix --store /build/nix flake check --offline /build/src  losos-nix:flake-check-offline
+nix --store /build/nix build --offline /build/src#image  losos-nix:build-offline
+nix-store --query --requisites /build/result             losos-nix:nix-store
+nix hash path /build/result                              losos-nix:hash
+```
+
+This is the one plugin here whose ceiling includes `Network`, because
+evaluating a flake fetches its inputs and building one substitutes from
+cache.nixos.org. A `nix` step that says `--offline` gets none, and its
+fingerprint says so (`-offline`), so the jail enforces the claim rather than
+trusting it: `--offline` alone only turns substituters off. Drop it from one
+step and `grants` gains `Network` for the whole file (C8). The older `nix-*`
+commands have no such switch and always get it; `nix hash` and `nix nar` never
+do.
+
+pm's jail mounts `/nix/store` read-only and no daemon socket, which is why the
+steps above build into `--store /build/nix`.
+
+Recognised and deliberately left unclassified, with a log line saying why:
+`nixos-rebuild`, `nixos-install`, `nix-env`, `nix profile` (they change a
+machine, and this OS updates by systemd-sysupdate, never by switching a
+generation); `nix run`, `shell`, `develop`, `fmt`, `bundle`, `repl`, `nix-shell`
+(each runs a program the step does not name); `nix copy`, `nix-copy-closure`,
+the writing `nix-store` operations (another store); `nix flake update`, `lock`,
+`prefetch`, `nix-prefetch-url`, `nix-channel` (newer than the pin, and a pin
+moves by hand). An option before the subcommand whose value it does not know
+fails safe: the value is read as the subcommand and nothing is classified.
+
+A flake reference that can move gets no verdict either, so nixpkgs reaches a
+pm build only through a pin. `nixpkgs#hello`, `flake:nixpkgs`,
+`github:NixOS/nixpkgs/nixos-26.05`, a tarball URL without `narHash=`, a
+`git+` URL without `rev=`, `--override-input` with any of those, and a
+`<nixpkgs>` lookup path all resolve to whatever is newest. A path, a commit,
+and `--file` are classified. This flake's `.#pm-payloads.<name>` is the way in:
+any nixpkgs package at the pinned revision, static against musl, laid out as
+a pm package's `/dest` (`docs/nixos.md`, "nixpkgs in a pm build").
+
+Its symbols are the paths NixOS fixes — `store`, `current-system`,
+`booted-system`, `system-bin` — for a package that installs something referring
+to them. Only the store is visible inside the jail.
+
+pm's own tree already carries `sysupdate`, `sysext` and `systemd` plugins,
+so there is no losos copy of those; `just plugins` builds them from the pm
+checkout beside this one (next section).
 
 ## `losos-systemd` — scan-source
 
@@ -100,13 +205,31 @@ never a path.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-./build.sh                       # both, into dist/
-./build.sh losos-image           # one
-
-pm sign "$XDG_CONFIG_HOME/pm/plugins/losos-image.wasm"
-pm plugins                       # confirm both loaded and signed
+just plugins                     # all seven, into dist/
+just plugins losos-mkosi         # one
+just plugins sysupdate           # one of pm's, from $PM_ROOT/plugins
 ```
 
-`tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's
-and that no component is older than its source. Neither is something pm can
-catch: from pm's side, a stale plugin is simply a plugin.
+Seven: this tree's four, and three of pm's own — `sysext`, `sysupdate` and
+`systemd` — built from the pm checkout at `PM_ROOT` (by default `../pm`, the
+commit `PM_REF` pins) rather than copied here to drift. They read the
+sysupdate transfers and sysext definitions `overlay/` and `nixos/` ship and
+name the systemd tools a recipe calls. pm's `zig` is left out: nothing here
+builds with it. pm consults plugins in file-name order and takes the first
+verdict, so where `losos-image` and pm's `sysext` both name a tool
+(`systemd-repart`, `mkfs.erofs`), `losos-image` answers; all nine recipes
+explain the same with and without pm's three. The NixOS image carries all
+seven, unsigned, in `/run/current-system/sw/share/pm/plugins`
+(`nixos/pkgs/pm-plugins.nix`).
+
+The top-level `just sign` recipe — via `tools/Justfile`'s `sign-all` recipe —
+installs whatever is in `dist/` into the repo-local trust store and signs it
+there.
+Without that pm loads no plugins at all, and a recipe calling `mkosi` is
+refused with "no built-in fingerprint matches", which reads as a problem with
+the recipe rather than with a component that was never installed.
+
+`tools/gates/plugins.py` checks that `wit/plugin.wit` here still matches pm's.
+That is not something pm can catch: from pm's side a plugin built against an
+older contract is simply a plugin, right up to the point where a record gains
+a field and every component stops loading.

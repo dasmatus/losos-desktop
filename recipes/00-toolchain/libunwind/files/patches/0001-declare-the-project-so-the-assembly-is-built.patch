@@ -1,0 +1,43 @@
+Declare the project, so cmake compiles the assembly instead of ignoring it.
+
+libunwind's CMakeLists.txt has no project() call and no enable_language(). It
+is written to be included from LLVM's runtimes/ build, which declares the
+languages for it. Configured directly -- which is the only way to build it
+against a sysroot this tree controls -- cmake has no ASM language enabled.
+
+The failure is silent, and that is the whole reason this patch exists rather
+than a workaround. src/CMakeLists.txt lists the two assembly files:
+
+    set(LIBUNWIND_ASM_SOURCES
+        UnwindRegistersRestore.S
+        UnwindRegistersSave.S)
+
+With no ASM language, cmake does not error on a source it cannot compile; it
+drops it. libunwind then builds, installs, and produces an archive with no
+__unw_getcontext in it, which is the function that captures the register state
+every unwind starts from. Nothing says so until something links against it.
+
+project() rather than enable_language(ASM) alone: the file also expects
+CMAKE_CXX_COMPILER to have been probed, and a bare enable_language leaves
+PROJECT_SOURCE_DIR unset, which the install rules read.
+
+Verified: with this patch cmake reports `Building ASM object
+src/CMakeFiles/unwind_static_objects.dir/UnwindRegistersSave.S.o`, the archive
+defines __unw_getcontext, _Unwind_Backtrace and _Unwind_GetIP, and a program
+built with -fno-sanitize-trap=cfi -fsanitize-recover=cfi links against it and
+prints the file and line of the violation.
+
+Not upstreamable: upstream's answer is to build through runtimes/, and that
+entry point needs the full LLVM source tree.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -3,6 +3,8 @@
+ #===============================================================================
+ 
+ cmake_minimum_required(VERSION 3.20.0)
++
++project(libunwind LANGUAGES C CXX ASM)
+ 
+ set(LLVM_COMMON_CMAKE_UTILS "${CMAKE_CURRENT_SOURCE_DIR}/../cmake")
+ 

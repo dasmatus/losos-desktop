@@ -1,181 +1,43 @@
 #!/usr/bin/env bash
-# The one entry point. `./do` with no argument lists what it can do.
-#
-# There is no Makefile and no flake here: pm is the build system, and wrapping
-# it in a second one would only add a place for the two to disagree. This
-# script's whole job is to put pm in the right directory with the right
-# environment, in the right order.
+# Compatibility wrapper around the Justfile entrypoint.
 set -euo pipefail
 
-repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-pm=${PM:-$repo/../pm/target/release/pm}
-mirror_port=${LOSOS_MIRROR_PORT:-8730}
-mirror_url="http://127.0.0.1:${mirror_port}"
+# `pwd -P`, not `pwd`: bash reports the logical path it was given, and on an
+# ostree host that is `/home/<user>/...` where the real directory is
+# `/var/home/<user>/...`. That path is handed to just as `--justfile`, just
+# keeps an explicit `--justfile` verbatim, and `justfile_directory()` then
+# carries the symlinked spelling into the container recipes. The Justfile
+# canonicalises it again for exactly that reason; this keeps the wrapper from
+# introducing the discrepancy in the first place, so its own error messages
+# name the path everything else will use.
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if ! command -v just >/dev/null 2>&1; then
+  echo "no just binary on PATH" >&2
+  echo "install it first: see $repo/docs/host-requirements.md" >&2
+  exit 1
+fi
 
-# Every pm build workspace lives under TMPDIR and a large package needs several
-# GB of it. On a tmpfs /tmp -- the default on much of the world -- a real build
-# dies partway through with "Disk quota exceeded (os error 122)", which looks
-# like a bug in the recipe and is not. out/tmp is on whatever disk the
-# repository is on.
-export TMPDIR="$repo/out/tmp"
-# The repo-local trust store. Never the developer's real ~/.config/pm.
-export XDG_CONFIG_HOME="$repo/.pm-config"
+if [ $# -eq 0 ]; then
+  exec just --justfile "$repo/Justfile" --working-directory "$repo"
+fi
 
-mkdir -p "$repo/out/tmp" "$repo/out/pkgs"
+case "$1" in
+  -*)
+    exec just --justfile "$repo/Justfile" --working-directory "$repo" "$@"
+    ;;
+esac
 
-have_pm() {
-  if [ ! -x "$pm" ]; then
-    echo "no pm binary at $pm" >&2
-    echo "build it first:  cd ../pm && cargo build --release" >&2
-    exit 1
-  fi
-}
+recipe=$1
+shift
+if [ $# -eq 0 ]; then
+  exec just --justfile "$repo/Justfile" --working-directory "$repo" "$recipe"
+fi
 
-mirror_running() { python3 "$repo/tools/serve-sources" --port "$mirror_port" --check; }
-
-start_mirror() {
-  if mirror_running; then return 0; fi
-  if [ ! -d "$repo/out/sources" ]; then return 1; fi
-  python3 "$repo/tools/serve-sources" --port "$mirror_port" >"$repo/out/tmp/mirror.log" 2>&1 &
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    mirror_running && return 0
-    sleep 0.3
-  done
-  return 1
-}
-
-cmd_configure() {
-  # Generate against the local mirror when one is available. pm's downloader
-  # trusts only the Mozilla roots compiled into it and reads no CA setting, so
-  # on a host that re-terminates TLS it cannot fetch upstream at all; the
-  # mirror serves the same bytes over loopback and the SHA-256 pin is unchanged.
-  # See tools/fetch-sources.
-  if [ -d "$repo/out/sources" ]; then
-    python3 "$repo/tools/configure" --mirror "$mirror_url" "$@"
-  else
-    python3 "$repo/tools/configure" "$@"
-  fi
-}
-
-cmd_lint() {
-  have_pm
-  python3 "$repo/tools/gates/schema.py"
-  python3 "$repo/tools/gates/url-canonical.py"
-  python3 "$repo/tools/gates/fingerprint-lint.py" --check-table
-  python3 "$repo/tools/gates/fingerprint-lint.py"
-  python3 "$repo/tools/gates/test-image.py"
-  # The release names and the shipped sysupdate MatchPatterns are one contract
-  # written in two files. A mismatch does not fail an update -- sysupdate
-  # reports "no update available", which is indistinguishable from being up to
-  # date -- so it has to be caught here.
-  python3 "$repo/tools/stage-release" --arch x86_64 --version 0.0.0 --check >/dev/null
-  python3 "$repo/tools/gates/plugins.py"
-  # An artifact name mismatch between two CI jobs fails only on the release
-  # path, which is the one nobody exercises until it matters.
-  python3 "$repo/tools/gates/workflow.py"
-  # A patch series nobody applies is tracked, reviewed and inert: the build
-  # goes green and the feature is simply absent.
-  python3 "$repo/tools/gates/patches.py"
-  # A recipe whose `version:` no longer matches the source it downloads builds
-  # the new tarball under the old name, and nothing else notices.
-  # --self-test rather than a bare run: it covers the real tree too, and
-  # adds the cases that prove the gate can fail. A gate never shown to
-  # fail is a gate nobody should trust.
-  python3 "$repo/tools/gates/versions.py" --self-test
-  "$repo/tools/gates/explain-all"
-}
-
-cmd_check() {
-  have_pm
-  echo "== configure"
-  # The gate runs with unresolved hashes tolerated: it lints the shape of the
-  # tree, and an unpinned source is a fetch problem, not a recipe problem.
-  # `./do build` still refuses to start with any TODO left.
-  cmd_configure --allow-unresolved "$@"
-  echo "== sign"
-  "$repo/tools/sign-all" >/dev/null
-  echo "== digest agreement with pm"
-  PM="$pm" python3 "$repo/tools/check-digest"
-  echo "== lint"
-  cmd_lint
-  echo
-  echo "check: green"
-}
-
-cmd_build() {
-  have_pm
-  local target="${1:-}"
-  if [ -z "$target" ]; then
-    # Default to the top of the chain: the last layer in manifest/layers.yaml.
-    target=$(python3 -c "
-import yaml, pathlib
-layers = yaml.safe_load(pathlib.Path('$repo/manifest/layers.yaml').read_text()) or []
-print(layers[-1]['name'] if layers else '')
-")
-  fi
-  [ -n "$target" ] || { echo "nothing to build" >&2; exit 1; }
-
-  start_mirror || echo "do: no local source mirror; pm will fetch upstream" >&2
-  # Generate the whole tree, then insist only that the layers this build
-  # actually walks are pinned. Refusing because some unrelated upper layer has
-  # an unfetched source would make a partial tree unbuildable for no reason --
-  # and a partial tree is the normal state while a distribution is being
-  # brought up.
-  cmd_configure --allow-unresolved
-  python3 "$repo/tools/gates/chain-pinned.py" "$target" || exit 1
-  "$repo/tools/sign-all" >/dev/null
-  echo "== building $target"
-  ( cd "$repo/out/pkgs" && "$pm" build "../recipes/$target/build.yaml" )
-}
-
-# Build the plugin components from source.
-#
-# Kept out of `check` on purpose. The components need the wasm32 Rust target and
-# pm's encoder, and building the encoder needs crates.io -- while `./do check`
-# is meant to run on any machine with no network and no wasm toolchain. So this
-# is its own verb: CI runs it before check, a developer runs it after touching
-# plugins/, and everyone else never needs it. Nothing reads a component out of
-# the tree, because none is committed.
-cmd_plugins() {
-  "$repo/plugins/build.sh" "$@"
-}
-
-cmd_clean() {
-  rm -rf "$repo/out/recipes" "$repo/out/pkgs" "$repo/out/tmp"
-  echo "clean: removed generated recipes, packages and workspaces"
-  echo "clean: kept out/sources (the fetched tarballs) and .pm-config"
-}
-
-case "${1:-}" in
-  configure) shift; cmd_configure "$@" ;;
-  sign)      shift; "$repo/tools/sign-all" ;;
-  lint)      shift; cmd_lint ;;
-  check)     shift; cmd_check "$@" ;;
-  build)     shift; cmd_build "$@" ;;
-  fetch)     shift; python3 "$repo/tools/fetch-sources" "$@" ;;
-  serve)     shift; python3 "$repo/tools/serve-sources" --port "$mirror_port" ;;
-  plugins)   shift; cmd_plugins "$@" ;;
-  clean)     shift; cmd_clean ;;
+case "$1" in
+  -*)
+    exec just --justfile "$repo/Justfile" --working-directory "$repo" "$recipe" -- "$@"
+    ;;
   *)
-    cat <<USAGE
-./do <command>
-
-  check [--allow-unresolved]  configure, sign, prove the download-path digest,
-                              then lint. The gate. No network, no KVM, no nix.
-  configure                   recipes/**/*.in -> out/recipes/**
-  sign                        pm sign every generated build file
-  lint                        schema, URL form, fingerprints, pm explain
-  build [layer]               the real build (default: top of manifest/layers.yaml)
-  fetch [--update]            mirror every pinned source into out/sources,
-                              filling any TODO hash
-  serve                       serve out/sources over loopback for pm
-  plugins [crate]             build the pm plugin components into plugins/dist
-                              (needs the wasm32 Rust target; not part of check)
-  clean                       remove out/recipes, out/pkgs, out/tmp
-
-Environment:
-  PM                   path to the pm binary (default ../pm/target/release/pm)
-  LOSOS_MIRROR_PORT    loopback port for the source mirror (default 8730)
-USAGE
+    exec just --justfile "$repo/Justfile" --working-directory "$repo" "$recipe" "$@"
     ;;
 esac

@@ -4,6 +4,22 @@ Ground truth for this repository. Every design decision elsewhere cites a
 numbered item here. Each was checked against `pm`'s source, and the ones marked
 **measured** were checked by running `pm`, not by reading it.
 
+## The D-Bus rewrite boundary
+
+CI pins pm to `47a32e3f74a99f3fe21b7af2d73ab1446da8bacc`, the merged D-Bus
+groundwork. At this revision `pm build` still runs in-process, and `keygen`,
+`sign` and `explain` remain local operations. The new `BuildContext` preserves
+the caller's working directory, trust store and scratch directory, so the
+`out/pkgs/`, `XDG_CONFIG_HOME` and `TMPDIR` rules below still apply.
+
+`pmd` implements only a one-shot build worker, not a bus service or supervisor.
+Its worker does not load the plugin registry our image recipes need. Do not
+replace `pm build` with that entrypoint or add a system-bus/polkit service:
+the proposed daemon is per-user on the session bus and is not implemented yet.
+The build host and CI therefore still need neither a bus connection nor a
+running systemd manager. This tree uses pm as a host build tool; this update
+does not install a package-management daemon in the target image.
+
 ## C1 — There is no shell
 
 A command string is split on whitespace and `execve`d (`Step::execute`,
@@ -157,7 +173,7 @@ in that form, so the string this repo hashes is provably the string pm hashes.
 `pm build` and `pm explain` verify a detached `<FILE>.sig` against
 `$XDG_CONFIG_HOME/pm/trusted/` *before* reading the file, and hold every
 dependency to the same standard all the way down. **Any edit invalidates it,
-including a comment.** `./do check` re-signs the whole generated tree every run
+including a comment.** `just check` re-signs the whole generated tree every run
 for that reason.
 
 ## C11 — Small sharp edges

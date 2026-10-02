@@ -134,7 +134,12 @@ which would grant the whole layer network access (C8).
 
 ## The gates
 
-`./do check` runs with no network, no KVM and no nix:
+`just check` runs with no network, no KVM and no nix, once `just plugins` has
+compiled pm's plugin components into the clone. That step is the tree's only
+network dependency outside `just fetch`, and it is what `explain-all` below is
+checking against: the components are built from `plugins/` rather than
+committed, so a clone that skipped it has no `%{losos-mkosi:esp}` to expand.
+
 
 | Gate | What it proves |
 |---|---|
@@ -143,4 +148,4 @@ which would grant the whole layer network access (C8).
 | `tools/check-digest` | pm really does put a download where `tools/configure` said — proved against a real `pm build` over loopback, not against our own arithmetic. |
 | `tools/gates/fingerprint-lint.py` | `env` is absent, no shell metacharacters, and pm's own table re-applied past the one permitted wrapper. |
 | `tools/gates/test-image.py` | The cpio and PE writers behave, checked with an independent parser. |
-| `tools/gates/explain-all` | pm itself accepts every command in every layer, and each layer's capability set is what it should be — notably, the image layer has no `Network` at all. |
+| `tools/gates/Justfile` `explain-all` | pm itself accepts every command in every layer, and each layer's capability set is what it should be — notably, the image layer has no `Network` at all. |

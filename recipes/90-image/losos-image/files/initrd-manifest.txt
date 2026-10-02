@@ -25,6 +25,14 @@ usr/lib/udev
 # partitions on first boot, so there is no disk image to write.
 usr/bin/systemd-repart
 usr/lib/repart.d
+usr/lib/repart.sysinstall.d
+usr/lib/systemd/systemd-sysinstall
+# Size swap on the booted machine, never on the image builder. repart calls
+# mkswap; systemd's generated .swap units call swapon and swapoff.
+usr/lib/losos/losos-swap
+usr/sbin/mkswap
+usr/sbin/swapon
+usr/sbin/swapoff
 
 # Integrity and encryption, all driven from the initrd.
 usr/lib/systemd/systemd-cryptsetup

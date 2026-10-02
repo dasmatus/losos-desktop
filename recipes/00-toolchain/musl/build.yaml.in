@@ -68,7 +68,18 @@ steps:
   run:
   # The three things everything above depends on: the static library, the
   # shared one, and the loader whose absolute path is baked into every binary.
+  #
+  # The loader is not a file called libc.so under --syslibdir. musl installs
+  # the shared library at $libdir/libc.so and drops a symlink to it at
+  # $syslibdir/ld-musl-$ARCH.so.1, which is the name that goes in PT_INTERP.
+  # This asserted /dest/lib/libc.so, which musl has never written, so the whole
+  # toolchain layer failed on its own test after building correctly. `test -L`
+  # rather than -f, because the symlink's target is the absolute /usr/lib path
+  # the running system will have, not one that resolves inside /dest -- and
+  # because musl installs it with `|| true`, so a failure there is otherwise
+  # silent.
   - test -f /dest/usr/lib/libc.a
-  - test -f /dest/lib/libc.so
+  - test -f /dest/usr/lib/libc.so
+  - test -L /dest/lib/ld-musl-@ARCH@.so.1
   - test -f /dest/usr/include/stdio.h
   - test -f /build/sysroot/usr/lib/libc.a

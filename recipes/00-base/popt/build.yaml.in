@@ -28,11 +28,15 @@ steps:
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
 # manifest/toolchain.yaml -- LTO and CFI included.
+#
+# @CFLAGS_RSP_POPT@ and not @CFLAGS_RSP@: an exception in
+# manifest/toolchain.yaml only reaches a package that names it, and left
+# spelling the shared file the entry would be inert with nothing to say so.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/popt /build/src/popt/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/popt /build/src/popt/configure --host=@ARCH_TRIPLE@ --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_POPT@ LDFLAGS=@LDFLAGS_RSP_POPT@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig --disable-static
 
 - stage: Build
   name: compile
@@ -50,8 +54,16 @@ steps:
   - make -C /build/b/popt install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+# poptGetContext is named first because it is the symbol the build actually
+# stopped on: `make all` builds tests/test1, a noinst_PROGRAMS target, and it
+# could not find it. The other three are ordinary API out of src/libpopt.vers.
+# __cfi_check says the visibility exception stayed narrow and did not take
+# CFI with it. The exception itself used to be withheld because only 1.18
+# had been read; 1.19 is now the pinned bytes that failed, so the entry in
+# manifest/toolchain.yaml is no longer a guess.
 - stage: Test
   name: staged
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libpopt.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libpopt.so poptGetContext poptGetNextOpt poptFreeContext poptBadOption __cfi_check

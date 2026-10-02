@@ -16,11 +16,23 @@ version:
 dependencies: []
 steps:
 
+# This line named no machine file at all until now, which is not the same as
+# naming a native one: with neither, meson took clang off the jail's PATH with
+# none of manifest/toolchain.yaml's flags and linked the result against the
+# build host's glibc. So the one binary this repository compiles from its own
+# source -- the one that answers what distribution this is -- was the one
+# binary in the image that could not have run in it, and nothing said so: it
+# configured, compiled and installed without a warning, because a native build
+# of a native binary is exactly what meson was asked for.
+#
+# --cross-file is what makes it musl, and what stops meson running the test
+# program it compiles (C7). --native-file is the build-machine half of the
+# pair. tools/gates/cross-configure.py now requires both of every meson step.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/losos-release @RECIPE@/files/losos-release --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/losos-release @RECIPE@/files/losos-release --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload
 
 - stage: Build
   name: compile

@@ -1,0 +1,22 @@
+Keep mkswap in the otherwise libraries-only build.
+
+util-linux 2.40.2 exposes --enable-swapon, but no --enable-mkswap. Its
+UL_BUILD_INIT([mkswap], [yes]) unconditionally inherits --disable-all-programs,
+even if enable_mkswap was supplied by the caller. systemd-repart needs the real
+mkswap executable to initialise Format=swap; systemd does not replace it.
+
+Change the shipped configure directly so this does not introduce an autoconf
+dependency on the build host. This intentionally makes mkswap the one exception
+to --disable-all-programs; all other programs retain their upstream selection.
+
+--- a/configure
++++ b/configure
+@@ -36135,7 +36135,7 @@
+   enable_mkswap=$ul_default_estate
+   build_mkswap=yes
+   if test "x$ul_default_estate" = xno; then
+-    build_mkswap=no
++    build_mkswap=yes
+   fi
+ else
+ 

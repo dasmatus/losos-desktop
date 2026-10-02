@@ -7,17 +7,25 @@
 # rollback story, and it needs no update agent and no A/B partition pair --
 # only two files in the ESP.
 #
-# The source is a GitHub release whose tag is the channel name, which CI moves
-# rather than creates anew, so this URL is stable across releases.
+# The source is `tools/configure --update-url`: by default the GitHub release
+# whose tag is the channel name, which CI moves rather than creates anew, or
+# the same files from GHCR through proxy/, under the moving tag
+# `images:<channel>-<arch>`. Either way the URL is stable across releases.
 # systemd-sysupdate discovers what versions exist by fetching SHA256SUMS from
 # this directory, which is why tools/release-manifest writes one and why CI
 # uploads it alongside the artifacts.
+#
+# Verification is left at its default (on): sysupdate fetches SHA256SUMS.gpg
+# beside SHA256SUMS and checks it with gpgv against
+# /usr/lib/systemd/import-pubring.pgp, the release key CI signs with
+# (tools/sign-release). The image needs gpgv for that; see docs/images.md,
+# "Signed updates".
 [Transfer]
 ProtectVersion=%A
 
 [Source]
 Type=url-file
-Path=https://github.com/dichhead/losos-desktop/releases/download/@CHANNEL@/
+Path=@UPDATE_URL@
 MatchPattern=losos-desktop_@v_@ARCH@.efi
 
 [Target]

@@ -1,0 +1,3 @@
+# Encrypt the swap partition with a fresh random key each boot instead of
+# exposing raw swap blocks on disk. The partition label is fixed by losos-swap.
+swap /dev/disk/by-partlabel/losos-swap /dev/urandom swap

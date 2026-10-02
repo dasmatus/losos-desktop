@@ -19,11 +19,65 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_P11_KIT@ --no-same-owner -C /build/src/p11-kit --strip-components=1
 
+# --cross-file is @CROSS_INI_P11_KIT@ and not the layer's shared cross.ini,
+# which is the only way p11-kit's `drops: [visibility]` in
+# manifest/toolchain.yaml can reach the compiler at all. meson takes flags
+# from the cross file and from nowhere else, so there is no CFLAGS=
+# argument here to name a response file on -- which is exactly how gjs's
+# exemption sat inert for its whole life. tools/gates/exceptions-live.py
+# fails the build if this line goes back to the shared file. --native-file
+# stays the shared one: it carries no flags, so it has nothing to drop.
+#
+# -Dnls=false, and the reason is layer order. NLS is the one option here that
+# reaches for a program built FORWARD of this layer: p11-kit is in
+# losos-10-base, and `subdir('po')` runs i18n.gettext(), which resolves msgfmt
+# from native.ini as /build/sysroot/usr/bin/msgfmt -- and msgfmt comes out of
+# gettext in losos-15-hosttools, a whole layer above. meson writes that path
+# into build.ninja as a file dependency, so ninja stops before the first
+# compile:
+#
+#     ninja: error: '/build/sysroot/usr/bin/msgfmt', needed by
+#     'po/ar/LC_MESSAGES/p11-kit.mo', missing and no known rule to make it
+#
+# Configure does not catch it. `Has header "libintl.h" : YES` comes from the
+# host headers and makes this look like a working NLS build, and the libraries
+# themselves do not even use it -- header satisfied and `Library intl found:
+# NO`, so nothing links libintl. What NLS buys here is .mo catalogues under
+# /usr/share/locale, and this image ships no locale data at all and defaults to
+# C.UTF-8 (systemd's -Ddefault-locale). So the option is stated off rather than
+# the injection carried -- the same call docs/systemd-inventory.md records for
+# systemd, and the same rule: turn it off rather than paper over it.
+#
+# -Dsystemd=disabled, and it is the same host-versus-sysroot problem a third
+# time, on p11-kit's own `systemd` option (meson_options.txt:45, a feature,
+# "Use systemd socket activation"). Its `auto` runs dependency('libsystemd'),
+# and p11-kit names that dependency itself in meson.build, so no wording of
+# --pkg-config-path can answer it: PKG_CONFIG_PATH names the sysroot's .pc
+# directories but cannot subtract the host's, and the host has libsystemd.
+# Meson says so out loud, with systemd two layers above this one:
+#
+#     Run-time dependency libsystemd found: YES 261
+#     Run-time dependency systemd found: YES 261
+#
+# The YES is proof something went wrong, exactly as it is for dbus. It sets
+# WITH_SYSTEMD and folds libsystemd into libsystemd_deps, so server.c:68
+# compiles the header it has just decided on:
+#
+#     ../../src/p11-kit/p11-kit/server.c:68:10: fatal error:
+#     'systemd/sd-daemon.h' file not found
+#
+# The two consume sites are server.c and the with_systemd block at
+# p11-kit/meson.build:297-306, which installs p11-kit-server.service and
+# p11-kit-server.socket into systemduserunitdir for `p11-kit server`, the RPC
+# remoting transport. Nothing in this tree names it: gnutls passes
+# --without-p11-kit, and systemd's -Dp11kit=enabled is the pkcs11 library, not
+# the server. When the server is genuinely wanted the fix is a real libsystemd
+# in this layer, not the option -- dbus's and lvm2's call, in the same words.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/p11-kit /build/src/p11-kit --cross-file @CROSS_INI_P11_KIT@ --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtrust_module=disabled -Dnls=false -Dsystemd=disabled
 
 - stage: Build
   name: compile
@@ -44,3 +98,4 @@ steps:
   dl_urls: null
   run:
   - test -e /dest/usr/lib/libp11-kit.so
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libp11-kit.so p11_kit_modules_load p11_kit_modules_release p11_kit_module_get_name C_GetFunctionList

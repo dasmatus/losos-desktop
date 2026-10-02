@@ -23,7 +23,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libnotify /build/src/libnotify --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dintrospection=disabled -Dgtk_doc=false -Dman=false
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/libnotify /build/src/libnotify --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dintrospection=disabled -Dgtk_doc=false -Dman=false
 
 - stage: Build
   name: compile

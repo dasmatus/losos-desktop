@@ -19,6 +19,16 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_FLEX@ --no-same-owner -C /build/src/flex --strip-components=1
 
+# Built for the BUILD HOST, not for the target, and the response files below
+# say so by name. A musl-dynamic binary cannot run in pm's jail -- its
+# interpreter is /lib/ld-musl-<arch>.so.1 and the jail mirrors the host's /lib
+# (C7) -- and this program exists to be run, by the kernel build and by
+# systemd's. manifest/toolchain.yaml carries the full argument under `gperf`.
+#
+# The sysroot's pkg-config path is deliberately absent for the same reason:
+# those .pc files describe musl libraries, and a host build that found one
+# would link it.
+#
 # ./configure has no -C and there is no `cd` in a build step (C1), so the one
 # permitted wrapper puts it in the build directory. configure takes VAR=value
 # as positional arguments, which is how the toolchain and the sysroot are
@@ -28,12 +38,14 @@ steps:
 # command on whitespace, so a multi-word CFLAGS would arrive as a dozen
 # separate arguments and configure would reject the first it did not know.
 # The response file is one word, and clang expands it. Its contents come from
-# manifest/toolchain.yaml -- LTO and CFI included.
+# manifest/toolchain.yaml, from the per-package file this package's exception
+# gets rather than the layer's shared one -- so no --target, no --sysroot, no
+# CFI and no LTO.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/flex /build/src/flex/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/flex /build/src/flex/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_FLEX@ LDFLAGS=@LDFLAGS_RSP_FLEX@ --disable-static
 
 - stage: Build
   name: compile

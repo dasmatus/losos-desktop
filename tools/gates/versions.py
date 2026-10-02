@@ -16,6 +16,21 @@ template, which is a change to ninety files to catch a mistake in one. This
 checks instead, which is cheaper and catches the same thing.
 
 A recipe with no dl_urls has no upstream version to agree with and is skipped.
+
+One thing this gate deliberately does not check, and is not going to, is the
+options a recipe passes to its build system. A version bump moves those too,
+and an option name or value kind can only be checked against the
+`meson_options.txt` of the tarball itself -- which the gates, running with no
+sources and no network, do not have. That gap is real and has bitten once:
+fwupd's recipe passed `-Dintrospection=false`, but fwupd 2.0.3 declares that
+option `type: 'feature'`, which accepts only `enabled`, `disabled` or `auto`.
+`false` is valid syntax for a boolean option, so the mistake looked right next
+to the thirty others on the same line, and nothing said otherwise until
+`meson setup` ran in a real build and died before one object compiled.
+
+So a wrong option is invisible to `./do check`. A bump crossing a major
+version needs a human, a real build and a release note; this gate proves the
+lock and the recipes agree, and claims no more.
 """
 
 import pathlib
@@ -55,20 +70,32 @@ def check(repo):
         keys = set(URL_TOKEN.findall(text))
         if not keys:
             continue
-        if len(keys) > 1:
-            # A recipe that downloads several sources has no single upstream
-            # version to agree with; the kernel's bpftool is the shape this
-            # would be, if it were not built from the kernel's own tree.
-            # Skipped rather than failed, and the self-test pins that: a rule
-            # that guessed which of several sources "the" version came from
-            # would be wrong the first time someone reordered them.
+        missing = sorted(key for key in keys if lock.get(key) is None)
+        if missing:
+            for key in missing:
+                failures.append(
+                    f"{template.relative_to(repo)}: @URL_{key}@ is not in sources.lock"
+                )
             continue
 
-        key = keys.pop()
-        entry = lock.get(key)
-        if entry is None:
-            failures.append(f"{template.relative_to(repo)}: @URL_{key}@ is not in sources.lock")
+        # A recipe that downloads several sources usually has no single
+        # upstream version to agree with; the kernel's bpftool is the shape
+        # this would be, if it were not built from the kernel's own tree.
+        # Skipped rather than failed, and the self-test pins that: a rule that
+        # guessed which of several sources "the" version came from would be
+        # wrong the first time someone reordered them.
+        #
+        # Unless they all carry the same version, which is not a guess. That
+        # is compiler-rt: its sources are two tarballs cut from one LLVM
+        # release, and skipping it would drop the check from the one recipe in
+        # the tree that is version-locked on purpose (to the host clang)
+        # -- exactly where a silent drift costs most.
+        versions = {str(lock[key].get("version", "")) for key in keys}
+        if len(versions) > 1:
             continue
+
+        key = sorted(keys)[0]
+        entry = lock[key]
 
         declared = recipe_version(text)
         if declared is None:
@@ -77,9 +104,10 @@ def check(repo):
 
         upstream = str(entry.get("version", "")).split(".")
         if declared != upstream:
+            named = key if len(keys) == 1 else " and ".join(sorted(keys))
             failures.append(
                 f"{template.relative_to(repo)}: version {'.'.join(declared)} "
-                f"but {key} is {entry.get('version')}"
+                f"but {named} is {entry.get('version')}"
             )
             continue
 
@@ -151,6 +179,29 @@ def self_test():
         {"foo": _recipe(["7", "7", "7"], ["FOO", "BAZ"])},
         False,
         "two sources, no single upstream version to agree with; guessing one would be wrong",
+    )
+    case(
+        "multi-source recipes that agree ARE checked",
+        ("FOO:\n  url: https://example.invalid/foo-1.2.3.tar.xz\n  version: '1.2.3'\n  sha256: TODO\n"
+         "BAZ:\n  url: https://example.invalid/baz-1.2.3.tar.xz\n  version: '1.2.3'\n  sha256: TODO\n"),
+        {"foo": _recipe(["1", "2", "3"], ["FOO", "BAZ"])},
+        False,
+        "one release split across two tarballs, which is compiler-rt's shape",
+    )
+    case(
+        "and drift against them is caught",
+        ("FOO:\n  url: https://example.invalid/foo-1.2.3.tar.xz\n  version: '1.2.3'\n  sha256: TODO\n"
+         "BAZ:\n  url: https://example.invalid/baz-1.2.3.tar.xz\n  version: '1.2.3'\n  sha256: TODO\n"),
+        {"foo": _recipe(["1", "2", "2"], ["FOO", "BAZ"])},
+        True,
+        "the skip used to hide this, which is the whole reason for the agreeing case",
+    )
+    case(
+        "a missing lock entry beside a present one still fails",
+        "FOO:\n  url: https://example.invalid/foo-1.2.3.tar.xz\n  version: '1.2.3'\n  sha256: TODO\n",
+        {"foo": _recipe(["1", "2", "3"], ["FOO", "QUX"])},
+        True,
+        "an unpinned source must not be excused by a pinned sibling",
     )
     case(
         "trailing zero is not truncated",

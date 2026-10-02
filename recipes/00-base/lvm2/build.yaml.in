@@ -1,0 +1,96 @@
+# lvm2 2.03.42
+#
+# libdevmapper. cryptsetup's configure will not proceed without
+# libdevmapper.h -- configure.ac:92 is AC_CHECK_HEADER and an error, not a
+# skip -- and systemd-cryptsetup talks to device-mapper through libcryptsetup
+# for every LUKS activation. The LVM tools come in the same tarball; INSTALL
+# names `make device-mapper` / `make install_device-mapper` for exactly the
+# library-and-dmsetup half, so that is what this recipe builds.
+name: lvm2
+version:
+- '2'
+- '03'
+- '42'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LVM2@: '@SHA256_LVM2@'
+  run:
+  - mkdir -p /build/src/lvm2 /build/b/lvm2
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LVM2@ --no-same-owner -C /build/src/lvm2 --strip-components=1
+
+# ./configure has no -C and there is no `cd` in a build step (C1), so the one
+# permitted wrapper puts it in the build directory. Makefile.in sets srcdir
+# from configure, so this is a normal autotools out-of-tree build even though
+# INSTALL only shows the in-tree form. configure takes VAR=value
+# as positional arguments, which is how the toolchain and the sysroot are
+# reached without `env`.
+#
+# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
+# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
+# separate arguments and configure would reject the first it did not know.
+# The response file is one word, and clang expands it. Its contents come from
+# manifest/toolchain.yaml -- LTO and CFI included.
+#
+# @CFLAGS_RSP_LVM2@ and not @CFLAGS_RSP@: an exception in
+# manifest/toolchain.yaml only reaches a package that names it, and left
+# spelling the shared file the entry would be inert with nothing to say so.
+# lvm2 drops LTO and CFI: ThinLTO does not keep the local symbols its
+# inline-asm `.symver` aliases name, measured on dm_bitset_parse_list@@DM_1_02_138.
+#
+# --enable-pkgconfig is not cosmetic. cryptsetup's second look at this
+# library is PKG_CHECK_MODULES([DEVMAPPER], [devmapper >= 1.02.03]); without
+# the .pc the header check can still pass and the pkg-config one then falls
+# through to AC_CHECK_LIB against a library the linker flags never name.
+#
+# --disable-selinux, --disable-readline, --disable-nvme-wwid: none of those
+# libraries are in this layer, and configure would otherwise probe the host
+# mirror for them. --with-thin=none --with-cache=none --with-vdo=none stop
+# configure from looking up thin_check and friends and then trying to run
+# them (C7). --disable-systemd-journal and --disable-sd-notify because
+# systemd is four layers above.
+#
+# READELF=llvm-readelf: configure.ac:82 is AC_CHECK_TOOL([READELF], [readelf])
+# and libdm's .symver_check runs `$(READELF) -Ws` on the shared library. The
+# hosts this tree targets ship llvm-readelf and not GNU readelf -- there is
+# no binutils -- so leaving it to autodetection finds nothing and the check
+# dies after the library has already linked.
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - /bin/sh @RECIPE@/in-dir.sh /build/b/lvm2 /build/src/lvm2/configure --host=@ARCH_TRIPLE@ --prefix=/usr --sbindir=/usr/sbin --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP_LVM2@ LDFLAGS=@LDFLAGS_RSP_LVM2@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig READELF=llvm-readelf --enable-pkgconfig --disable-selinux --disable-readline --disable-nvme-wwid --disable-systemd-journal --disable-sd-notify --disable-fsadm --disable-blkdeactivate --with-thin=none --with-cache=none --with-vdo=none
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - make -C /build/b/lvm2 device-mapper -j @JOBS@
+
+# DESTDIR as a make argument, not the environment variable: pm already sets
+# DESTDIR=/dest, and the second install has to override it.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - make -C /build/b/lvm2 install_device-mapper DESTDIR=/dest
+  - make -C /build/b/lvm2 install_device-mapper DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+# dm_task_set_name is the symbol cryptsetup's configure actually asks for
+# (AC_CHECK_LIB(devmapper, dm_task_set_name)); dm_task_set_message is the
+# "library too old" probe that follows. No __cfi_check: this package drops
+# CFI, so the symbol is not emitted, and asking for it would fail the
+# exception that was required to link the library at all.
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libdevmapper.so
+  - test -e /dest/usr/include/libdevmapper.h
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libdevmapper.so dm_task_set_name dm_task_set_message dm_task_create

@@ -1,0 +1,33 @@
+# The installer medium's EFI system partition, and nothing else.
+#
+# Deliberately not the ESP the disk above carries. The installer UKI sits at
+# the removable-media path itself rather than behind systemd-boot: there is
+# exactly one thing to boot, and a loader in front of it would add a menu and a
+# timeout to a medium whose whole purpose is to run one program.
+#
+# No root partition here either. The ISO carries the same root image the disk
+# was built from -- the installer installs the filesystem it booted from, with
+# CopyBlocks=auto -- so building a second one would be building a different
+# one.
+
+[Distribution]
+Distribution=custom
+Architecture=@ARCH_MKOSI_ARCH@
+
+[Output]
+# A bare EFI system partition, with no partition table around it. That is what
+# El Torito wants to be pointed at and what xorriso appends as a GPT partition.
+Format=esp
+Output=losos-installer-esp
+CompressOutput=no
+
+[Content]
+BaseTrees=/build/installer
+Bootable=no
+CleanPackageMetadata=no
+
+[Build]
+RepartOffline=yes
+Seed=@IMAGE_SEED@
+SourceDateEpoch=0
+History=no

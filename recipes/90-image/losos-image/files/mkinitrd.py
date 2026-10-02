@@ -43,7 +43,9 @@ def copy_entry(source_root, dest_root, relative, missing):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None
+    )
     parser.add_argument("--root", required=True, help="the staged OS tree")
     parser.add_argument("--out", required=True, help="initrd root to populate")
     parser.add_argument("--manifest", required=True)

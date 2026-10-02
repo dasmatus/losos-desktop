@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# Run `pm explain` over every recipe in the tree.
-#
-# This is the headline gate. `pm explain` derives the sandbox policy and exits
-# non-zero the moment a command matches no fingerprint -- before anything is
-# downloaded or compiled. It therefore proves the entire recipe corpus is
-# executable-in-principle by pm on a machine that could never actually run the
-# build: no network, no disk, no hours.
-#
-# It also verifies signatures on the way, because pm checks those before it
-# parses (C10), so a stale signature fails here too.
+# Compatibility wrapper for tools/gates/Justfile's explain-all recipe.
 set -euo pipefail
 
-repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)
 pm=${PM:-$repo/../pm/target/release/pm}
+
+if command -v just >/dev/null 2>&1; then
+  exec just --justfile "$repo/tools/gates/Justfile" --working-directory "$repo" explain-all
+fi
 
 if [ ! -x "$pm" ]; then
   echo "explain-all: no pm binary at $pm" >&2
@@ -21,6 +16,19 @@ fi
 
 export XDG_CONFIG_HOME="$repo/.pm-config"
 
+missing=()
+for component in losos-image losos-mkosi; do
+  [ -f "$XDG_CONFIG_HOME/pm/plugins/$component.wasm" ] || missing+=("$component")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  echo "explain-all: plugin component(s) missing: ${missing[*]}" >&2
+  echo "explain-all: run $repo/plugins/build.sh ${missing[*]}" >&2
+  echo "explain-all: without them pm cannot explain the image layer, and reports" >&2
+  echo "explain-all: an unexpandable command or an underivable policy rather" >&2
+  echo "explain-all: than a missing plugin" >&2
+  exit 1
+fi
+
 failed=0
 count=0
 for recipe in "$repo"/out/recipes/*/build.yaml; do
@@ -28,9 +36,6 @@ for recipe in "$repo"/out/recipes/*/build.yaml; do
   count=$((count + 1))
   name=$(basename "$(dirname "$recipe")")
   if output=$( cd "$repo/out/pkgs" && "$pm" explain "$recipe" 2>&1 ); then
-    # The capability line is the interesting half: a layer reporting
-    # VersionControl means someone put a `git` in a recipe, and a layer
-    # reporting Network when it has no dl_urls means the same for cargo/pip.
     grants=$(printf '%s\n' "$output" | sed -n 's/^grants: *//p')
     printf '  %-28s %s\n' "$name" "$grants"
   else

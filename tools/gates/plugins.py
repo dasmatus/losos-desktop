@@ -11,7 +11,7 @@ from pm's side a plugin built against an older contract is simply a plugin.
 
 There is deliberately **no staleness check**, because there is nothing to go
 stale. `plugins/dist/` is build output and is not tracked: `./do plugins`
-produces it from the sources beside it, and `tools/sign-all` installs whatever
+produces it from the sources beside it, and the sign-all recipe installs whatever
 is there into pm's trust store. An earlier version of this file compared the
 component's mtime against `src/lib.rs`'s, which was wrong twice over -- git
 does not record mtimes, so in a fresh clone the comparison decided by whichever
@@ -63,6 +63,12 @@ def main():
             # component here would take that away for no gain, since pm simply
             # runs without a plugin it does not have.
             print(f"  {crate:15} not built (./do plugins)")
+
+    # pm's own plugins that the build recipe also builds, from PM_ROOT; listed
+    # so a reader sees every component sign-all will install, not only ours.
+    for component in sorted((PLUGINS / "dist").glob("*.wasm")):
+        if component.stem not in crates:
+            print(f"  {component.stem:15} {component.stat().st_size:>7} bytes, built from pm")
 
     if failures:
         print("plugins: FAILED", file=sys.stderr)

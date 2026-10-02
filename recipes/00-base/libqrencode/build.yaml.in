@@ -1,6 +1,14 @@
 # libqrencode 4.1.1
 #
 # systemd-cryptenroll prints recovery keys as QR codes; bsod shows one too.
+#
+# Built with cmake rather than ./configure, which is not a preference. fukuchi.org
+# stopped serving the autotools dist tarball and the GitHub release carries no
+# asset, so manifest/sources.lock points at the git archive -- and a git archive
+# has configure.ac but no generated `configure`. Running autoreconf is not an
+# option either: it matches no fingerprint in pm's table, so the step would be
+# refused before it ran (C2). The CMakeLists.txt in the same tarball builds the
+# same library, and `cmake` is already a host requirement.
 name: libqrencode
 version:
 - '4'
@@ -19,40 +27,135 @@ steps:
   # tarball recording any other uid fails tar at the very end.
   - tar -xf @DL_LIBQRENCODE@ --no-same-owner -C /build/src/libqrencode --strip-components=1
 
-# ./configure has no -C and there is no `cd` in a build step (C1), so the one
-# permitted wrapper puts it in the build directory. configure takes VAR=value
-# as positional arguments, which is how the toolchain and the sysroot are
-# reached without `env`.
+# Three options carry the whole configuration, and each is a default this build
+# cannot take:
 #
-# CFLAGS and LDFLAGS are clang @response-files, not flag lists: pm splits a
-# command on whitespace, so a multi-word CFLAGS would arrive as a dozen
-# separate arguments and configure would reject the first it did not know.
-# The response file is one word, and clang expands it. Its contents come from
-# manifest/toolchain.yaml -- LTO and CFI included.
+#   * BUILD_SHARED_LIBS defaults to NO here -- unusually -- so without it the
+#     package installs libqrencode.a and nothing links against it.
+#   * WITH_TOOLS defaults to YES and builds the qrencode command, which pulls in
+#     libpng. libpng is not in this layer, so find_package(PNG) would reach past
+#     the sysroot into pm's read-only mirror of the host's /usr and link the
+#     build host's copy. Nothing here needs the command; systemd wants the
+#     library.
+#   * WITH_TESTS stays NO, which also keeps the internal symbols static.
+#
+# CMAKE_C_FLAGS is a clang @response-file, not a flag list: pm splits a command
+# on whitespace, so a multi-word flag string would arrive as separate arguments.
+# No CXX variables, because the project declares LANGUAGES C and cmake warns
+# about manually-specified variables it never used.
+# CMAKE_POLICY_DEFAULT_CMP0056=NEW is what makes the compiler work at all
+# here, and the failure without it names the wrong thing entirely:
+#
+#     -- Check for working C compiler: /usr/bin/clang - broken
+#     /usr/bin/ld: cannot find crtbeginS.o: No such file or directory
+#     /usr/bin/ld: cannot find -lgcc: No such file or directory
+#
+# which reads as a broken toolchain rather than as a dropped flag. CMP0056 is
+# "try_compile() honours CMAKE_EXE_LINKER_FLAGS", introduced in CMake 3.2, and
+# a project is given the OLD behaviour when its own cmake_minimum_required is
+# older than that. libqrencode's CMakeLists.txt:1 asks for 3.1.0, so every
+# try_compile -- including the compiler sanity check CMake runs before anything
+# else -- silently drops the linker flags we passed and links with the
+# defaults.
+#
+# That matters because --rtlib=compiler-rt, --unwindlib=libunwind and
+# -fuse-ld=mold live in the LDFLAGS response file and nowhere else. Without
+# them clang falls back to libgcc and the host ld, and neither the GCC runtime
+# nor its crt objects exist in this sysroot -- hence crtbeginS.o and -lgcc
+# rather than anything about qrencode. The probe is the only thing that fails;
+# the real build would have linked correctly, which is what makes this so easy
+# to misread.
+#
+#
+# CMAKE_POLICY_VERSION_MINIMUM=3.5 is a third thing the same line 1 causes, and
+# it appeared only when the build host became Arch. CMake 4 removed
+# compatibility with pre-3.5 policy versions outright, so a `project()` whose
+# cmake_minimum_required asks for less is now an error rather than a
+# deprecation warning:
+#
+#     CMake Error at CMakeLists.txt:1 (cmake_minimum_required):
+#       Compatibility with CMake < 3.5 has been removed from CMake.
+#
+# Debian trixie's CMake 3.31 still accepted it, which is why this tree carried
+# the recipe for months without noticing. The variable is CMake's own suggested
+# remedy and its documentation gives it as `versionadded:: 4.0`, so on a CMake
+# 3.x it is an unused cache variable, reported as such and otherwise ignored.
+# That report is the same "Manually-specified variables were not used by the
+# project" warning this recipe avoids two paragraphs up by not passing CXX
+# variables -- accepted here rather than avoided, because the alternative is a
+# recipe that only configures on one of the two bases.
+#
+# THE TWO POLICY FLAGS ON THIS LINE ARE NOT REDUNDANT, and dropping either
+# breaks one of the two bases. CMAKE_POLICY_VERSION_MINIMUM sets a minimum
+# *policy version*, and a policy version of 3.5 makes every policy introduced
+# at or below it NEW -- CMP0056 arrived in 3.2, so on CMake 4 the floor flag
+# already covers it and CMAKE_POLICY_DEFAULT_CMP0056 changes nothing. On a
+# CMake 3.x it is the reverse: the floor flag does not exist yet and is
+# ignored, and CMAKE_POLICY_DEFAULT_CMP0056 is the only thing making
+# try_compile keep the linker flags. Each flag is load-bearing on exactly the
+# base the other is inert on. Stated from CMake's documented behaviour of
+# cmake_minimum_required rather than from watching a --trace-expand, which is
+# worth doing if anyone wants to tidy this.
+#
+# The same two recipes need it as need CMP0056, and for once that is not a
+# coincidence: 3.5 is above 3.2, so anything already below the CMP0056 floor is
+# below this one too. libcbor's recipe carries that sweep; compiler-rt and
+# libunwind ask for 3.20 and were not in it.
+#
+# NEW rather than dropping the probe (CMAKE_TRY_COMPILE_TARGET_TYPE=
+# STATIC_LIBRARY, as compiler-rt does) because the flags here are correct and
+# should be tested. compiler-rt's case is a genuine bootstrap -- it is building
+# the runtime a link would need -- and this is not.
+#
+# The other cmake packages in this tree do not need it: libfido2 asks for 3.7
+# and the rest are at or above 3.2, so they already get NEW. Left per-recipe
+# rather than made global for that reason -- a tree-wide default would hide
+# which package actually has the old declaration.
 - stage: Build
   name: configure
   dl_urls: null
   run:
-  - /bin/sh @RECIPE@/in-dir.sh /build/b/libqrencode /build/src/libqrencode/configure --prefix=/usr --libdir=/usr/lib --sysconfdir=/etc --localstatedir=/var CC=@CC@ AR=@AR@ NM=@NM@ RANLIB=@RANLIB@ CFLAGS=@CFLAGS_RSP@ LDFLAGS=@LDFLAGS_RSP@ PKG_CONFIG_PATH=/build/sysroot/usr/lib/pkgconfig --disable-static
+  - cmake -S /build/src/libqrencode -B /build/b/libqrencode -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBQRENCODE@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBQRENCODE@ -DCMAKE_POLICY_DEFAULT_CMP0056=NEW -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_SHARED_LIBS=ON -DWITH_TOOLS=NO -DWITH_TESTS=NO
 
 - stage: Build
   name: compile
   dl_urls: null
   run:
-  - make -C /build/b/libqrencode -j @JOBS@
+  - cmake --build /build/b/libqrencode -j @JOBS@
 
-# DESTDIR as a make argument, not the environment variable: pm already sets
-# DESTDIR=/dest, and the second install has to override it.
+# The sysroot install goes through make rather than `cmake --install --prefix`.
+# DESTDIR=/dest is in the environment of every step, and cmake prepends it to
+# whatever --prefix says: that spelling wrote the whole tree into
+# /dest/build/sysroot/usr and left the sysroot empty, so a sibling in the same
+# bundle linked against nothing. A variable set on make's command line is
+# exported, which is the DESTDIR cmake_install.cmake actually reads.
 - stage: Build
   name: install
   dl_urls: null
   run:
-  - make -C /build/b/libqrencode install DESTDIR=/dest
+  - cmake --install /build/b/libqrencode
   - make -C /build/b/libqrencode install DESTDIR=/build/sysroot
   - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
 
+  # libqrencode is on the same drops: [visibility] exception and gets the
+  # same two-part assertion: the API symbol says visibility was fixed,
+  # __cfi_check says the schemes are still on.
 - stage: Test
   name: staged
   dl_urls: null
   run:
+  # These two are not a sample, they are the whole set: systemd dlopens
+  # "libqrencode.so.4" (falling back to .so.3) and asks dlsym for
+  # QRcode_encodeString and QRcode_free and nothing else
+  # (src/shared/qrcode-util.c:40, at the pinned v261 tag). Because it dlopens
+  # rather than links, an empty libqrencode fails no link here -- the recovery
+  # key would simply stop being displayed as a QR code on a running system.
+  # The .so.4 test is the name dlopen is given; a soname bump upstream would
+  # take the fallback to .so.3 with it and neither would be found. It is 4
+  # here because CMakeLists.txt:115 sets SOVERSION ${PROJECT_VERSION_MAJOR}
+  # against project(QRencode VERSION 4.1.1) on line 3 -- and that is the
+  # pinned bytes rather than a neighbouring release, because sources.lock
+  # pins this source as a tag archive, so the tag and the tarball are one tree.
   - test -e /dest/usr/lib/libqrencode.so
+  - test -e /dest/usr/lib/libqrencode.so.4
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libqrencode.so QRcode_encodeString QRcode_free __cfi_check

@@ -19,11 +19,14 @@
   # compiled against musl rather than against the build host's glibc -- which
   # is what makes a package runnable on a machine other than the one that
   # built it. Order within the layer is forced: musl needs the kernel's
-  # userspace headers to compile, and compiler-rt needs musl to link against.
+  # userspace headers to compile, compiler-rt needs musl to link against, and
+  # libunwind is last because its shared library links against compiler-rt's
+  # crt objects out of the resource directory compiler-rt has just staged.
   members:
     - linux-headers
     - musl
     - compiler-rt
+    - libunwind
 
 - name: losos-01-meson
   dir: 00-meson
@@ -48,6 +51,7 @@
   # recipe because a layer is the unit that carries the consequence.
   members:
     - losos-release
+    - losos-swap
     - losos-security
 
 - name: losos-10-base
@@ -80,20 +84,41 @@
     - libgcrypt
     - json-c
     - popt
+    # libdevmapper. cryptsetup's first header check is a hard error without
+    # it, and systemd-cryptsetup reaches device-mapper only through that
+    # library. The LVM tools ride in the same tarball; the recipe builds the
+    # device-mapper half.
+    - lvm2
     - cryptsetup
     - tpm2-tss
     - libcbor
-    - libfido2
+    # Headers and a .pc only, with nothing compiled. The real libfido2 is in
+    # losos-20-systemd, after systemd, because it needs libudev to compile
+    # while systemd needs only its headers to configure and dlopens the
+    # library at runtime. The recipe has the whole argument.
+    - libfido2-headers
     - linux-pam
+    # The bignum library nettle's hogweed and gnutls's public key code sit on.
+    # Before both: nettle's configure checks for it with AC_CHECK_LIB and
+    # silently drops public key support when it is absent, so it has to be in
+    # the sysroot by the time nettle is configured.
+    - gmp
     - nettle
     - libtasn1
     - p11-kit
     - gnutls
+    # Before libarchive: libarchive's configure.ac takes the "libxml2 present"
+    # branch as soon as pkg-config reports libxml-2.0, and that branch makes
+    # `xmlInitParser` in -lxml2 a hard AC_MSG_FAILURE rather than a silent
+    # fallback. pkg-config answers yes from the build host's own libxml2.pc,
+    # so without the target copy staged first the link is attempted against a
+    # library the sysroot does not have and configure dies with
+    # "Missing xml2 library".
+    - libxml2
     - libarchive
     - elfutils
     - libbpf
     - libpwquality
-    - libxml2
 
 - name: losos-15-hosttools
   dir: 01-hosttools
@@ -113,6 +138,14 @@
     - linux
     - nvidia-open
     - systemd
+    # After systemd, and this is the only reason it is not down in
+    # losos-10-base with libcbor: libfido2 hard-requires libudev on Linux, and
+    # systemd is the only thing in this distribution that provides it. The
+    # dependency does not run the other way -- systemd keeps only includes and
+    # compile args from libfido2 and dlopens it at runtime -- so libfido2-headers
+    # satisfies systemd's configure from the base layer and the library itself
+    # lands here.
+    - libfido2
 
 - name: losos-30-graphics
   dir: 20-graphics

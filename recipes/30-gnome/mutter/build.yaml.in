@@ -22,7 +22,7 @@ steps:
   name: configure
   dl_urls: null
   run:
-  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/mutter /build/src/mutter --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=disabled -Dwayland=true -Dx11=false -Dxwayland=false -Dnative_backend=true -Dintrospection=false -Dprofiler=false
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/mutter /build/src/mutter --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload --pkg-config-path=/build/sysroot/usr/lib/pkgconfig:/build/sysroot/usr/share/pkgconfig -Dtests=disabled -Dwayland=true -Dx11=false -Dxwayland=false -Dnative_backend=true -Dintrospection=false -Dprofiler=false
 
 - stage: Build
   name: compile

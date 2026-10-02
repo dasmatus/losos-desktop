@@ -1,0 +1,54 @@
+# The disk an installed machine wakes up on, built by mkosi.
+#
+# Everything here is a consequence of one decision: the tree pm produced IS the
+# image. mkosi is not installing a distribution, it is partitioning one that
+# already exists, so almost every setting below is mkosi being told not to do
+# something it would otherwise do on its own.
+
+[Distribution]
+# `custom` is how mkosi is told there is no package manager to drive. Without
+# it mkosi picks a distribution from the host and tries to install into the
+# tree, which would fetch -- and the image layer's jail has no network.
+Distribution=custom
+Architecture=@ARCH_MKOSI_ARCH@
+
+[Output]
+Format=disk
+Output=losos-disk
+# The partitions as separate files as well as inside the disk. This is what
+# makes the root filesystem a first-class artifact: systemd-sysupdate writes
+# it into the inactive root partition, and the installer copies it block for
+# block, both of which take a partition rather than a disk.
+SplitArtifacts=partitions
+# Compression is xz'd later, by the recipe, with the settings the release
+# expects. Doing it here would produce a second, differently-compressed copy.
+CompressOutput=no
+# The version the image reports and the name the UKI already carries. mkosi
+# only records them; nothing here reads them back.
+ImageId=losos-desktop
+ImageVersion=@VERSION@
+
+[Content]
+BaseTrees=/build/root
+# mkosi would otherwise look for a kernel in the tree, build a UKI and install
+# a bootloader. All three already exist: the UKI is built by files/mkuki.py so
+# that its .cmdline and .osrel sections are this repository's, and systemd-boot
+# is staged onto the ESP by the recipe. A second UKI built here would differ
+# from the one CI boots.
+Bootable=no
+CleanPackageMetadata=no
+
+[Build]
+# The reason this can run in a build jail at all. Offline, systemd-repart
+# builds the filesystems with mkfs' own populate modes rather than by
+# attaching a loop device and mounting it -- and a loop device is exactly what
+# pm's jail has no /dev node and no privilege for (C7).
+RepartOffline=yes
+# Two builds of the same sources produce the same bytes. The seed fixes every
+# partition UUID, which are the only values in a disk image that are otherwise
+# random.
+Seed=@IMAGE_SEED@
+SourceDateEpoch=0
+# Nothing to cache and nowhere to put it: the jail's /tmp is a fresh tmpfs and
+# every run starts from the tree pm just built.
+History=no

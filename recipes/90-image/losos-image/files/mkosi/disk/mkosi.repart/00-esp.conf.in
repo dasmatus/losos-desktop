@@ -1,0 +1,14 @@
+# The EFI system partition.
+#
+# 512M, the same size overlay/usr/lib/repart.d/10-esp.conf gives an installed
+# system, and for the same reason: two unified kernel images side by side, so
+# an A/B update never has to repartition. Fixed rather than minimized, because
+# the second UKI does not exist yet when this is built.
+[Partition]
+Type=esp
+Format=vfat
+Label=LOSOS_ESP
+CopyFiles=/efi:/
+SizeMinBytes=512M
+SizeMaxBytes=512M
+SplitName=esp

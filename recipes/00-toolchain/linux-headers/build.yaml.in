@@ -32,8 +32,27 @@ steps:
   # ARCH is the kernel's spelling, from manifest/architectures.yaml: the
   # headers differ per architecture and installing x86's on arm64 produces a
   # libc that compiles and makes the wrong syscalls.
-  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ INSTALL_HDR_PATH=/dest/usr headers_install
-  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ INSTALL_HDR_PATH=/build/sysroot/usr headers_install
+  #
+  # LLVM=1 is not optional here, even though this step compiles nothing of the
+  # kernel. `headers_install` still runs `scripts_basic`, which builds
+  # `scripts/basic/fixdep`, and every compiler the kernel reaches for defaults
+  # to a GNU name. This distribution's build host has clang, lld and llvm and
+  # no other toolchain -- docs/host-requirements.md names none -- so the
+  # default finds nothing and make stops with `gcc: No such file or directory`
+  # while installing headers, which reads as a problem with the headers and is
+  # not.
+  #
+  # The whole switch rather than naming the host compiler alone: LLVM=1 is the
+  # kernel's own documented way to select the LLVM toolchain, it covers the
+  # linker and the binutils too, and it is the same line every other make
+  # against a kernel tree in this repository carries. Naming only the host
+  # compiler leaves the target one at `gcc`, which still gets probed and still
+  # prints that error, just without stopping.
+  #
+  # A make variable rather than an exported one because a pm step has no shell
+  # and `env` is banned (C1).
+  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 INSTALL_HDR_PATH=/dest/usr headers_install
+  - make -C /build/src/linux O=/build/b/linux-headers ARCH=@ARCH_KERNEL_ARCH@ LLVM=1 INSTALL_HDR_PATH=/build/sysroot/usr headers_install
 
 - stage: Test
   name: staged

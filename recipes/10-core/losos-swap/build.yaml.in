@@ -1,0 +1,33 @@
+# Local sources are copied into the mounted recipe directory (C7); no downloads.
+# python3 must be the first word because pm resolves it on the host (C3).
+# Both machine files keep this native OS helper linked against target musl.
+name: losos-swap
+version:
+- '0'
+- '1'
+- '0'
+dependencies: []
+steps:
+- stage: Build
+  name: configure-losos-swap
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py setup /build/b/losos-swap @RECIPE@/files/losos-swap --cross-file @RECIPE@/cross.ini --native-file @RECIPE@/native.ini --prefix=/usr --libdir=lib --sysconfdir=/etc --localstatedir=/var --buildtype=release --wrap-mode=nodownload
+- stage: Build
+  name: compile-losos-swap
+  dl_urls: null
+  run:
+  - ninja -C /build/b/losos-swap -j @JOBS@
+# Keep the shipped tree and the next bundle member's sysroot in agreement.
+- stage: Build
+  name: install-losos-swap
+  dl_urls: null
+  run:
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/losos-swap --destdir /dest --no-rebuild
+  - python3 /build/sysroot/usr/lib/meson/meson.py install -C /build/b/losos-swap --destdir /build/sysroot --no-rebuild
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+- stage: Test
+  name: staged-losos-swap
+  dl_urls: null
+  run:
+  - test -x /dest/usr/lib/losos/losos-swap

@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Sign a release's SHA256SUMS the way systemd-sysupdate checks it.
+
+sysupdate verifies a `url-file` source by fetching `SHA256SUMS.gpg` next to
+`SHA256SUMS` and handing both to `gpgv` with the keyring the image carries
+(overlay/usr/lib/systemd/import-pubring.pgp). The signature is a binary,
+detached OpenPGP one; an armored `.asc` is not what it looks for. The manifest
+is the integrity boundary for an OTA (tools/release-manifest), so this is the
+step that stops whoever serves the files from serving different ones.
+
+    UPDATE_SIGNING_KEY="$(cat key.asc)" tools/sign-release release
+
+The private key arrives in the environment, never as a file argument, so it
+cannot end up in a process listing or a step's logged command line. It is
+imported into a throwaway keyring that is removed on the way out, and the
+signature is checked straight away against the committed public keyring: a
+secret that does not match the key the images trust would otherwise publish a
+release no machine accepts, and say nothing.
+
+`--check` verifies an existing signature without any key, which is what a
+consumer, or a gate, can do.
+"""
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+PUBRING = REPO / "overlay" / "usr" / "lib" / "systemd" / "import-pubring.pgp"
+KEY_ENV = "UPDATE_SIGNING_KEY"
+
+
+def need(tool):
+    if shutil.which(tool) is None:
+        sys.exit(f"sign-release: {tool} is not installed")
+
+
+def verify(manifest, signature, pubring):
+    # --keyring is gpgv's own: it reads the exported packets directly and
+    # needs no trust database, the same way sysupdate invokes it.
+    result = subprocess.run(
+        ["gpgv", "--keyring", str(pubring), str(signature), str(manifest)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        sys.exit(f"sign-release: {signature.name} does not verify against "
+                 f"{pubring}:\n{result.stderr.strip()}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("directory", help="release directory holding SHA256SUMS")
+    parser.add_argument("--pubring", type=Path, default=PUBRING,
+                        help="the keyring the signature must verify against")
+    parser.add_argument("--check", action="store_true",
+                        help="verify an existing signature instead of writing one")
+    args = parser.parse_args()
+
+    directory = Path(args.directory)
+    manifest = directory / "SHA256SUMS"
+    signature = directory / "SHA256SUMS.gpg"
+    if not manifest.is_file():
+        sys.exit(f"sign-release: no {manifest}")
+    need("gpgv")
+
+    if args.check:
+        verify(manifest, signature, args.pubring)
+        print(f"sign-release: {signature} verifies")
+        return 0
+
+    key = os.environ.get(KEY_ENV, "")
+    if not key.strip():
+        sys.exit(f"sign-release: ${KEY_ENV} is empty; an unsigned release is "
+                 "one no image carrying the public keyring will install")
+    need("gpg")
+
+    with tempfile.TemporaryDirectory(prefix="sign-release-") as home:
+        os.chmod(home, 0o700)
+        gpg = ["gpg", "--homedir", home, "--batch", "--no-tty",
+               "--pinentry-mode", "loopback", "--passphrase", ""]
+        imported = subprocess.run([*gpg, "--import"], input=key,
+                                  capture_output=True, text=True)
+        if imported.returncode != 0:
+            sys.exit("sign-release: the key did not import "
+                     f"(is ${KEY_ENV} an armored private key?)")
+        # Detached and binary, no --armor: see the docstring.
+        signature.unlink(missing_ok=True)
+        subprocess.run([*gpg, "--detach-sign", "--output", str(signature),
+                        str(manifest)], check=True, capture_output=True)
+
+    verify(manifest, signature, args.pubring)
+    print(f"sign-release: {signature}, verified against {args.pubring.name}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

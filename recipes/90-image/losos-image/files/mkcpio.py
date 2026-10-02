@@ -93,7 +93,9 @@ def collect(root):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0] if __doc__ else None
+    )
     parser.add_argument("root", help="directory to archive")
     parser.add_argument("output", help="cpio file to write")
     args = parser.parse_args()

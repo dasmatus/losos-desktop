@@ -69,6 +69,7 @@ extra word on a kernel command line rather than a program.
 | Component | Option | Wiring |
 |---|---|---|
 | `systemd-homed`, `homectl` | `-Dhomed=enabled` | **How users exist on this OS.** A user is a signed record plus a LUKS image on the home partition, not a line in `/etc/passwd`. That is what survives an A/B root replacement. |
+| `homectl --fido2-device=` | `-Dhomed=enabled`, `-Dlibfido2=enabled` | Binds a user's home image to a hardware token, which is the only unlock a YubiKey can perform on this OS today: the root partition is not encrypted, so there is nothing else holding a LUKS volume. `docs/yubikey.md`. |
 | `systemd-userdbd`, `userdbctl` | `-Duserdb=true` | The lookup service homed's records are served through. |
 | `libnss_systemd` | `-Dnss-systemd=true` | The glue that makes gdm, polkit and everything else see those users through ordinary NSS calls. |
 | `pam_systemd`, `pam_systemd_home` | `-Dpam=enabled` | Turns a login into a logind session and unlocks the user's home image at the same moment. |
@@ -127,6 +128,15 @@ extra word on a kernel command line rather than a program.
 (`-Dquotacheck=true`) · `systemd-fsck` · `systemd-remount-fs` ·
 `systemd-hibernate-resume` + `systemd-sleep` (`-Dhibernate=true`) ·
 `systemd-update-utmp`/`-update-done` · `systemd-volatile-root`.
+
+`fido_id` (core) with `60-fido-id.rules` and `70-uaccess.rules`
+(`-Dlogind=true` **and** `-Dacl=enabled`, both required) are the whole of this
+OS's security-token device access. `fido_id` reads a hidraw device's HID
+report descriptor, sets `ID_SECURITY_TOKEN=1` on anything declaring the FIDO
+usage page, and `70-uaccess.rules` gives the user of the active seat an ACL on
+the node. That is what lets a browser do WebAuthn without this repository
+shipping a udev rule of its own, and it is why all three are in the inventory
+rather than assumed. See `docs/yubikey.md`.
 
 Naming: `systemd-hostnamed`, `systemd-localed`, `systemd-timedated` and their
 `*ctl` clients, all enabled, all used by GNOME's settings panels over D-Bus.

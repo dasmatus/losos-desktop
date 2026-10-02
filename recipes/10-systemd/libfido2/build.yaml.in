@@ -1,0 +1,132 @@
+# libfido2 1.15.0
+#
+# FIDO2 tokens as a LUKS unlock factor, via systemd-cryptenroll.
+#
+# It is in losos-20-systemd, AFTER systemd, and that placement is the whole
+# story of this recipe. It used to sit at member twenty-nine of losos-10-base's
+# thirty-nine, where it could not build at all.
+#
+# libfido2 hard-requires libudev on Linux. CMakeLists.txt calls
+# `pkg_search_module(UDEV libudev REQUIRED)` in the non-MSVC branch whenever
+# CMAKE_SYSTEM_NAME is Linux, and it is NOT gated on NFC_LINUX, so turning NFC
+# off does not avoid it. Nor is it a configure-time artifact: src/hid_linux.c
+# is compiled on Linux unconditionally and makes fourteen udev_* calls --
+# udev_new, the udev_enumerate_* family, udev_device_* -- to find hidraw nodes
+# at all. losos-10-base has no udev, and systemd is the only provider in this
+# tree. Found by configuring the pinned source, before any build had reached
+# the recipe to say so.
+#
+# That read as a cycle, because systemd is built -Dlibfido2=enabled. It is not
+# one, and the asymmetry was in systemd's own meson file: line 1236 takes the
+# dependency and line 1238 keeps only
+# `partial_dependency(includes: true, compile_args: true)` from it. Nothing
+# else in that file touches the full object, and at runtime systemd dlopens
+# "libfido2.so.1" and resolves 48 symbols by dlsym
+# (src/shared/libfido2-util.c:93). So systemd needs this package's headers and
+# its .pc to configure and its shared object never, while this package needs
+# libudev to compile. One arrow, so the two are ordered: libfido2-headers in
+# losos-10-base satisfies systemd's configure, systemd builds and installs
+# libudev, and the real library follows here.
+#
+# The four alternatives are recorded in recipes/00-base/libfido2-headers, with
+# what each would have cost. The short version: a two-pass systemd was the
+# earlier recommendation and pays for a second full compile while leaving pass
+# one's files behind; eudev puts a systemd fork in a systemd-native
+# distribution; patching hid_linux.c is carried forever. This was chosen
+# without waiting for a decision because it is one commit to revert, and
+# because the alternative was a feature that could not build sitting still
+# overnight.
+#
+# Being a later member of the same bundle is what makes it work: a bundle is
+# one workspace and share/stage-sysroot.sh puts an earlier member's install in
+# front of a later one, so systemd's libudev.pc is simply there. Nothing about
+# this needs a second pass or a second archive.
+#
+name: libfido2
+version:
+- '1'
+- '15'
+- '0'
+dependencies: []
+steps:
+
+- stage: Prepare
+  name: fetch
+  dl_urls:
+    @URL_LIBFIDO2@: '@SHA256_LIBFIDO2@'
+  run:
+  - mkdir -p /build/src/libfido2 /build/b/libfido2
+  # --no-same-owner: pm's jail is a user namespace mapping only uid 0, so a
+  # tarball recording any other uid fails tar at the very end.
+  - tar -xf @DL_LIBFIDO2@ --no-same-owner -C /build/src/libfido2 --strip-components=1
+
+- stage: Build
+  name: configure
+  dl_urls: null
+  run:
+  - cmake -S /build/src/libfido2 -B /build/b/libfido2 -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_PREFIX_PATH=/build/sysroot/usr -DCMAKE_FIND_ROOT_PATH=/build/sysroot -DCMAKE_BUILD_TYPE=None -DCMAKE_C_COMPILER=@CC@ -DCMAKE_CXX_COMPILER=@CXX@ -DCMAKE_AR=@AR@ -DCMAKE_RANLIB=@RANLIB@ -DCMAKE_C_FLAGS=@CFLAGS_RSP_LIBFIDO2@ -DCMAKE_CXX_FLAGS=@CFLAGS_RSP_LIBFIDO2@ -DCMAKE_EXE_LINKER_FLAGS=@LDFLAGS_RSP_LIBFIDO2@ -DCMAKE_SHARED_LINKER_FLAGS=@LDFLAGS_RSP_LIBFIDO2@ -DBUILD_STATIC_LIBS=OFF -DBUILD_MANPAGES=OFF
+
+- stage: Build
+  name: compile
+  dl_urls: null
+  run:
+  - cmake --build /build/b/libfido2 -j @JOBS@
+
+# The sysroot install goes through make rather than `cmake --install --prefix`.
+# DESTDIR=/dest is in the environment of every step, and cmake prepends it to
+# whatever --prefix says: that spelling wrote the whole tree into
+# /dest/build/sysroot/usr and left the sysroot empty, so a sibling in the same
+# bundle linked against nothing. A variable set on make's command line is
+# exported, which is the DESTDIR cmake_install.cmake actually reads.
+- stage: Build
+  name: install
+  dl_urls: null
+  run:
+  - cmake --install /build/b/libfido2
+  - make -C /build/b/libfido2 install DESTDIR=/build/sysroot
+  - /bin/sh @RECIPE@/stage-sysroot.sh /build/sysroot
+
+  # libfido2 is on a drops: [visibility] exception, and this is what makes
+  # that exception honest rather than hopeful. fido_dev_open present means the
+  # API really did survive -- it does not, at hidden visibility, despite the
+  # version script naming it. __cfi_check present means the narrow drop kept
+  # CFI rather than silently losing it, which is the whole reason for
+  # preferring it over drops: [cfi] on a library that parses CBOR off a USB
+  # device. Neither symbol proves the other: __cfi_check is there at hidden
+  # visibility too.
+  #
+  # The three fido_assert_* names are here because nothing else in this tree
+  # would miss them. systemd does not LINK against libfido2 -- it dlopens
+  # "libfido2.so.1" and resolves 48 symbols by dlsym
+  # (src/shared/libfido2-util.c:93, read at the pinned v261 tag, which for this
+  # source is the pinned bytes). So a libfido2 that exports nothing fails no
+  # link anywhere: systemd compiles, the image builds, everything ships, and
+  # the first symptom is a machine that will not unlock. This line is the only
+  # thing standing between the layer's -fvisibility=hidden and that.
+  #
+  # Given that, the names have to cover the unlock, not just the library.
+  # fido_dev_open and fido_dev_info_manifest are enumeration -- they are what
+  # finds a token. The hmac-secret extension is what actually unlocks a volume
+  # with one: systemd-cryptenroll sets a salt and reads the derived secret back
+  # through fido_assert_set_hmac_salt and fido_assert_hmac_secret_ptr, gated on
+  # fido_assert_set_extensions. A regression confined to those three would pass
+  # an enumeration-only check and break exactly the feature this package is in
+  # the image for.
+  #
+  # The `.so.1` test is the SONAME systemd asks dlopen for by name. It is
+  # normally the same file as the linker name through a symlink, so this looks
+  # redundant -- it is not. A soname bump upstream silently stops systemd
+  # finding the library at all, and by the argument above that is invisible
+  # until boot. It is 1 here because src/CMakeLists.txt:143 sets
+  # SOVERSION ${FIDO_MAJOR} and CMakeLists.txt:31 sets FIDO_MAJOR "1" -- read
+  # at the 1.15.0 git tag rather than in the pinned tarball, developers.yubico.com
+  # being unreachable from where this was checked. CMakeLists.txt is not a
+  # generated file, so the two agree, but the check is one step short of the
+  # bytes and says so.
+- stage: Test
+  name: staged
+  dl_urls: null
+  run:
+  - test -e /dest/usr/lib/libfido2.so
+  - test -e /dest/usr/lib/libfido2.so.1
+  - /bin/sh @RECIPE@/check-exports.sh @NM@ /dest/usr/lib/libfido2.so fido_init fido_dev_open fido_dev_info_manifest fido_assert_set_extensions fido_assert_set_hmac_salt fido_assert_hmac_secret_ptr __cfi_check

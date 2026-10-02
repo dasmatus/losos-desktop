@@ -1,0 +1,243 @@
+# The disk images
+
+`just build` ends with two whole disks — `losos.iso` and `losos.qcow2` — and
+the root filesystem as a partition image. All three come out of one tree that
+pm has already built, and out of three programs the build host provides:
+`mkosi`, `xorriso` and `qemu-img`.
+
+## Why these tools, when pm's table refuses them
+
+`mkosi`, `xorriso` and `qemu-img` are all absent from pm's fingerprint table,
+and a command whose first word matches nothing aborts the build before any step
+runs (C2 in [`pm-constraints.md`](pm-constraints.md)). That refusal is not pm
+being difficult: the table is what makes `pm explain` a real answer to "what
+does this build need", and a table with a permissive fallback would answer
+nothing.
+
+A plugin is how a distribution extends the table without weakening it. pm only
+ever consults one about a command that matched **no** built-in fingerprint, so
+`plugins/losos-mkosi` can name `mkosi` and can never reclassify `cargo` as
+needing no network. `plugins/losos-image` does the same for `xorriso`,
+`qemu-img` and the filesystem builders. Both declare a ceiling that excludes
+`Network`, which matters more here than elsewhere: network in a pm build file
+is per *file* rather than per step (C8), so one careless grant would put the
+whole image layer's jail on the host network.
+
+This tree used to write ext4, FAT32, GPT, ISO 9660 and qcow2 itself, in
+stdlib-only Python, and the argument for that was the paragraph above read
+backwards — that pm would refuse the real tools. It was wrong: the
+`losos-image` plugin already named them. What was actually missing was any
+guarantee that they were *installed* on whatever host ran the build, and that
+is what [`container.md`](container.md) fixes. The writers are gone; their
+history is in git.
+
+## What runs, in order
+
+| Step | Tool | Produces |
+|---|---|---|
+| `esp-tree` | `cp` | the ESP's contents, inside the tree at `/efi` |
+| `disk` | mkosi | `losos-disk.raw`, and its partitions as separate files |
+| `qcow2` | `qemu-img` | `losos.qcow2` |
+| `installer-esp` | mkosi | a bare ESP carrying the installer UKI |
+| `iso` | `xorriso` | `losos.iso` |
+| `root-image-xz` | `xz` | `losos-root.raw.xz` |
+
+mkosi is not installing a distribution. `Distribution=custom` tells it there is
+no package manager to drive; `BaseTrees=` hands it the tree pm produced. What
+is left is the part mkosi is better at than anything else available: driving
+`systemd-repart` to lay out partitions and populate filesystems.
+
+**`RepartOffline=yes` is the setting that makes this possible at all.** Offline,
+repart populates a filesystem through `mkfs`' own populate modes rather than by
+attaching a loop device and mounting it — and a loop device is exactly what
+pm's jail has no `/dev` node and no privilege for (C7).
+
+**`SplitArtifacts=partitions` is what keeps the root filesystem a first-class
+artifact** rather than something trapped inside a disk image. systemd-sysupdate
+writes it into the inactive root partition and the installer duplicates it with
+`CopyBlocks=auto`; both take a partition, not a disk.
+
+## The shape of the images
+
+Both disks carry an EFI system partition and a root partition, typed so
+`systemd-gpt-auto-generator` finds the root by GPT type — which is why this OS
+ships no `/etc/fstab` and no `root=`. Everything else is `systemd-repart`'s on
+first boot, from `/usr/lib/repart.d`: `/home`, the second root partition an A/B
+update needs, and growing root into whatever disk it landed on. A `/home`
+created at build time would be one repart did not make and does not own, and a
+factory reset is *the absence of that partition* — so creating it here would
+quietly break the reset path.
+
+The qcow2's virtual size is grown by twelve gigabytes after the conversion
+rather than the raw image being padded before it. That is where repart works on
+first boot, it costs nothing in the artifact because an unallocated cluster is
+not stored, and it leaves the GPT backup header short of the new end — which
+repart relocates on its first run, exactly as it does for every cloud image
+shipped this way.
+
+## Swap and zswap
+
+The kernel enables zswap by default, using the software **842** compressor on
+both architectures. zswap is a compressed RAM cache in front of disk swap, not
+a replacement for it. Its RAM pool retains the kernel's default limit; the
+RAM-sized allocation below is **disk space**, not the zswap pool.
+
+Before repart runs, `losos-swap` writes
+`/sysroot/run/repart.d/25-swap.conf` with equal minimum and maximum sizes
+derived from the running machine's total usable RAM (`sysinfo.totalram *
+mem_unit`, equivalent to `/proc/meminfo`'s `MemTotal`). It does not use
+fluctuating free/available memory or the image builder's RAM. The size is
+rounded up only to repart's 4096-byte alignment. The swap header uses one
+page, so the usable capacity reported by `swapon` is slightly smaller than the
+partition's disk allocation.
+
+The initrd carries this helper, its repart drop-in, and the util-linux swap
+tools. repart formats the partition with `mkswap`; after switch-root,
+`systemd-gpt-auto-generator` discovers its swap GPT type and activates it
+without an fstab entry. No swap partition is baked into the build artifacts.
+The installer generates the same definition under `/run/repart.sysinstall.d`
+before checking the selected disk's capacity. Boot-time repart is skipped on
+installer media so it cannot allocate swap on the live USB/DVD instead.
+
+The target needs unallocated space for RAM-sized swap **in addition to** the
+existing root, ESP and home requirements. In particular, the QCOW2's default
+12 GiB expansion is not enough for every guest RAM size; grow its virtual disk
+before first boot when necessary. Insufficient space is an error, not a reason
+to silently provision smaller swap.
+
+This sizes a new installation or first-boot partition, not an already occupied
+disk. repart never shrinks or moves existing partitions: an older installation
+without free space needs manual repartitioning, and changing RAM after
+provisioning does not guarantee a matching swap size. A/B updates and factory
+reset leave the swap partition intact. Swap is not encrypted by this policy;
+842 compression is not encryption, and this does not configure hibernation.
+Administrators can override the kernel defaults with `zswap.enabled=0` or
+`zswap.compressor=...`. At runtime, check `/sys/module/zswap/parameters/enabled`,
+`/sys/module/zswap/parameters/compressor`, and `/proc/swaps`.
+
+## The ESPs
+
+The two ESPs are not the same. The disk's carries systemd-boot at the
+removable-media path with the UKI beside it in `EFI/Linux`, because an installed
+system needs a loader to offer the previous kernel after a failed update. The
+ISO's carries the installer UKI at that path directly: there is one thing to
+boot, and a menu in front of it would only add a timeout.
+
+The ESP's contents are staged into the tree at `/efi`, where they are mounted on
+a running system, and the root partition's definition excludes that path. Without
+the exclusion every unified kernel image would be in the image twice — once
+where firmware reads it and once inside the root filesystem where nothing ever
+will — and the root partition image shipped for updates would carry a copy of
+the kernel it is shipped alongside.
+
+## The ISO is a hybrid, over one copy of the bytes
+
+`xorriso -append_partition` puts the installer ESP and the root partition into
+the ISO's GPT, and `-e --interval:appended_partition_2:all::` points the El
+Torito boot entry at the appended ESP itself rather than at a second copy inside
+the ISO 9660 filesystem. Firmware booting a DVD reads the boot catalog;
+firmware booting a USB stick the file was `dd`'d to reads the GPT; both land on
+the same bytes. If they ever drifted, the DVD would boot one kernel and the USB
+stick another.
+
+The root partition is on the medium because that is what the installer
+installs: `CopyBlocks=auto` copies the partition it booted from.
+
+## Reproducibility
+
+Every image is a function of its inputs. `SourceDateEpoch=0` and `Seed=` fix the
+two things that are otherwise generated fresh on every run — timestamps and
+every partition UUID. The seed is derived by `tools/configure` from the
+architecture and the version, so two builds of one version agree and two
+versions differ, which is what anything looking a partition up needs.
+
+## How they are checked
+
+`assert-media.py` runs inside the build, against the real artifacts, as a `Test`
+step. It asks the question the tools cannot ask about themselves: is the qcow2 a
+qcow2 whose partition table holds an ESP with FAT in it and a discoverable root
+with ext4 in it, and does the ISO's boot catalog point at the same bytes as its
+ESP partition entry. Partitions are looked up by type GUID rather than by
+position, because xorriso puts the ISO 9660 image area in the table too.
+
+That check runs once, four hours in, and only if everything before it
+succeeded, which is the worst possible schedule for a check that could be
+wrong in the accepting direction -- a build that goes green and an image that
+powers on to an empty boot menu. So `tools/gates/test-media.py` feeds it
+images written here from the format: one with the shape the image layer
+produces, and nine one-mutation near-misses it has to reject. The mutation
+that matters most is a root partition typed as plain Linux data. Such an image
+builds, and mounts by hand, and never boots, because there is no `/etc/fstab`
+and no `root=` for systemd-gpt-auto-generator to fall back on -- and no other
+gate in the tree would notice.
+
+The fixtures are not the build's images and are not meant to be. Whether mkosi
+and xorriso write a correct GPT is upstream's, and re-deriving it here would
+be testing them; whether this repository reads one back correctly is this
+repository's.
+
+Reading a structure back is not booting it. `tools/vm-test disk` hands the qcow2
+to QEMU with UEFI firmware and requires the guest to report that it came up, and
+that is the test that settles it; CI runs it on both architectures.
+`tools/libvirt-domain` writes the same machine for virt-manager, for looking at
+the desktop rather than asserting it exists.
+
+## CI handoff
+
+`.github/workflows/ci.yml` builds each architecture in one job on a native
+runner: the whole package chain and then the image, with nothing reused from
+an earlier run. That is slower than splitting packages from assembly, and it
+is the point: a release is exactly what that one job compiled from pinned
+sources, with no cached or handed-over archive whose provenance has to be
+argued for. `tools/configure --prebuilt-packages` still exists for a local
+build that wants to reuse a closure it made itself.
+
+The finished release directory goes to GHCR as one OCI artifact per
+architecture, pushed with `oras`, and the verify and publish jobs pull it back
+by digest. That keeps the handoff exact without a multi-gigabyte workflow
+artifact, and leaves the GitHub release to do the one thing GHCR cannot: keep
+the stable `nightly`/`stable` URL systemd-sysupdate is pointed at. Pull
+requests build and check but never push, so their images are not booted.
+
+The aggregate `ci` job is the one check to protect `main` with. Nothing merges
+automatically.
+
+## Signed updates
+
+`SHA256SUMS` is the integrity boundary of an OTA, so CI signs it
+(`tools/sign-release`, a detached binary `SHA256SUMS.gpg`) with an Ed25519 key
+held in the repository secret `UPDATE_SIGNING_KEY`. The public half is
+committed as `overlay/usr/lib/systemd/import-pubring.pgp`, which is where
+systemd-sysupdate looks for it; the NixOS build uses the same file. The `push`
+job signs the manifest GHCR serves, `publish` signs the GitHub release's, and a
+missing secret fails the job: an image refuses an unsigned manifest.
+
+The private key was generated once, locally, and a copy kept outside the
+repository (`~/.config/losos-desktop/`, with a revocation certificate). The
+key does not expire, because a keyring baked into shipped images cannot be
+replaced by them; rotating it means shipping an image that trusts both.
+
+Not done: the pm image has no `gpgv`, which sysupdate runs to verify, and this
+tree has no recipe for it (GnuPG pulls in libassuan, libksba and npth). Until
+one exists the pm image cannot apply a signed update; `tools/vm-test` still
+passes `--verify=no`. The NixOS image has not been evaluated with the new
+default either.
+
+## Fragmented releases
+
+A GitHub release asset is capped at 2 GiB, which a root image or an ISO can
+pass. In `publish`, `tools/split-release` cuts every file over 1 GB (decimal)
+into `NAME.part-000`, `NAME.part-001`, ... plus `NAME.parts`, a sha256sum list
+of each fragment and the whole file, and rewrites `SHA256SUMS` to match. The
+shell script `tools/merge-release.sh` ships in the release and puts the file
+back:
+
+    ./merge-release.sh -u https://github.com/<owner>/losos-desktop/releases/download/nightly \
+        -g import-pubring.pgp losos-desktop_<version>_x86_64.iso
+
+It verifies every fragment, joins them, checks the whole file, and with `-g`
+also checks the signature and that `NAME.parts` is the one the signed manifest
+lists. sysupdate cannot join fragments, so a split file is no longer an update
+source on the GitHub release: images update from the whole files GHCR serves
+through `proxy/`, and `LOSOS_PROXY_URL` must be set once the root image passes
+1 GB.

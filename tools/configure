@@ -24,6 +24,7 @@ manifest/sources.lock. out/ is disposable and gitignored.
 """
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -78,6 +79,25 @@ def host_tool(*names):
     return ""
 
 
+def clang_resource_dir():
+    """Where the host clang keeps its builtin headers.
+
+    Asked for rather than composed: the answer is a versioned path under
+    /usr/lib/llvm-N, and a recipe that spelled one would be this container's
+    layout baked into the tree. The only user is the step that copies those
+    headers into the sysroot's resource directory, because `-resource-dir`
+    moves stddef.h and friends along with the runtimes (see
+    manifest/toolchain.yaml).
+    """
+    cc = tool_path("clang", "cc")
+    if not cc:
+        return ""
+    result = subprocess.run(
+        [cc, "-print-resource-dir"], capture_output=True, text=True, check=False
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def load_sources(path, mirror=None):
     """Read sources.lock into the placeholder tokens it contributes.
 
@@ -127,6 +147,14 @@ def stage_support(recipe_out, member_dirs, subs):
         target = recipe_out / helper.name
         target.write_text(substitute(helper.read_text(), subs))
         target.chmod(0o755)
+
+    # share/*.map is the linker's, not a step's: cfi-export.map is named in
+    # LDFLAGS and read by mold, which runs inside the jail and so needs the
+    # file on the same mount as the response file that names it.
+    for script in sorted((REPO / "share").glob("*.map")):
+        (recipe_out / script.name).write_text(
+            substitute(script.read_text(), subs)
+        )
 
     for package, source in member_dirs:
         files = source / "files"
@@ -218,15 +246,52 @@ def main():
                         help="target architecture from manifest/architectures.yaml")
     parser.add_argument("--channel", default="stable", choices=["stable", "nightly"],
                         help="which sysupdate channel the overlay points at")
+    parser.add_argument("--version", default="0",
+                        help="the release version baked into the ESP's kernel "
+                             "filename, which is where systemd-sysupdate reads "
+                             "it from; CI passes the version it is about to "
+                             "publish")
+    parser.add_argument("--update-url", metavar="URL",
+                        help="where the image's sysupdate transfers look for "
+                             "SHA256SUMS and the release files, ending in a "
+                             "slash; default the GitHub release named after "
+                             "the channel. proxy/ serves the same files from "
+                             "GHCR at <proxy>/updates/<channel>/<arch>/")
     parser.add_argument("--ota-port", type=int, default=8731,
                         help="loopback port tools/vm-test offers a release on")
     parser.add_argument("--mirror", metavar="URL",
                         help="fetch sources from a local mirror instead of "
                              "upstream, keeping the same SHA-256 pins")
+    parser.add_argument("--prebuilt-packages", type=Path, metavar="ARCHIVE",
+                        help="assemble the image from a trusted package closure "
+                             "built for this architecture, without rebuilding it")
     args = parser.parse_args()
 
-    out = Path(args.out)
+    out = Path(args.out).resolve()
     recipes_out = out / "recipes"
+    layers_file = REPO / "manifest" / "layers.yaml"
+    layers = yaml.safe_load(layers_file.read_text()) if layers_file.exists() else []
+    layers = layers or []
+    prebuilt = None
+    if args.prebuilt_packages:
+        prebuilt = args.prebuilt_packages.resolve()
+        # The generated tree is deleted on every configure, including the one
+        # `just build` runs. Its input must survive that deletion (C10).
+        if prebuilt.is_relative_to(recipes_out):
+            parser.error("--prebuilt-packages must be outside the generated recipes")
+        if (len(layers) < 2 or layers[-1]["dir"] != "90-image"
+                or prebuilt.name != f"{layers[-2]['name']}-0.1.0.cpkg"):
+            parser.error("--prebuilt-packages must name the final package layer archive")
+        if not prebuilt.is_file() or prebuilt.stat().st_size == 0:
+            parser.error("--prebuilt-packages must be a non-empty archive")
+        # The image-host fallback mounts the repository, not an arbitrary
+        # caller's download directory. Remember a durable, mounted copy so its
+        # inner configure can regenerate after the original input disappears.
+        managed = out / "pkgs" / prebuilt.name
+        if prebuilt != managed:
+            managed.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(prebuilt, managed)
+        prebuilt = managed
     if recipes_out.exists():
         shutil.rmtree(recipes_out)
     recipes_out.mkdir(parents=True)
@@ -267,29 +332,51 @@ def main():
         subs[f"@ARCH_{key.upper()}@"] = str(value)
     subs["@ARCH@"] = args.arch
     subs["@CHANNEL@"] = args.channel
+    # https:// either way: losos-ota-test.service swaps any https Path= for the
+    # loopback server tools/vm-test runs, so the OTA test is indifferent to it.
+    update_url = args.update_url or (
+        f"https://github.com/dichhead/losos-desktop/releases/download/{args.channel}/"
+    )
+    if not update_url.startswith("https://") or not update_url.endswith("/"):
+        raise SystemExit(f"configure: --update-url must be https:// and end in /: {update_url}")
+    subs["@UPDATE_URL@"] = update_url
+    # The version reaches exactly one place: the name of the UKI on the ESP the
+    # image ships with. sysupdate parses the version out of that filename and
+    # out of nothing else, so an image whose kernel is not named for its version
+    # cannot be told apart from any other and `ProtectVersion=%A` protects
+    # nothing. Everything else that needs a version -- the published filenames,
+    # SHA256SUMS -- is named after the build by tools/stage-release.
+    subs["@VERSION@"] = args.version
     # The loopback port tools/vm-test serves a test release on. Written here
     # rather than in the unit so the harness and the guest cannot disagree.
     subs["@OTA_PORT@"] = str(args.ota_port)
+    # Every partition UUID in the image is derived from this, so two builds of
+    # one version agree and two versions differ. systemd-repart takes a UUID
+    # and nothing else, so the version string is hashed into one rather than
+    # spelled into it.
+    subs["@IMAGE_SEED@"] = str(
+        __import__("uuid").uuid5(
+            __import__("uuid").NAMESPACE_URL,
+            f"https://losos.invalid/image/{args.arch}/{args.version}",
+        )
+    )
 
     # The toolchain: one manifest, every flag in the tree. A recipe that
     # spelled its own -O2 would be outside the CFI scheme with nothing saying
-    # so, which is what tools/gates/toolchain-report.py exists to catch.
-    toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
+    # so, which is what `tools/pm-toolchain report` exists to catch.
     # The triple is the architecture's, not the toolchain manifest's: writing
     # it in both places is how they come to disagree.
+    toolchain = Toolchain.load(REPO / "manifest" / "toolchain.yaml")
     toolchain.target["triple"] = arch["triple"]
     subs.update(toolchain.placeholders(tool_path))
 
     subs["@SRCDIR@"] = str(REPO)
     subs["@OUT@"] = str(out)
     subs["@PKGS@"] = str(out / "pkgs")
+    subs["@CLANG_RESOURCE_DIR@"] = clang_resource_dir()
     subs["@PKGCONFIG@"] = tool_path("pkgconf", "pkg-config")
     subs["@PYTHON@"] = tool_path("python3")
     subs["@JOBS@"] = str(max(1, (__import__("os").cpu_count() or 2)))
-
-    layers_file = REPO / "manifest" / "layers.yaml"
-    layers = yaml.safe_load(layers_file.read_text()) if layers_file.exists() else []
-    layers = layers or []
 
     previous = None
     for layer in layers:
@@ -306,6 +393,64 @@ def main():
         local["@CFLAGS_RSP@"] = f"@{recipe_out}/cflags.rsp"
         local["@LDFLAGS_RSP@"] = f"@{recipe_out}/ldflags.rsp"
 
+        # Before anything asks the toolchain for a flag list, because that is
+        # what consumes it. stage_support() copies the file itself, further
+        # down, and both halves have to agree on the name.
+        toolchain.cfi_export_map = recipe_out / "cfi-export.map"
+        # ...and the shared meson flag lists are recomputed here rather than
+        # inherited, because `placeholders()` built them once for the whole run
+        # -- before there was a layer to name the map in. An exempt package's
+        # cross file already gets a fresh pair below; without this the shared
+        # one was the only flag list in the tree missing the map, which is the
+        # kind of gap that shows up as one meson library silently unchecked.
+        local.update(toolchain.meson_subs())
+
+        # A separate response file per exempt package. Written BEFORE the
+        # members render, because rendering is what consumes these names:
+        # defined afterwards, @CFLAGS_RSP_MUSL@ reached the generated recipe
+        # verbatim and clang was handed a file called '@CFLAGS_RSP_MUSL@'.
+        #
+        # manifest/toolchain.yaml manifest/toolchain.yaml
+        # lists what each drops and why -- musl cannot take --sysroot (it is
+        # creating it), -D_FORTIFY_SOURCE (circular against its own __*_chk),
+        # or CFI (its loader calls functions before any CFI runtime exists).
+        #
+        # Emitted as its own file rather than by editing the shared one so a
+        # package has to NAME its exemption to get it, and a reader of the
+        # recipe sees @CFLAGS_RSP_MUSL@ and goes looking for why.
+        # A meson build has nowhere to put a response file. Every other build
+        # system in this tree takes flags as a VAR=value argument or a -D, so
+        # naming @CFLAGS_RSP_<PKG>@ is enough; meson takes them only from the
+        # cross file, and the cross file is per LAYER. So an exempt meson
+        # package gets a cross file of its own, identical but for the two flag
+        # lists, and names it instead.
+        #
+        # This is not hypothetical. gjs carried a four-scheme CFI exemption for
+        # its SpiderMonkey JIT while still pointing at the shared file, so
+        # cflags-gjs.rsp was written every run and read by nothing: gjs was
+        # built with the full scheme set and the manifest said otherwise.
+        # tools/gates/exceptions-live.py exists so that cannot happen quietly
+        # again.
+        cross_template = (REPO / "share" / "cross.ini.in").read_text()
+        for package in toolchain.exceptions:
+            token = package.upper().replace("-", "_")
+            cflags = recipe_out / f"cflags-{package}.rsp"
+            ldflags = recipe_out / f"ldflags-{package}.rsp"
+            cflags.write_text("\n".join(toolchain.cflags(package)) + "\n")
+            ldflags.write_text("\n".join(toolchain.ldflags(package)) + "\n")
+            local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
+            local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
+
+            # Only the cross file varies per package: the native file below
+            # carries no flags at all, so there is nothing in it for an
+            # exception to drop.
+            cross = recipe_out / f"cross-{package}.ini"
+            cross.write_text(
+                substitute(cross_template,
+                           dict(local, **toolchain.meson_subs(package)))
+            )
+            local[f"@CROSS_INI_{token}@"] = str(cross)
+
         member_dirs = []
         members = []
         for package in layer.get("members") or []:
@@ -319,13 +464,30 @@ def main():
         bundle = compose_lib.compose(
             name, members, f"../recipes/{previous}/build.yaml" if previous else None
         )
+        if prebuilt and layer == layers[-1]:
+            # pm cannot consume an existing archive as a graph dependency (C6).
+            # Put the same closure where pm would have copied that dependency,
+            # before either sysroot unpack runs. Only the image loses its edge;
+            # ordinary builds keep the authored chain unchanged.
+            staged = recipe_out / prebuilt.name
+            shutil.copy2(prebuilt, staged)
+            bundle["dependencies"] = []
+            bundle["steps"][0]["run"][0:0] = [
+                "mkdir -p /dest/deps",
+                f"cp @RECIPE@/{prebuilt.name} /dest/deps/{prebuilt.name}",
+            ]
         # The composer emits @RECIPE@ in its own shared steps; members were
         # already rendered above.
         text = substitute(yaml_dump(bundle), local)
         (recipe_out / "build.yaml").write_text(text)
 
-        # One native file per layer, from share/native.ini.in. Every meson
-        # package in the layer points at it; nothing else carries flags.
+        # One pair per layer. Every meson package in the layer names both:
+        # cross.ini carries the toolchain and the [host_machine] section that
+        # stops meson running what it compiles (C7), native.ini carries the
+        # build-machine compiler a cross build also needs and deliberately no
+        # flags. Nothing else in the layer carries flags.
+        cross = (REPO / "share" / "cross.ini.in").read_text()
+        (recipe_out / "cross.ini").write_text(substitute(cross, local))
         native = (REPO / "share" / "native.ini.in").read_text()
         (recipe_out / "native.ini").write_text(substitute(native, local))
 
@@ -346,32 +508,18 @@ def main():
             "\n".join(toolchain.ldflags()) + "\n"
         )
 
-        # A separate response file per exempt package. manifest/toolchain.yaml
-        # lists what each drops and why -- musl cannot take --sysroot (it is
-        # creating it), -D_FORTIFY_SOURCE (circular against its own __*_chk),
-        # or CFI (its loader calls functions before any CFI runtime exists).
-        #
-        # Emitted as its own file rather than by editing the shared one so a
-        # package has to NAME its exemption to get it, and a reader of the
-        # recipe sees @CFLAGS_RSP_MUSL@ and goes looking for why.
-        for package in toolchain.exceptions:
-            token = package.upper().replace("-", "_")
-            cflags = recipe_out / f"cflags-{package}.rsp"
-            ldflags = recipe_out / f"ldflags-{package}.rsp"
-            cflags.write_text("\n".join(toolchain.cflags(package)) + "\n")
-            ldflags.write_text("\n".join(toolchain.ldflags(package)) + "\n")
-            local[f"@CFLAGS_RSP_{token}@"] = f"@{cflags}"
-            local[f"@LDFLAGS_RSP_{token}@"] = f"@{ldflags}"
-
         stage_support(recipe_out, member_dirs, local)
 
         # A surviving @TOKEN@ means a recipe named something sources.lock or
         # the substitution map does not define. Caught here, it is a one-line
         # generation error; caught later it is an ENOENT deep inside a build.
-        residual = sorted({
-            word for word in text.split()
-            if word.startswith("@") and word.endswith("@") and len(word) > 2
-        })
+        # Matched anywhere in the text, not just as a standalone word: the
+        # placeholders that matter arrive as `CFLAGS=@CFLAGS_RSP_MUSL@` and
+        # `-C@RECIPE@/x`, which a word-boundary test walks straight past -- it
+        # did, and the build died in musl's configure instead of here. The
+        # pattern cannot collide with the `@/path/to/file.rsp` form clang
+        # expands, because that has a slash where this needs a closing @.
+        residual = sorted(set(re.findall(r"@[A-Z0-9_]{2,}@", text)))
         if residual:
             raise SystemExit(
                 f"configure: {name}: unsubstituted placeholders: "
@@ -379,6 +527,24 @@ def main():
             )
 
         previous = name
+
+    # Record the settings, because `./do build` re-generates before it builds
+    # and would otherwise do so with the defaults -- producing, from a tree
+    # configured for aarch64 and version 20260918.7, a build for x86_64 and
+    # version 0. Nothing in the generated tree says which architecture it is
+    # for, so the substitution would simply be wrong and the build would
+    # succeed.
+    remembered = [f"--arch={args.arch}", f"--channel={args.channel}",
+                  f"--version={args.version}", f"--ota-port={args.ota_port}"]
+    if args.update_url:
+        remembered.append(f"--update-url={args.update_url}")
+    if args.allow_unresolved:
+        remembered.append("--allow-unresolved")
+    if args.mirror:
+        remembered.append(f"--mirror={args.mirror}")
+    if prebuilt:
+        remembered.append(f"--prebuilt-packages={prebuilt}")
+    (out / "configure.args").write_text("\n".join(remembered) + "\n")
 
     print(f"configure: generated {len(layers)} layer bundle(s) into {recipes_out}")
     if unresolved:

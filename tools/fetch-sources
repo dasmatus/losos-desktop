@@ -140,8 +140,17 @@ def main():
             lines = fresh.splitlines()
             for i, line in enumerate(lines):
                 if line.startswith(f"{key}:"):
-                    for j in range(i + 1, min(i + 6, len(lines))):
-                        if lines[j].strip().startswith("sha256:"):
+                    # Scan to the next top-level key rather than a fixed number
+                    # of lines. A fixed window silently loses a hash the moment
+                    # an entry grows a comment -- the fetch reports the key as
+                    # pinned, because it was, and the write lands nowhere. That
+                    # cost a full re-fetch to notice, since the only symptom is
+                    # `sha256: TODO` still sitting there afterwards.
+                    for j in range(i + 1, len(lines)):
+                        stripped = lines[j].strip()
+                        if lines[j] and not lines[j][0].isspace() and stripped:
+                            break
+                        if stripped.startswith("sha256:"):
                             indent = lines[j][: len(lines[j]) - len(lines[j].lstrip())]
                             lines[j] = f"{indent}sha256: {digest}"
                             break
