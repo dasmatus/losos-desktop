@@ -93,10 +93,10 @@ fetches. It serves two things from this project's GHCR namespace:
   path through it against a fake registry; the tests are in `proxy/test/`.
 - **Updates.** `/updates/<channel>/<arch>/<file>` serves a file of
   `images:<channel>-<arch>`, which CI's publish job moves to each release
-  that passed verification. Setting `losos.update.baseUrl` to
-  `<proxy>/updates/<channel>/<arch>/` points an image's sysupdate transfers
-  there. Nothing sets it yet, so a published image still updates from the
-  GitHub release, the option's default.
+  that passed verification. CI sets `losos.update.baseUrl` to
+  `<proxy>/updates/<channel>/<arch>/`, so sysupdate fetches manifests and
+  images through the proxy. The GitHub nightly release is announcement-only:
+  GitHub rejects release assets of 2 GiB or larger.
 
 To use it for a build:
 
@@ -122,11 +122,12 @@ What has to be set up once, outside the repository:
    stored as the secret `NIX_CACHE_SIGNING_KEY`; its public half, from `nix
    key convert-secret-to-public`, as the variable `NIX_CACHE_PUBLIC_KEY`.
 4. **`LOSOS_PROXY_URL`**, the deployment's URL without a trailing slash, as a
-   repository variable. This lets CI and local builds fetch paths through the
-   proxy alongside cache.nixos.org. CI uploads its signed cache paths to GHCR
-   whenever `NIX_CACHE_SIGNING_KEY` is configured, even if this URL is unset;
-   the proxy can serve them once configured. Images update from the GitHub
-   release as before.
+   repository variable. CI requires it and uses it both for Nix cache
+   substitutions and as the base of each image's update URL. Flake evaluation
+   reads this environment variable, so CI uses `--impure` when building,
+   checking and collecting the release. CI uploads its signed cache paths to
+   GHCR whenever `NIX_CACHE_SIGNING_KEY` is configured, even if this URL is
+   unset for a non-CI build; the proxy can serve them once configured.
 
 Before setting `LOSOS_PROXY_URL`, check the public deployment without a
 Vercel login: `/nix-cache-info` must return the cache metadata, an absent

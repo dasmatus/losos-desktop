@@ -47,7 +47,7 @@ trap 'rm -rf "$work"' EXIT
 
 # Every fixed-output derivation in the closure, as "<drv> <method> <hash>".
 # A fixed output has exactly one output, `out`, so the lists below line up.
-nix derivation show -r "$installable" \
+nix derivation show --impure -r "$installable" \
   | jq -r '(.derivations // .) | to_entries[]
       | select(.value.outputs.out.hash? != null)
       | "\(.key) \(.value.outputs.out.method // "flat") \(.value.outputs.out.hash)"' \

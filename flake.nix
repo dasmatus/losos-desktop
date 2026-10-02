@@ -8,7 +8,7 @@
 #
 #   nix build                      the disk image (.#image)
 #   nix build .#installer          the same image, booting the installer
-#   nix build .#release            what a GitHub release uploads, with SHA256SUMS
+#   nix build .#release            the files CI publishes through the proxy
 #   nix run .#vm                   boot the image in QEMU with UEFI firmware
 #   nix build .#pm-payloads.<pkg>  any nixpkgs package, static, for a pm build file
 #   nix flake check                evaluate both architectures, test losos-security,
@@ -52,6 +52,8 @@
         in
         "${lib.substring 0 8 d}.${lib.substring 8 6 d}";
 
+      proxyUrl = builtins.getEnv "LOSOS_PROXY_URL";
+
       mkSystem =
         system:
         lib.nixosSystem {
@@ -63,6 +65,15 @@
               nixpkgs.hostPlatform = system;
               losos.version = lib.mkDefault version;
             }
+            (
+              { config, ... }:
+              lib.optionalAttrs (proxyUrl != "") {
+                # The image's update source and the artifact published to the
+                # proxy must agree; the URL is a repository variable in CI.
+                losos.update.baseUrl = lib.mkDefault
+                  "${lib.removeSuffix "/" proxyUrl}/updates/${config.losos.channel}/${archOf system}/";
+              }
+            )
           ];
         };
 
