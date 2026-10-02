@@ -52,7 +52,7 @@
     # then count it as a regular user and homed's first-boot wizard only runs
     # when no regular user exists. The users it names are gdm's greeters, at
     # 60578 and up, which is the greeter range systemd itself reserves
-    # (60578-61183) and classifies as neither system nor regular. The warning's
+    # (60578-60705) and classifies as neither system nor regular. The warning's
     # threshold is coarser than userdb's, so it is silenced here -- and the VM
     # test's homectl step is what would notice if that reading were wrong.
     silenceHighSystemUsers = true;

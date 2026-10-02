@@ -102,7 +102,12 @@
           # homed's first-boot wizard runs only while no regular user exists,
           # so nothing the image ships -- gdm's greeters included -- may count
           # as one. accounts.nix silences a NixOS warning on that reading.
-          machine.fail("userdbctl user --disposition=regular --no-legend | grep -q .")
+          # userdbctl also prints "begin/end systemd-homed users" marker rows
+          # for the UID ranges a filter covers, and homed's range is regular,
+          # so without --boundaries=no the output is never empty.
+          machine.fail(
+              "userdbctl user --disposition=regular --no-legend --boundaries=no | grep -q ."
+          )
           machine.succeed(
               "NEWPASSWORD=correct-horse homectl create alice --storage=luks "
               "--disk-size=256M --member-of=wheel --enforce-password-policy=no"
@@ -113,7 +118,12 @@
           machine.succeed("getent passwd alice")
 
       with subtest("sysupdate sees the installed version"):
-          machine.succeed("${nodes.machine.systemd.package}/lib/systemd/systemd-sysupdate list | grep -q '1'")
+          # The test VM has no route to the release feed, and without
+          # --offline sysupdate fails on the download before listing what is
+          # installed.
+          machine.succeed(
+              "${nodes.machine.systemd.package}/lib/systemd/systemd-sysupdate --offline list | grep -q '1'"
+          )
 
       with subtest("pm is installed as the system manager"):
           machine.succeed("pm --help")
