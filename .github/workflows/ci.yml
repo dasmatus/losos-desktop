@@ -253,6 +253,12 @@ jobs:
         with: { persist-credentials: false }
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test
+      # The tests are TypeScript run by node itself, which strips the types
+      # from 22.6 on; the runner's own node may be older.
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm run typecheck
       # Builds the module the handler tests load, then runs them.
       - run: npm test
 
