@@ -13,19 +13,19 @@ default:
 
 # The disk image, or any other flake output (`just build installer`).
 build target="image":
-  nix build -L ".#{{target}}"
+  nix build --impure -L ".#{{target}}"
 
 # Evaluates both architectures, runs losos-security's tests, and on a builder
 # with KVM boots the image in a VM.
 check:
-  nix flake check -L
+  nix flake check --impure -L
 
 fmt:
   nix fmt
 
 # Boot the image in QEMU with UEFI firmware.
 vm:
-  nix run .#vm
+  nix run .#vm --impure
 
 # Builds pm's plugins as WebAssembly components into plugins/dist, for a pm
 # installed outside the image. The image builds its own copies in
