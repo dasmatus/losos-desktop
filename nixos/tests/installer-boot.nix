@@ -3,7 +3,17 @@
 { self }:
 
 let
-  installerIso = self.nixosConfigurations."losos-desktop-x86_64".config.system.build.installerIso;
+  inherit (self.nixosConfigurations."losos-desktop-x86_64".config.system.build) installerSystem;
+
+  # The released ISO has no backdoor shell, which is how the test driver runs
+  # every command, so booting it as is leaves the driver waiting on hvc0 until
+  # the build times out. The same live system with nixpkgs' test
+  # instrumentation added is booted instead: it is still an ISO, still started
+  # by the firmware, with the same initrd mounts and the same tty1 service.
+  installerIso =
+    (installerSystem.extendModules {
+      modules = [ "${installerSystem.pkgs.path}/nixos/modules/testing/test-instrumentation.nix" ];
+    }).config.system.build.isoImage;
 in
 {
   name = "losos-desktop-installer-boot";
