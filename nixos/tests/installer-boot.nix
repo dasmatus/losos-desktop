@@ -1,9 +1,11 @@
-# Boot the installer from its actual ISO under UEFI, including the initrd
-# mounts and the service that owns tty1.
+# Boot the installer from its ISO under UEFI, including the initrd mounts and
+# the service that owns tty1. The ISO is the shipping one plus the driver's
+# backdoor service (installerIsoTest): with the node booted from a CD-ROM
+# rather than directly, nothing else puts a shell on hvc0 for the driver.
 { self }:
 
 let
-  installerIso = self.nixosConfigurations."losos-desktop-x86_64".config.system.build.installerIso;
+  installerIso = self.nixosConfigurations."losos-desktop-x86_64".config.system.build.installerIsoTest;
 in
 {
   name = "losos-desktop-installer-boot";

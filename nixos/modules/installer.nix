@@ -125,5 +125,15 @@ in
   system.build = {
     installerSystem = installer;
     installerIso = installer.config.system.build.isoImage;
+    # The same medium with the test driver's backdoor shell added. The driver
+    # talks to the guest over hvc0 through backdoor.service, which only the
+    # test instrumentation provides; a VM booted from the shipping ISO has an
+    # autologin getty there instead, so the driver waits for the shell's ready
+    # line until the global timeout. Never shipped: only the installer-boot
+    # check builds it.
+    installerIsoTest =
+      (installer.extendModules {
+        modules = [ "${modulesPath}/testing/test-instrumentation.nix" ];
+      }).config.system.build.isoImage;
   };
 }
