@@ -13,7 +13,7 @@ in
     { ... }:
     {
       virtualisation = {
-        directBoot = false;
+directBoot.enable = false;
         mountHostNixStore = false;
         useEFIBoot = true;
         qemu.options = [
