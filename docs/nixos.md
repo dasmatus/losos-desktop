@@ -1,6 +1,6 @@
 # LosOS Desktop on NixOS
 
-`flake.nix` and `nixos/` are the operating system. It is a GNOME desktop that
+`flake.nix` and `nixos/` are the operating system. It is a derisk desktop that
 uses systemd for everything it can, installs as an image, updates with
 `systemd-sysupdate`, and makes every user a `systemd-homed` LUKS volume.
 nixpkgs 26.05, pinned in `flake.lock`, provides the stock glibc package set,
@@ -417,8 +417,15 @@ repart created it with would hold the right bytes and never be found.
   System panel to Blueprint; neither applies. The factory reset is reachable
   through `systemctl start factory-reset.target` and the Varlink API, and the
   security report answers on the bus, but neither has a button in Settings.
-- **Wi-Fi.** As in the pm tree: networkd handles wired links, and GNOME's
-  network panel is inert without NetworkManager. `iwd` would be the smallest
+- **derisk runs nested, inside cage.** derisk has no DRM/KMS backend yet, so
+  gdm's derisk session starts `cage -s -- derisk session --execute` and derisk
+  draws in cage's one fullscreen window (`nixos/modules/desktop.nix`). derisk
+  also has no polkit agent, no layer-shell or XWayland yet, and no UI for
+  Bluetooth or power profiles, so those are left off. `run0` from a terminal
+  still asks polkit on the terminal. The gnome-control-center patches below
+  have no Settings app to go into any more.
+- **Wi-Fi.** As in the pm tree: networkd handles wired links, and nothing in
+  the session configures Wi-Fi. `iwd` would be the smallest
   non-systemd addition that fixes it.
 - **systemd-boot updates.** `systemd-boot-update.service` copies a new
   bootloader from `/usr/lib/systemd/boot`, which NixOS does not have. The

@@ -1,10 +1,8 @@
 # One network stack, and it is systemd's.
 #
 # networkd configures links, resolved answers DNS (with DNS-over-TLS and mDNS,
-# so no avahi), timesyncd keeps the clock. GNOME's network panel talks to
-# NetworkManager and is therefore inert here; that trade is carried over from
-# the pm tree unchanged, and so is the cost that there is no Wi-Fi
-# configuration UI.
+# so no avahi), timesyncd keeps the clock. That trade is carried over from the pm tree
+# unchanged, and so is the cost that there is no Wi-Fi configuration UI.
 { lib, ... }:
 
 {
@@ -12,7 +10,7 @@
     useNetworkd = true;
     useDHCP = false;
 
-    # GNOME turns NetworkManager on by default. Two daemons fighting over the
+    # GNOME turned NetworkManager on by default, and a desktop module still may. Two daemons fighting over the
     # same links is the one outcome worse than either alone.
     networkmanager.enable = lib.mkForce false;
 
