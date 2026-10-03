@@ -3,7 +3,23 @@
 { self }:
 
 let
-  installerIso = self.nixosConfigurations."losos-desktop-x86_64".config.system.build.installerIso;
+  # The test driver talks to a guest only through the backdoor shell that
+  # nixpkgs' test-instrumentation.nix starts on hvc0. A test node gets that
+  # module for free, but the ISO is a system of its own, evaluated in
+  # installer.nix, so without it every machine.succeed waits for a shell that
+  # never answers until the driver's global timeout kills the run. The module
+  # is added to that system here, not to the medium that ships.
+  installerIso =
+    (self.nixosConfigurations."losos-desktop-x86_64".config.system.build.installerSystem.extendModules {
+      modules = [
+        (
+          { modulesPath, ... }:
+          {
+            imports = [ "${modulesPath}/testing/test-instrumentation.nix" ];
+          }
+        )
+      ];
+    }).config.system.build.isoImage;
 in
 {
   name = "losos-desktop-installer-boot";
