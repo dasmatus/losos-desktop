@@ -33,8 +33,7 @@ rustPlatform.buildRustPackage {
     hash = "sha256-jck7Egtm6yFYRW2HpE8v9U7bEp1XbTU7uO0+aarMBqo=";
   };
 
-  # Not yet computed: the first build prints the real hash after "got:".
-  cargoHash = lib.fakeHash;
+  cargoHash = "sha256-hxwZSokE8s9J26+BORJMka4aQx+UoYvhcpLwHjLDg+0=";
 
   # `host` is the compositor; without it the binary has only the headless
   # commands.
