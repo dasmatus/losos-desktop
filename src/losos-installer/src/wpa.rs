@@ -294,7 +294,10 @@ pub fn parse_scan_results(reply: &str) -> Vec<Network> {
             signal,
             security: Security::from_flags(flags),
         };
-        match networks.iter_mut().find(|n| n.ssid == network.ssid) {
+        match networks
+            .iter_mut()
+            .find(|n| n.ssid == network.ssid && n.security == network.security)
+        {
             Some(known) if known.signal < network.signal => *known = network,
             Some(_) => {}
             None => networks.push(network),
