@@ -3,6 +3,7 @@
 final: _prev: {
   pm = final.callPackage ./pm.nix { };
   pm-plugins = final.callPackage ./pm-plugins.nix { };
+  derisk = final.callPackage ./derisk.nix { };
   losos-installer = final.callPackage ./losos-installer.nix { };
   losos-security = final.callPackage ./losos-security.nix { };
   losos-swap = final.callPackage ./losos-swap.nix { };

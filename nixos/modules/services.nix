@@ -37,9 +37,10 @@
     "/var/lib/confexts".d.mode = "0755";
   };
 
-  # The operating-system security report, on the system bus, for GNOME's
-  # Privacy & Security panel: TPM, disk encryption, verity, kernel lockdown,
-  # module signing, IOMMU, the hardening sysctls.
+  # The operating-system security report, on the system bus, for a settings
+  # panel to show, as GNOME's Privacy & Security panel did: TPM, disk
+  # encryption, verity, kernel lockdown, module signing, IOMMU, the hardening
+  # sysctls.
   #
   # Bus-activated, not enabled. The only thing that asks for it is the panel
   # opening its security dialog, and a report that takes milliseconds does not

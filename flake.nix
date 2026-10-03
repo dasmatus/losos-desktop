@@ -1,6 +1,6 @@
 # LosOS Desktop as NixOS.
 #
-# A GNOME desktop that uses systemd for everything it can, installs as an
+# A derisk desktop that uses systemd for everything it can, installs as an
 # image, updates with systemd-sysupdate and makes every user a systemd-homed
 # LUKS volume, written as a NixOS configuration. It replaced a from-source
 # distribution of pm recipes. docs/nixos.md maps the old pieces to the new
@@ -14,7 +14,7 @@
 #   nix flake check                evaluate both architectures, test losos-security
 #                                  and losos-installer, and (with KVM) boot the image
 {
-  description = "LosOS Desktop: a systemd-native, image-based GNOME desktop on NixOS";
+  description = "LosOS Desktop: a systemd-native, image-based derisk desktop on NixOS";
 
   inputs = {
     # The channel tarball rather than github:NixOS/nixpkgs. It is the same
@@ -111,6 +111,7 @@
           uki = requireProxy build.uki;
           toplevel = build.toplevel;
           inherit (ours)
+            derisk
             pm
             pm-plugins
             losos-installer
@@ -144,6 +145,7 @@
           losos-installer = self.packages.${system}.losos-installer;
           losos-security = self.packages.${system}.losos-security;
           losos-swap = self.packages.${system}.losos-swap;
+          derisk = self.packages.${system}.derisk;
           pm = self.packages.${system}.pm;
           pm-plugins = self.packages.${system}.pm-plugins;
         }
