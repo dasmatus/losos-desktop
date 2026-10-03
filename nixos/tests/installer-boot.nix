@@ -3,8 +3,7 @@
 { self }:
 
 let
-  installerIso =
-    self.nixosConfigurations."losos-desktop-x86_64".config.system.build.installerIso;
+  installerIso = self.nixosConfigurations."losos-desktop-x86_64".config.system.build.installerIso;
 in
 {
   name = "losos-desktop-installer-boot";
@@ -13,7 +12,7 @@ in
     { ... }:
     {
       virtualisation = {
-directBoot.enable = false;
+        directBoot.enable = false;
         mountHostNixStore = false;
         useEFIBoot = true;
         qemu.options = [

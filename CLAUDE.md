@@ -93,8 +93,10 @@ cited.
 `.github/workflows/ci.yml` is the only workflow. `flake` builds `.#release`
 for each architecture within a time budget and pushes project-built paths to
 the GHCR cache. When
-a build completes it checks formatting and the flake, and outside a pull
-request hands the release to `push` as an artifact. `push` uploads it to
+a build completes it checks the flake, and outside a pull request hands the
+release to `push` as an artifact. `format` runs `nix fmt -- --ci` on its own
+in a few minutes, so run `nix fmt` before pushing any `.nix` edit, including
+one made in GitHub's web editor. `push` uploads it to
 GHCR. It is the only job holding `packages: write` beside release files, and
 it checks out no code. `publish` replaces the `nightly` GitHub release with
 the installer ISOs and moves the `images:nightly-<arch>` tag that `proxy/`
