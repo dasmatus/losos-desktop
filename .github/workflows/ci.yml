@@ -31,8 +31,8 @@ jobs:
   # hours, so the build has a time budget. Whatever finished goes to the cache
   # whether or not the rest did, and the next run starts from there. A run
   # that ran out of time with nothing failed passes with a warning; a failed
-  # derivation turns it red. Once a build completes, the job checks formatting
-  # and the flake, and hands the release to `push` as an artifact.
+  # derivation turns it red. Once a build completes, the job checks the flake
+  # and hands the release to `push` as an artifact.
   flake:
     strategy:
       fail-fast: false
@@ -160,9 +160,8 @@ jobs:
             --repository "ghcr.io/${GITHUB_REPOSITORY,,}/nix-cache" \
             --secret-key-file "$RUNNER_TEMP/cache.sec"
 
-      - name: Check formatting
-        if: steps.build.outputs.complete == 'true'
-        run: nix fmt -- --ci
+      # Formatting is checked by `format`, not here: run after the build, a
+      # misplaced space failed a run only once hours of building had finished.
       - name: Check the flake
         if: steps.build.outputs.complete == 'true'
         run: nix flake check --impure -L
@@ -240,6 +239,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
+  # nixfmt over the tree, on its own so a formatting slip shows within minutes
+  # of a push. It needs only the formatter from cache.nixos.org, builds
+  # nothing, and neither waits for nor holds back the build or the release;
+  # `ci` still requires it. `nix fmt` locally rewrites what this rejects.
+  format:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      NIX_VERSION: "2.34.8"
+    steps:
+      - name: Install Nix
+        run: |
+          curl -sSfL --proto '=https' \
+            "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
+          sh install-nix --daemon --yes --no-channel-add
+          echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
+          sudo systemctl restart nix-daemon
+          echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Check formatting
+        run: |
+          if ! nix fmt -- --ci; then
+            git diff
+            echo "::error::Run \`nix fmt\` and commit the result."
+            exit 1
+          fi
+
   # The GHCR proxy: its decisions in Rust, then the handler against a fake
   # registry. Nothing is deployed from here.
   proxy:
@@ -265,7 +292,7 @@ jobs:
   # The one check branch protection looks for, so a skipped or cancelled job
   # never reads as green.
   ci:
-    needs: [flake, proxy]
+    needs: [flake, format, proxy]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -273,9 +300,11 @@ jobs:
       - name: Require every job
         env:
           FLAKE: ${{ needs.flake.result }}
+          FORMAT: ${{ needs.format.result }}
           PROXY: ${{ needs.proxy.result }}
         run: |
           test "$FLAKE" = success
+          test "$FORMAT" = success
           test "$PROXY" = success
 
   # Replaces the nightly GitHub release and moves the channel's tag in GHCR.
