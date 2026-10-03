@@ -21,7 +21,7 @@ decisions.
 | Job | Component |
 |---|---|
 | Boot | `systemd-boot`, `systemd-stub` (UKI), `bless-boot`, `boot-check-no-failures` |
-| Installation | the installer UKI runs `systemd-repart` with `CopyBlocks=` onto the target disk |
+| Installation | a live ISO with `wpa_supplicant` and a terminal installer runs `systemd-repart` for the ESP and slot A, and `systemd-sysupdate` to fill them from the channel |
 | First boot | `systemd-repart` in the initrd creates slot B, root, `/home` and swap |
 | Read-only `/usr` | the Nix store on a dm-verity partition, with its root hash on the UKI's command line; `systemd-sysext` and `systemd-confext` add layers on top |
 | Updates | `systemd-sysupdate` with A/B slots, and `fwupd` for firmware |
@@ -42,11 +42,12 @@ evaluation.
 
 ```sh
 nix build --impure              # the disk image; dd it to a disk and boot
-nix build .#installer --impure  # the same image, booting the installer by default
+nix build .#installer --impure  # the installer ISO: Wi-Fi, a disk, sysupdate
 nix build .#release --impure    # what a release uploads, with SHA256SUMS
 nix run .#vm --impure           # boot the image in QEMU with UEFI firmware
-nix flake check --impure        # both architectures, losos-security's tests, and the
-                                # VM boot test on a builder with KVM
+nix flake check --impure        # both architectures, losos-security's and
+                                # losos-installer's tests, and the VM boot test
+                                # on a builder with KVM
 ```
 
 `just` has short names for the same commands. `just plugins` builds pm's
@@ -65,6 +66,10 @@ nixpkgs provides the packages. This repository provides the rest:
   the system bus (`docs/security-report.md`).
 - `src/losos-swap`, which writes a swap partition definition sized to the
   machine's RAM for `systemd-repart`.
+- `src/losos-installer`, the installer ISO's terminal interface: it joins a
+  Wi-Fi network through `wpa_supplicant`, then partitions the chosen disk with
+  `systemd-repart` and installs the channel's newest release with
+  `systemd-sysupdate`.
 - `plugins/`, pm plugins that let pm build files call `nix` and the image
   tools.
 - `proxy/`, the GHCR binary cache and update proxy.

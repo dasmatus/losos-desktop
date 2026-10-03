@@ -278,11 +278,12 @@ jobs:
           test "$FLAKE" = success
           test "$PROXY" = success
 
-  # Replaces the nightly GitHub release announcement and moves the channel's
-  # tag in GHCR. sysupdate reads the files through proxy/ because GitHub
-  # releases reject assets of 2 GiB or larger. Only an architecture that
-  # finished its build and passed its flake check reached GHCR, so that is
-  # the gate.
+  # Replaces the nightly GitHub release and moves the channel's tag in GHCR.
+  # sysupdate reads the OS's files through proxy/ because GitHub releases
+  # reject assets of 2 GiB or larger, so the release carries only the
+  # installer ISOs, which are what a person downloads by hand. Only an
+  # architecture that finished its build and passed its flake check reached
+  # GHCR, so that is the gate.
   publish:
     needs: [push]
     if: always() && needs.push.result == 'success'
@@ -339,13 +340,34 @@ jobs:
             oras tag "$(cat "$ref")" "nightly-$arch"
           done
 
-      # The release tag stays the channel name for the announcement; update
-      # images come from the channel tags in GHCR via proxy/.
+      # The release tag stays the channel name; update images come from the
+      # channel tags in GHCR via proxy/. The installer ISOs are attached with
+      # their own lines of SHA256SUMS. The tag is deleted with the release and
+      # made again at this commit, so it names the source the ISOs were built
+      # from. An ISO at GitHub's limit fails the step rather than publishing a
+      # release without it.
       - name: Publish to the channel release
         if: steps.pulled.outputs.any == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete nightly --repo "$GITHUB_REPOSITORY" --yes || true
-          gh release create nightly --repo "$GITHUB_REPOSITORY" \
-            --title "LosOS nightly" --notes "Rolling nightly channel." --prerelease
+          shopt -s nullglob
+          isos=(release/*-installer.iso)
+          if [ ${#isos[@]} = 0 ]; then
+            echo "::error::The release has no installer ISO."
+            exit 1
+          fi
+          for iso in "${isos[@]}"; do
+            if [ "$(stat -c %s "$iso")" -ge $((2 * 1024 * 1024 * 1024)) ]; then
+              echo "::error::$iso is 2 GiB or larger, which a GitHub release rejects."
+              exit 1
+            fi
+          done
+          mkdir -p assets
+          mv -t assets "${isos[@]}"
+          grep -- '-installer\.iso$' release/SHA256SUMS > assets/SHA256SUMS
+          gh release delete nightly --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create nightly --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "LosOS nightly" --prerelease \
+            --notes "Rolling nightly channel. Write an installer ISO to a USB stick and boot it with UEFI; it installs the newest nightly over the network." \
+            assets/*
