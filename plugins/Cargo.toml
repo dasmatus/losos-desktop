@@ -14,7 +14,7 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
-wit-bindgen = { version = "0.51.0", default-features = false, features = ["macros", "realloc"] }
+wit-bindgen = { version = "0.62.0", default-features = false, features = ["macros", "realloc"] }
 
 # wasmtime compiles a plugin on every pm invocation that consults it, so size is
 # latency rather than disk. These are pm's own plugin profile settings.

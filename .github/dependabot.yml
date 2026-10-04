@@ -23,7 +23,6 @@ updates:
       - "rust"
     commit-message:
       prefix: "deps(cargo)"
-      include: "scope"
     cooldown:
       default-days: 3
     groups:
@@ -52,7 +51,6 @@ updates:
       - "javascript"
     commit-message:
       prefix: "deps(npm)"
-      include: "scope"
     cooldown:
       default-days: 3
     groups:
@@ -81,7 +79,6 @@ updates:
       - "ci"
     commit-message:
       prefix: "deps(github-actions)"
-      include: "scope"
     cooldown:
       default-days: 3
     groups:
