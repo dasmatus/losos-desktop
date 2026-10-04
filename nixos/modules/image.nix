@@ -155,6 +155,13 @@ in
       ukiPath = "/EFI/Linux/${ukiFile}";
     };
 
+    # systemd 261's repart hands mkfs.erofs the image's 512-byte sector size
+    # as the filesystem block size. libblkid cannot identify an erofs with
+    # 512-byte blocks, so udev never learns /dev/mapper/usr holds a
+    # filesystem, marks it SYSTEMD_READY=0, and the initrd waits out the
+    # device with /usr unmounted. A later -b wins over repart's own.
+    mkfsOptions.erofs = [ "-b4096" ];
+
     partitions = {
       ${partitionIds.esp} = {
         contents = {

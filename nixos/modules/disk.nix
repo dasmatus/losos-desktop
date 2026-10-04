@@ -144,6 +144,22 @@ in
     swap /dev/disk/by-partlabel/losos-swap /dev/urandom swap,nofail
   '';
 
+  # udev probes /dev/mapper/swap when the mapping appears, before
+  # systemd-makefs has written the swap signature, and on systemd 261 no
+  # change event follows the mkswap. A CRYPT- device with no filesystem on
+  # record is SYSTEMD_READY=0 by 99-systemd.rules, so dev-mapper-swap.device
+  # never came up and swap timed out. Asking udev to look again once the
+  # signature is there is the event that went missing. A drop-in shipped as a
+  # package, because a whole unit here would shadow the one
+  # systemd-cryptsetup-generator writes, and systemd.services would also set
+  # PATH and hide the mkswap systemd-makefs runs.
+  systemd.packages = [
+    (pkgs.writeTextDir "lib/systemd/system/systemd-cryptsetup@swap.service.d/udev-change.conf" ''
+      [Service]
+      ExecStartPost=${config.systemd.package}/bin/udevadm trigger --settle --action=change /dev/mapper/swap
+    '')
+  ];
+
   # Naming the mapping here does two things: it activates /dev/mapper/swap, and
   # a swap line in fstab is what stops systemd-gpt-auto-generator activating
   # the raw partition underneath it.
