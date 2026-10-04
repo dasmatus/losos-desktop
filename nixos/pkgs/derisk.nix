@@ -19,21 +19,25 @@
   libgbm,
   seatd,
   libdrm,
+  linux-pam,
 }:
 
 rustPlatform.buildRustPackage {
   pname = "derisk";
-  version = "0.1.0-unstable-2026-10-03";
+  version = "0.1.0-unstable-2026-10-04";
 
   # fetchgit rather than fetchFromGitHub: a git clone reaches github.com from
   # hosts that cannot use its archive endpoint.
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
-    rev = "430611ef4dd2517d2e7960165da28fe2a3b475d2";
-    hash = "sha256-jck7Egtm6yFYRW2HpE8v9U7bEp1XbTU7uO0+aarMBqo=";
+    # dasmatus/derisk#11, the lock screen, until it merges. It builds against
+    # dasmatus/mcsapi#24, which ends a client's held press when the lock
+    # hides its window.
+    rev = "62d29848e79a0408f1026410aeaba7faf573ae18";
+    hash = "sha256-8ONmohN0jUamrYRAzyA+ZWlfyzdOfW9C4RSnC2SOtIE=";
   };
 
-  cargoHash = "sha256-hxwZSokE8s9J26+BORJMka4aQx+UoYvhcpLwHjLDg+0=";
+  cargoHash = "sha256-eNIhuAyEsmueeq4a8im0QNf0f95UaIZ5QwTWT2tL3bU=";
 
   # `host` is the compositor; without it the binary has only the headless
   # commands.
@@ -49,6 +53,8 @@ rustPlatform.buildRustPackage {
     libgbm
     seatd
     libdrm
+    # The lock screen checks passwords through PAM.
+    linux-pam
   ];
 
   # winit and glutin dlopen libwayland-client, libxkbcommon and libEGL at run
@@ -70,10 +76,6 @@ rustPlatform.buildRustPackage {
     install -Dm644 -t $out/lib/systemd/user data/systemd/user/*
     substituteInPlace $out/lib/systemd/user/derisk-agent.service \
       --replace-fail "ExecStart=derisk " "ExecStart=$out/bin/derisk "
-    # The graphical host owns the live agent socket; do not start the headless
-    # listener on the same pathname when the session target starts.
-    substituteInPlace $out/lib/systemd/user/derisk-session.target \
-      --replace-fail " derisk-agent.socket" ""
   '';
 
   meta = {
