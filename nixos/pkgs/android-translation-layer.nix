@@ -9,7 +9,9 @@
 # builds are called out below. Pinned to a commit and moved by hand, like pm
 # and derisk, because the fork moves fast.
 #
-# Open items (why it is not wired into the image yet):
+# Open items (why it is not wired into the image yet, and why meta.broken is
+# set: enabling losos.android fails fast with nixpkgs' broken-package error
+# instead of a late build failure):
 #   - Android build-tools: the meson build shells out to `dx` and `aapt` to
 #     dex and package the bundled framework. Those come from the Android SDK
 #     build-tools, which nixpkgs exposes only through androidenv; this recipe
@@ -19,6 +21,10 @@
 #     art_standalone) builds through a CMake orchestrator; whether every one
 #     of those substitutes or has to build from the vendored copy needs a
 #     build pass to confirm.
+#   - thirdparty/art_standalone/build: the pinned tree lacks this directory,
+#     which ART's Makefile includes, so art_standalone cannot build until it
+#     comes from another source input (the owner's call, tracked in
+#     docs/nixos.md).
 {
   lib,
   stdenv,
@@ -134,9 +140,9 @@ stdenv.mkDerivation {
     runHook preInstall
     cmake --build . --target install_all
     mkdir -p $out/lib/atl-runtime
-    cp -r lib/. $out/lib/atl-runtime/
+    cp -a lib/. $out/lib/atl-runtime/
     if [ -d bionic_build ]; then
-      find bionic_build -maxdepth 1 -name '*.so*' -exec cp -t $out/lib/atl-runtime/ {} +
+      find bionic_build -maxdepth 1 -name '*.so*' -exec cp -P -t $out/lib/atl-runtime/ {} +
     fi
     wrapProgram $out/bin/android-translation-layer \
       --prefix LD_LIBRARY_PATH : "$out/lib/art:$out/lib:$out/lib/java/dex/android_translation_layer/natives:$out/lib/atl-runtime:$out/lib/atl-runtime/art"
@@ -144,6 +150,11 @@ stdenv.mkDerivation {
   '';
 
   meta = {
+    # Both gaps in the header are unresolved, so this cannot build yet. Fail
+    # at evaluation with the standard broken-package error rather than deep
+    # into the build. Remove once the SDK build-tools and art_standalone/build
+    # are provided.
+    broken = true;
     description = "Translation layer that runs Android apps on a Linux desktop";
     homepage = "https://github.com/dasmatus/android_translation_layer";
     # Upstream is on GitLab under GPL-3.0; the bundled thirdparty carries its

@@ -441,7 +441,9 @@ repart created it with would hold the right bytes and never be found.
   lists the first: ATL's build shells out to the Android SDK build-tools
   (`dx`, `aapt`), which the recipe does not yet provide, and the pinned tree
   has no `thirdparty/art_standalone/build`, which ART's Makefile includes, so
-  it needs another source input. Because both options are off, `nix flake
+  it needs another source input. The package is marked `meta.broken`, so
+  enabling `losos.android` fails at evaluation with nixpkgs' broken-package
+  error until both are fixed. Because both options are off, `nix flake
   check` never realises the package, so the bring-up can land and mature
   without gating the image.
   **APKs run unsandboxed.** ATL runs an app's dex and native code as an
