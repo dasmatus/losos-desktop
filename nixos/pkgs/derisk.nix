@@ -19,7 +19,6 @@
   libgbm,
   seatd,
   libdrm,
-  linux-pam,
 }:
 
 rustPlatform.buildRustPackage {

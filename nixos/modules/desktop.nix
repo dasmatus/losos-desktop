@@ -12,7 +12,6 @@
 # exactly one fullscreen client. Drop cage from the session's Exec= once
 # derisk can drive a TTY on its own.
 {
-  config,
   lib,
   pkgs,
   ...
