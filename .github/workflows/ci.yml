@@ -16,6 +16,11 @@ on:
 
 # Read-only by default, because a pull request's run executes branch code. The
 # jobs that write ask for it themselves.
+#
+# Every action is pinned to a commit, with its tag beside it. A tag can be
+# moved by whoever controls the action's repository, and the jobs that run
+# these hold packages: write, contents: write and the cache signing key, so a
+# moved tag would be code running beside all three.
 permissions:
   contents: read
 
@@ -99,7 +104,7 @@ jobs:
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { persist-credentials: false }
 
       # Fixed-output inputs come from cache.nixos.org where it has them, with
@@ -138,7 +143,7 @@ jobs:
       # build it again. A pull request reads the cache and writes nothing.
       # Uploading is independent of NIX_CACHE_URL: the GHCR paths can be served
       # by the proxy later, even when CI is not configured to fetch through it.
-      - uses: oras-project/setup-oras@v1
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
         if: always() && github.event_name != 'pull_request'
       - name: Push what was built to the cache
         if: always() && github.event_name != 'pull_request'
@@ -179,7 +184,7 @@ jobs:
           nix eval --impure --raw ".#nixosConfigurations.losos-desktop-$arch.config.losos.version" \
             > "$RUNNER_TEMP/release/.version"
           echo "arch=$arch" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: steps.collect.outputs.arch != ''
         with:
           name: release-${{ steps.collect.outputs.arch }}
@@ -200,8 +205,8 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: oras-project/setup-oras@v1
-      - uses: actions/download-artifact@v4
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { pattern: "release-*", path: built }
 
       - name: Push the releases to GHCR
@@ -232,7 +237,7 @@ jobs:
             echo "- $arch: \`$(cat "refs/release-ref-$arch.txt")\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-refs
           path: refs/
@@ -257,7 +262,7 @@ jobs:
           echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { persist-credentials: false }
       - name: Check formatting
         run: |
@@ -276,13 +281,13 @@ jobs:
       run:
         working-directory: proxy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: { persist-credentials: false }
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test
       # The tests are TypeScript run by node itself, which strips the types
       # from 22.6 on; the runner's own node may be older.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: { node-version: 22 }
       - run: npm ci
       - run: npm run typecheck
@@ -322,8 +327,8 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: oras-project/setup-oras@v1
-      - uses: actions/download-artifact@v4
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         continue-on-error: true
         with: { name: release-refs, path: refs }
 
