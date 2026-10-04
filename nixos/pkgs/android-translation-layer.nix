@@ -70,9 +70,14 @@ stdenv.mkDerivation {
   };
 
   # Upstream assumes a Debian JDK path; use the JDK from nativeBuildInputs.
+  # It also installs into a prefix inside the build directory, and meson bakes
+  # that prefix into the binary as INSTALL_DATADIR, where it looks for
+  # share/atl/system/etc/fonts.xml. Point it at $out so the lookup survives
+  # the build directory being deleted.
   postPatch = ''
     substituteInPlace CMakeLists.txt \
-      --replace-fail '/usr/lib/jvm/java-21-openjdk-amd64' "$JAVA_HOME"
+      --replace-fail '/usr/lib/jvm/java-21-openjdk-amd64' "$JAVA_HOME" \
+      --replace-fail 'set(INSTALL_PREFIX "''${BUILD_DIR}/install")' "set(INSTALL_PREFIX \"$out\")"
   '';
 
   nativeBuildInputs = [
@@ -115,25 +120,26 @@ stdenv.mkDerivation {
   # bionic_translation, art_standalone, then ATL itself) through a top-level
   # CMake orchestrator, so the stock configure and build phases drive it. It
   # defines no install() rule: installing is its own `install_all` target,
-  # which runs `meson install` into a prefix hard-coded to the build
-  # directory's install/, ignoring CMAKE_INSTALL_PREFIX. The ART and bionic
-  # runtime that ATL dlopens at run time stays under the build directory's
-  # lib/ and bionic_build/ and never reaches that prefix. So install by hand:
-  # run the target, then carry both trees under $out and give the binary the
-  # same LD_LIBRARY_PATH the repo's own launcher assembles, because nothing
-  # puts those directories on its RUNPATH.
+  # which runs `meson install` into the orchestrator's INSTALL_PREFIX,
+  # ignoring CMAKE_INSTALL_PREFIX (postPatch makes that $out; the ART build
+  # installs there during the build, so lib/art and the framework files under
+  # lib/java/dex are already in place). The runtime that ATL dlopens at run
+  # time stays under the build directory's lib/ and bionic_build/. So install
+  # by hand: run the target, carry those trees under $out and give the binary
+  # the LD_LIBRARY_PATH the repo's own launcher assembles, because nothing
+  # puts those directories on its RUNPATH. $out/lib/art comes first: ATL finds
+  # api-impl.jar and framework-res.apk relative to the libart.so it loaded,
+  # and only that copy sits beside them.
   installPhase = ''
     runHook preInstall
     cmake --build . --target install_all
-    mkdir -p $out
-    cp -r install/. $out/
     mkdir -p $out/lib/atl-runtime
     cp -r lib/. $out/lib/atl-runtime/
     if [ -d bionic_build ]; then
       find bionic_build -maxdepth 1 -name '*.so*' -exec cp -t $out/lib/atl-runtime/ {} +
     fi
     wrapProgram $out/bin/android-translation-layer \
-      --prefix LD_LIBRARY_PATH : "$out/lib:$out/lib/java/dex/android_translation_layer/natives:$out/lib/atl-runtime:$out/lib/atl-runtime/art"
+      --prefix LD_LIBRARY_PATH : "$out/lib/art:$out/lib:$out/lib/java/dex/android_translation_layer/natives:$out/lib/atl-runtime:$out/lib/atl-runtime/art"
     runHook postInstall
   '';
 
