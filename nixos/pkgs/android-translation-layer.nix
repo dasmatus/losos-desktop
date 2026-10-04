@@ -63,6 +63,13 @@ stdenv.mkDerivation {
     fetchSubmodules = true;
   };
 
+  # Upstream assumes a Debian JDK path; use the JDK from nativeBuildInputs.
+  postPatch = ''
+    substituteInPlace CMakeLists.txt \
+      --replace-fail '/usr/lib/jvm/java-21-openjdk-amd64' "$JAVA_HOME"
+  '';
+
+
   nativeBuildInputs = [
     cmake
     meson
