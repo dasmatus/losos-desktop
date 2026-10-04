@@ -419,10 +419,11 @@ repart created it with would hold the right bytes and never be found.
   security report answers on the bus, but neither has a button in Settings.
 - **derisk runs nested, inside cage.** derisk has no DRM/KMS backend yet, so
   gdm's derisk session starts `cage -s -- derisk session --execute` and derisk
-  draws in cage's one fullscreen window (`nixos/modules/desktop.nix`). Its
-  own lock screen (PAM service `derisk`) locks on logind's Lock, which a
-  unit sends before sleep; nothing locks on idle yet. derisk also has no
-  polkit agent, no layer-shell or XWayland yet, and no UI for
+  draws in cage's one fullscreen window (`nixos/modules/desktop.nix`). derisk
+  has no lock screen yet, so nothing locks before sleep or on idle. Reliable
+  pre-sleep locking must wait until the session compositor uses logind's
+  `sleep` delay inhibitor. derisk also has no polkit agent, no layer-shell or
+  XWayland yet, and no UI for
   Bluetooth or power profiles, so those are left off. `run0` from a terminal
   still asks polkit on the terminal. The gnome-control-center patches below
   have no Settings app to go into any more.

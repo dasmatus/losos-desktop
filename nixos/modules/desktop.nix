@@ -47,11 +47,6 @@ in
   # derisk-session.target, derisk-agent.socket and derisk-agent.service.
   systemd.packages = [ pkgs.derisk ];
 
-  # The PAM service derisk's lock screen checks passwords against. NixOS
-  # generates it like any login service, pam_systemd_home included, so a
-  # homed user unlocks with the same password that opens their home.
-  security.pam.services.derisk = { };
-
   # Do not implement pre-sleep locking from a system oneshot: `loginctl
   # lock-sessions` only emits logind's Lock signal and returns immediately, so
   # ordering this Before=sleep.target does not guarantee the lock screen is
