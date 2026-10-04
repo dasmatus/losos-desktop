@@ -1,26 +1,13 @@
-# Two units that exist for CI and do nothing on an installed system: each is
+# A unit that exists for CI and does nothing on an installed system: it is
 # conditioned on a word on the kernel command line that only a test boot
 # carries.
 {
   config,
-  lib,
   pkgs,
   ...
 }:
 
-let
-  cfg = config.losos;
-in
 {
-  options.losos.test.otaPort = lib.mkOption {
-    type = lib.types.port;
-    default = 8730;
-    description = ''
-      The port on the QEMU host that serves a release directory to a guest
-      booted with `losos.ota-test`.
-    '';
-  };
-
   config.systemd.services = {
     # The one thing a VM test can observe on a machine with no shell and no
     # SSH. Ordered after boot-complete.target, which systemd reaches only when
@@ -52,40 +39,14 @@ in
       '';
     };
 
-    # Drive systemd-sysupdate from inside the VM. The update has to happen in
-    # the running system's own context so that sysupdate sees the real ESP and
-    # the real partition table. The shipped definitions point at GitHub; under
-    # QEMU user networking the host is always 10.0.2.2, so a copy with the
-    # source rewritten goes to /run -- not /etc, because it must not survive
-    # the reboot it is about to trigger.
-    losos-ota-test = {
-      description = "Apply a sysupdate from the CI host, then reboot";
-      documentation = [ "man:systemd-sysupdate(8)" ];
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
-      before = [ "losos-selftest.service" ];
-      wantedBy = [ "multi-user.target" ];
-      unitConfig.ConditionKernelCommandLine = "losos.ota-test";
-      path = [
-        config.systemd.package
-        pkgs.gnused
-        pkgs.coreutils
-      ];
-      serviceConfig = {
-        Type = "oneshot";
-        RemainAfterExit = true;
-        StandardOutput = "journal+console";
-      };
-      script = ''
-        mkdir -p /run/losos-ota.d
-        for f in /etc/sysupdate.d/*.transfer; do
-          sed 's|^Path=https://.*|Path=http://10.0.2.2:${toString cfg.test.otaPort}/|' "$f" \
-            > "/run/losos-ota.d/$(basename "$f")"
-        done
-        ${config.systemd.package}/lib/systemd/systemd-sysupdate \
-          --definitions=/run/losos-ota.d --verify=no update
-        systemctl reboot
-      '';
-    };
+    # losos-ota-test used to be here: on a boot whose command line said
+    # `losos.ota-test`, it fetched a release over plain HTTP from 10.0.2.2,
+    # installed it with `systemd-sysupdate --verify=no` and rebooted. No test
+    # ever booted with that word, and the unit shipped in every image, so the
+    # only thing it could do on real hardware was install an unverified /usr
+    # and UKI, for whoever controls the command line and that address, past
+    # any signing key the image is given. A test that exercises sysupdate
+    # should rewrite the transfers from the test driver, not from a unit
+    # inside the image it is testing.
   };
 }
