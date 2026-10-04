@@ -18,6 +18,24 @@
 }:
 
 let
+  # cage asks wlroots for a GL renderer, then Vulkan, and gives up rather than
+  # draw in software. A GPU with no GL driver, such as QEMU's virtio-vga
+  # without virgl, made every gdm login end within a second and land back at
+  # the greeter with no message. So a cage that exits at startup is run once
+  # more on pixman, wlroots' CPU renderer: slow, but a desktop. Ten seconds
+  # separates that from a session that ran and ended, which a logout does by
+  # terminating the logind session and never returns here.
+  derisk-cage = pkgs.writeShellScript "derisk-cage" ''
+    start=$(${pkgs.coreutils}/bin/date +%s)
+    ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute && exit 0
+    status=$?
+    if [ -z "''${WLR_RENDERER:-}" ] && [ $(($(${pkgs.coreutils}/bin/date +%s) - start)) -lt 10 ]; then
+      echo "derisk-cage: cage exited at startup ($status), retrying with WLR_RENDERER=pixman" >&2
+      WLR_RENDERER=pixman exec ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute
+    fi
+    exit "$status"
+  '';
+
   # One wayland-sessions entry, so gdm offers derisk and nothing else.
   # --execute makes app launches and lock/suspend/reboot real rather than
   # simulated. cage's -s keeps VT switching, so a hung session can still be
@@ -27,7 +45,7 @@ let
       [Desktop Entry]
       Name=derisk
       Comment=Adaptive, agent-first Wayland desktop
-      Exec=${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute
+      Exec=${derisk-cage}
       Type=Application
       DesktopNames=derisk
     '').overrideAttrs

@@ -17,6 +17,16 @@
   # source for them exists (docs/nixos.md, "What this trusts from outside").
   hardware.enableRedistributableFirmware = true;
 
+  # Disks behind virtio, which is how QEMU, `nix run .#vm` and most clouds
+  # attach them. NixOS's default initrd list covers SATA, NVMe and USB but no
+  # virtio, so the image booted on a virtio disk waited out every partition
+  # it looked for and dropped to emergency mode before repart ever ran.
+  boot.initrd.availableKernelModules = [
+    "virtio_pci"
+    "virtio_blk"
+    "virtio_scsi"
+  ];
+
   # Use nouveau and Mesa's NVK for NVIDIA GPUs. The proprietary NVIDIA driver
   # is not enabled in this image.
 }
