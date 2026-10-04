@@ -7,6 +7,7 @@ final: _prev: {
   losos-installer = final.callPackage ./losos-installer.nix { };
   losos-security = final.callPackage ./losos-security.nix { };
   losos-swap = final.callPackage ./losos-swap.nix { };
+  android-translation-layer = final.callPackage ./android-translation-layer.nix { };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 }
