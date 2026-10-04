@@ -224,6 +224,10 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          # The primary fingerprint of nixos/keys/update-signing.asc. This job
+          # checks out no code, so it cannot read that file; change both
+          # together.
+          UPDATE_SIGNING_FPR: "7FD984194AB8DDFF17DA0B0CDCDCF53B64988CBD"
         run: |
           shopt -s nullglob
           dirs=(built/release-*)
@@ -239,6 +243,13 @@ jobs:
           trap 'rm -rf "$GNUPGHOME"; oras logout ghcr.io || true' EXIT
           mkdir -m 700 "$GNUPGHOME"
           printf '%s\n' "$UPDATE_SIGNING_KEY" | gpg --batch --import
+          # Verifying below only proves the secret matches itself. An update
+          # signed by any other key would be refused by every installed image.
+          have=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          if [ "$have" != "$UPDATE_SIGNING_FPR" ]; then
+            echo "::error::UPDATE_SIGNING_KEY is key ${have:-none}, but the images trust $UPDATE_SIGNING_FPR."
+            exit 1
+          fi
           printf '%s' "$GHCR_TOKEN" \
             | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           mkdir -p refs
