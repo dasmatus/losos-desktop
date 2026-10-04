@@ -65,8 +65,8 @@ stdenv.mkDerivation {
     # hook (dasmatus/android_translation_layer#1). The tree has no
     # .gitmodules: thirdparty/ is vendored, so there is nothing for
     # fetchSubmodules to fetch and the hash covers the whole tree as is.
-    rev = "0dd6eeba3395bb63205cf6079a558cdf047eb791";
-    hash = "sha256-PzgMV4v8lmV7h5f9q+EX36ygxs6FkGs6P6Rvf3Wcn5Q=";
+    rev = "cd42b34789db99637472c724c0a41e626326614b";
+    hash = "sha256-Nz5oGZ7jNeGXGti3vBbRJ0DJaByhhzre+bPVuDRBDa0=";
   };
 
   # Upstream assumes a Debian JDK path; use the JDK from nativeBuildInputs.
