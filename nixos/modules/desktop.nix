@@ -1,27 +1,76 @@
-# GNOME, as a tree of systemd user units.
+# derisk, as a tree of systemd user units.
 #
-# gnome-session in nixpkgs runs the session as systemd user units under
-# graphical-session.target rather than supervising its own processes, which is
-# what the pm tree built with -Dsystemd_session=enabled. So `systemctl --user
-# status` describes the desktop, a crashed component is restarted by the same
-# supervisor as everything else, and systemd-oomd can act on one
-# application's cgroup instead of the kernel OOM killer taking the compositor.
-# mutter and gdm get their DRM and input devices from logind, which is what
-# lets the compositor run without root.
+# derisk (github.com/dasmatus/derisk) replaces GNOME. It launches every app as
+# a transient unit in app-graphical.slice, binds its own derisk-session.target
+# to graphical-session.target, and serves its agent socket from a
+# socket-activated user unit, so `systemctl --user status` still describes
+# the desktop and systemd-oomd can still act on one application's cgroup.
+#
+# derisk has no DRM/KMS backend yet: `derisk session` only runs nested inside
+# another Wayland or X11 session. Until it grows one, the session runs it
+# inside cage, a kiosk compositor that owns the seat through logind and shows
+# exactly one fullscreen client. Drop cage from the session's Exec= once
+# derisk can drive a TTY on its own.
 { lib, pkgs, ... }:
 
+let
+  # One wayland-sessions entry, so gdm offers derisk and nothing else.
+  # --execute makes app launches and lock/suspend/reboot real rather than
+  # simulated. cage's -s keeps VT switching, so a hung session can still be
+  # left for a console.
+  derisk-session =
+    (pkgs.writeTextDir "share/wayland-sessions/derisk.desktop" ''
+      [Desktop Entry]
+      Name=derisk
+      Comment=Adaptive, agent-first Wayland desktop
+      Exec=${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute
+      Type=Application
+      DesktopNames=derisk
+    '').overrideAttrs
+      { passthru.providedSessions = [ "derisk" ]; };
+in
 {
-  services.displayManager.gdm.enable = true;
-  services.desktopManager.gnome.enable = true;
+  # gdm stays as the login screen: it is what sees homed users through NSS
+  # (accounts.nix) and what the VM test boots to. It is a display manager, not
+  # the desktop, and it does not need GNOME's desktop module.
+  services.displayManager = {
+    gdm.enable = true;
+    sessionPackages = [ derisk-session ];
+    defaultSession = "derisk";
+  };
 
-  # The pm tree built a deliberately small GNOME: shell, settings, files. The
-  # core app set is left out for the same reason, with Files and a terminal
-  # put back because a desktop without them cannot be used to do anything.
-  services.gnome.core-apps.enable = false;
-  environment.systemPackages = with pkgs; [
-    nautilus
-    ptyxis
+  # derisk-session.target, derisk-agent.socket and derisk-agent.service.
+  systemd.packages = [ pkgs.derisk ];
+
+  # derisk's Files, Settings, Text Editor, System Monitor and Calculator are
+  # built into the derisk binary, which replaces GNOME's Files. A terminal is
+  # the one app it does not have, and foot is the one its own docs launch.
+  environment.systemPackages = [
+    pkgs.derisk
+    pkgs.foot
   ];
+
+  # What GNOME's module used to switch on, kept where something in the session
+  # still uses it. Audio for every app. udisks2 and upower are bus-activated
+  # and back removable drives and the overview's battery widget. The keyring
+  # is the Secret Service every app that stores a password asks for. The GTK
+  # portal gives sandboxed and GTK apps a file chooser, since derisk ships no
+  # portal of its own.
+  #
+  # Left off, because nothing in derisk has a UI for them yet: Bluetooth,
+  # power profiles and geoclue.
+  services.pipewire = {
+    enable = true;
+    pulse.enable = true;
+  };
+  services.udisks2.enable = true;
+  services.upower.enable = true;
+  services.gnome.gnome-keyring.enable = true;
+  xdg.portal = {
+    enable = true;
+    extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
+    config.derisk.default = [ "gtk" ];
+  };
 
   # Let systemd-oomd act on a desktop session before the kernel OOM killer
   # does. oomd watches cgroup pressure and kills the worst-behaved application
@@ -39,7 +88,7 @@
   # timer is what makes updates appear without anyone asking.
   services.fwupd.enable = true;
 
-  # Mesa, for the compositor.
+  # Mesa, for cage and for derisk's GLES renderer.
   hardware.graphics.enable = true;
 
   # Nothing is needed for FIDO2. The pm tree had to add CONFIG_HIDRAW to its
