@@ -31,20 +31,38 @@ let
   };
 in
 {
-  options.losos.android.enable = lib.mkEnableOption ''
-    running Android apps on the desktop through the Android Translation Layer.
-    This installs ATL and makes it the default handler for .apk files
-  '';
+  options.losos.android = {
+    enable = lib.mkEnableOption ''
+      running Android apps on the desktop through the Android Translation
+      Layer. This installs ATL; whether opening an .apk runs it is a separate
+      choice, openApks
+    '';
+
+    openApks = lib.mkEnableOption ''
+      making ATL the default handler for .apk files, so "Open" on one in the
+      file manager runs it. Off by default on purpose: ATL runs an app's dex
+      and native code as an ordinary process of the session user, with none
+      of Android's per-app sandbox, so a malicious APK has the same reach as
+      any native program the user runs. Leaving this off keeps "open a
+      downloaded file" from meaning "run untrusted code"; an APK is then run
+      only by someone who chose to launch ATL on it. Turn it on knowingly, or
+      wait for the sandboxed launcher (bubblewrap or a confined transient
+      unit) tracked in docs/nixos.md
+    '';
+  };
 
   config = lib.mkIf cfg.enable {
+    # The handler entry is installed only when openApks is on: without it, an
+    # .apk has no default application and nothing runs on "Open".
     environment.systemPackages = [
       pkgs.android-translation-layer
-      atlDesktopItem
-    ];
+    ]
+    ++ lib.optional cfg.openApks atlDesktopItem;
 
     # Make ATL the default application for APKs, so the file manager's "Open"
     # routes to it. The MIME type is the one Android itself uses for packages.
-    xdg.mime = {
+    # Gated on openApks for the reason its option text gives.
+    xdg.mime = lib.mkIf cfg.openApks {
       enable = true;
       defaultApplications."application/vnd.android.package-archive" = "android-translation-layer.desktop";
     };

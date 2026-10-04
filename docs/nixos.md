@@ -441,6 +441,18 @@ repart created it with would hold the right bytes and never be found.
   source hash is still a placeholder. Both files say so at the top. Because
   the option is off, `nix flake check` never realises the package, so the
   bring-up can land and mature without gating the image.
+  **APKs run unsandboxed.** ATL runs an app's dex and native code as an
+  ordinary process of the session user: Android's per-app UID, permission
+  model and SELinux domain are not there, so a malicious APK has the reach of
+  any native program the user runs, including their home, their Wayland
+  session, the agent socket and the network. For that reason the default
+  `.apk` handler is a second, separate opt-in, `losos.android.openApks`, off
+  by default, so "open a downloaded file" never silently means "run untrusted
+  code"; with it off an APK is run only by someone who chose to launch ATL on
+  it. The real fix is a sandboxed launcher (bubblewrap with the usual
+  namespaces and a restricted filesystem view, or a confined transient
+  systemd user unit), which ATL's own README lists as future work. That is
+  not done; until it is, turn `openApks` on knowingly.
 - **Nothing has booted yet.** The disk image builds, with the layout above
   and a `usrhash=` equal to the root hash repart reported. The VM test
   evaluates and needs KVM, which the machine this was written on did not

@@ -10,7 +10,6 @@
 # and derisk, because the fork moves fast.
 #
 # Open items (why it is not wired into the image yet):
-#   - src/cargoHash: fakeHash placeholders, to be filled by a real build.
 #   - Android build-tools: the meson build shells out to `dx` and `aapt` to
 #     dex and package the bundled framework. Those come from the Android SDK
 #     build-tools, which nixpkgs exposes only through androidenv; this recipe
@@ -34,6 +33,7 @@
   jdk21,
   ant,
   python3,
+  makeWrapper,
   gtk4,
   gtk4-layer-shell,
   vulkan-loader,
@@ -47,6 +47,9 @@
   libdrm,
   libgudev,
   webkitgtk_6_0,
+  libGL,
+  alsa-lib,
+  libbsd,
 }:
 
 stdenv.mkDerivation {
@@ -58,9 +61,12 @@ stdenv.mkDerivation {
   # endpoint (see the project's proxy notes).
   src = fetchgit {
     url = "https://github.com/dasmatus/android_translation_layer";
-    rev = "6af8f226"; # the branch head this packaging was written against
-    hash = lib.fakeHash; # TODO: fill from a real fetch
-    fetchSubmodules = true;
+    # The ATL branch head carrying the Play-services shims and the theme
+    # hook (dasmatus/android_translation_layer#1). The tree has no
+    # .gitmodules: thirdparty/ is vendored, so there is nothing for
+    # fetchSubmodules to fetch and the hash covers the whole tree as is.
+    rev = "0dd6eeba3395bb63205cf6079a558cdf047eb791";
+    hash = "sha256-PzgMV4v8lmV7h5f9q+EX36ygxs6FkGs6P6Rvf3Wcn5Q=";
   };
 
   # Upstream assumes a Debian JDK path; use the JDK from nativeBuildInputs.
@@ -80,6 +86,7 @@ stdenv.mkDerivation {
     jdk21
     ant
     python3
+    makeWrapper
   ];
 
   buildInputs = [
@@ -96,12 +103,39 @@ stdenv.mkDerivation {
     libdrm
     libgudev
     webkitgtk_6_0
+    # ATL's meson.build asks for gl and egl and links -lasound; the vendored
+    # bionic_translation asks for libbsd. None of the inputs above propagate
+    # them.
+    libGL
+    alsa-lib
+    libbsd
   ];
 
   # The repo drives its multi-component build (wolfSSL, libunwind,
   # bionic_translation, art_standalone, then ATL itself) through a top-level
-  # CMake orchestrator, so use it rather than invoking meson directly.
-  dontUseCmakeConfigure = false;
+  # CMake orchestrator, so the stock configure and build phases drive it. It
+  # defines no install() rule: installing is its own `install_all` target,
+  # which runs `meson install` into a prefix hard-coded to the build
+  # directory's install/, ignoring CMAKE_INSTALL_PREFIX. The ART and bionic
+  # runtime that ATL dlopens at run time stays under the build directory's
+  # lib/ and bionic_build/ and never reaches that prefix. So install by hand:
+  # run the target, then carry both trees under $out and give the binary the
+  # same LD_LIBRARY_PATH the repo's own launcher assembles, because nothing
+  # puts those directories on its RUNPATH.
+  installPhase = ''
+    runHook preInstall
+    cmake --build . --target install_all
+    mkdir -p $out
+    cp -r install/. $out/
+    mkdir -p $out/lib/atl-runtime
+    cp -r lib/. $out/lib/atl-runtime/
+    if [ -d bionic_build ]; then
+      find bionic_build -maxdepth 1 -name '*.so*' -exec cp -t $out/lib/atl-runtime/ {} +
+    fi
+    wrapProgram $out/bin/android-translation-layer \
+      --prefix LD_LIBRARY_PATH : "$out/lib:$out/lib/java/dex/android_translation_layer/natives:$out/lib/atl-runtime:$out/lib/atl-runtime/art"
+    runHook postInstall
+  '';
 
   meta = {
     description = "Translation layer that runs Android apps on a Linux desktop";
