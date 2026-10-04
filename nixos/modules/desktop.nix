@@ -9,8 +9,8 @@
 # derisk has no DRM/KMS backend yet: `derisk session` only runs nested inside
 # another Wayland or X11 session. Until it grows one, the session runs it
 # inside cage, a kiosk compositor that owns the seat through logind and shows
-# exactly one fullscreen client. Drop cage from the session's Exec= once
-# derisk can drive a TTY on its own.
+# exactly one fullscreen client, and so does the greeter. Drop cage from the
+# greetd command once derisk can drive a TTY on its own.
 {
   lib,
   pkgs,
@@ -20,45 +20,47 @@
 let
   # cage asks wlroots for a GL renderer, then Vulkan, and gives up rather than
   # draw in software. A GPU with no GL driver, such as QEMU's virtio-vga
-  # without virgl, made every gdm login end within a second and land back at
-  # the greeter with no message. So a cage that exits at startup is run once
-  # more on pixman, wlroots' CPU renderer: slow, but a desktop. Ten seconds
-  # separates that from a session that ran and ended, which a logout does by
-  # terminating the logind session and never returns here.
+  # without virgl, made every login end within a second and land back at the
+  # login screen with no message. So a cage that exits at startup is run once
+  # more on pixman, wlroots' CPU renderer: slow, but a screen. Ten seconds
+  # separates that from a client that ran and ended, which a logout does by
+  # terminating the logind session and never returns here. The greeter and
+  # the session both run in cage, so both go through this; cage's -s keeps VT
+  # switching, so a hung one can still be left for a console.
   derisk-cage = pkgs.writeShellScript "derisk-cage" ''
     start=$(${pkgs.coreutils}/bin/date +%s)
-    ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute && exit 0
+    ${lib.getExe pkgs.cage} -s -- "$@" && exit 0
     status=$?
     if [ -z "''${WLR_RENDERER:-}" ] && [ $(($(${pkgs.coreutils}/bin/date +%s) - start)) -lt 10 ]; then
       echo "derisk-cage: cage exited at startup ($status), retrying with WLR_RENDERER=pixman" >&2
-      WLR_RENDERER=pixman exec ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute
+      WLR_RENDERER=pixman exec ${lib.getExe pkgs.cage} -s -- "$@"
     fi
     exit "$status"
   '';
 
-  # One wayland-sessions entry, so gdm offers derisk and nothing else.
-  # --execute makes app launches and lock/suspend/reboot real rather than
-  # simulated. cage's -s keeps VT switching, so a hung session can still be
-  # left for a console.
-  derisk-session =
-    (pkgs.writeTextDir "share/wayland-sessions/derisk.desktop" ''
-      [Desktop Entry]
-      Name=derisk
-      Comment=Adaptive, agent-first Wayland desktop
-      Exec=${derisk-cage}
-      Type=Application
-      DesktopNames=derisk
-    '').overrideAttrs
-      { passthru.providedSessions = [ "derisk" ]; };
+  derisk = lib.getExe pkgs.derisk;
 in
 {
-  # gdm stays as the login screen: it is what sees homed users through NSS
-  # (accounts.nix) and what the VM test boots to. It is a display manager, not
-  # the desktop, and it does not need GNOME's desktop module.
-  services.displayManager = {
-    gdm.enable = true;
-    sessionPackages = [ derisk-session ];
-    defaultSession = "derisk";
+  # The login screen is derisk's own lock screen, run as a greetd greeter
+  # (`derisk greeter`), so logging in and unlocking look the same. greetd
+  # replaced gdm: gdm is a GNOME Shell process with its own accounts daemon
+  # and session chooser, all to offer one session, while greetd is a small
+  # daemon that runs PAM and opens the logind session for whatever greeter it
+  # is given. The greeter only relays the conversation; greetd's PAM service,
+  # which NixOS generates with pam_systemd_home in it, is what unlocks a
+  # homed user's home area at login. greetd runs the greeter as its own
+  # unprivileged `greeter` user, and once the greeter has a user
+  # authenticated and exits, starts the session command it was handed.
+  #
+  # --execute makes app launches and lock/suspend/reboot real rather than
+  # simulated. There is one session, so no session chooser and no
+  # wayland-sessions entry: the greeter is told the command outright.
+  services.greetd = {
+    enable = true;
+    settings.default_session = {
+      command = "${derisk-cage} ${derisk} greeter -- ${derisk-cage} ${derisk} session --execute";
+      user = "greeter";
+    };
   };
 
   # derisk-session.target, derisk-agent.socket and derisk-agent.service.

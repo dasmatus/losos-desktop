@@ -30,11 +30,12 @@ rustPlatform.buildRustPackage {
   # hosts that cannot use its archive endpoint.
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
-    # dasmatus/derisk#11, the lock screen, until it merges. It builds against
-    # dasmatus/mcsapi#24, which ends a client's held press when the lock
-    # hides its window.
-    rev = "6137173abea133d8b0ee657cda8067c75c8633ae";
-    hash = "sha256-W+N9Bw48h05NGEaAUkLb2fPtSefhs3/uX/TH2hWy260=";
+    # dasmatus/derisk#19, `derisk greeter` (the login screen), until it
+    # merges. It is stacked on derisk#11, the lock screen, which builds
+    # against dasmatus/mcsapi#24, which ends a client's held press when the
+    # lock hides its window.
+    rev = "e94d0de0d943b93e09c208afa73b87f2f37a796f";
+    hash = "sha256-h+PtDpmirdOd3POKDEVfQWABiCt2uI1Sa8sH7qBeR4c=";
   };
 
   cargoHash = "sha256-eNIhuAyEsmueeq4a8im0QNf0f95UaIZ5QwTWT2tL3bU=";

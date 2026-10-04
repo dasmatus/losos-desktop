@@ -418,7 +418,8 @@ repart created it with would hold the right bytes and never be found.
   through `systemctl start factory-reset.target` and the Varlink API, and the
   security report answers on the bus, but neither has a button in Settings.
 - **derisk runs nested, inside cage.** derisk has no DRM/KMS backend yet, so
-  gdm's derisk session starts `cage -s -- derisk session --execute` and derisk
+  greetd starts `cage -s -- derisk greeter`, derisk's lock screen as the login
+  screen, and after a login `cage -s -- derisk session --execute`; derisk
   draws in cage's one fullscreen window (`nixos/modules/desktop.nix`). Its
   lock screen (PAM service `derisk`) locks when asked and on logind's Lock,
   but nothing locks before sleep or on idle yet: that needs derisk to hold a

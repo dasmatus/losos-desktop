@@ -27,7 +27,7 @@ decisions.
 | Updates | `systemd-sysupdate` with A/B slots, and `fwupd` for firmware |
 | Factory reset | `FactoryReset=` on root and `/home`, and systemd's reset Varlink API |
 | Accounts | `systemd-homed`, `systemd-userdbd`, `pam_systemd_home`, `run0` |
-| Session | `systemd-logind` seats for gdm, and the user manager driving `derisk-session.target` and `graphical-session.target` |
+| Session | `greetd` with derisk's lock screen as the greeter, `systemd-logind` seats, and the user manager driving `derisk-session.target` and `graphical-session.target` |
 | Network | `systemd-networkd`, `systemd-resolved`, `systemd-timesyncd` |
 | Memory | `systemd-oomd`, and zswap in front of a RAM-sized encrypted swap partition |
 

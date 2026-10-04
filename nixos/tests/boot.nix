@@ -100,7 +100,7 @@
 
       with subtest("a user is a homed LUKS volume"):
           # homed's first-boot wizard runs only while no regular user exists,
-          # so nothing the image ships -- gdm's greeters included -- may count
+          # so nothing the image ships -- greetd's greeter user included -- may count
           # as one. accounts.nix silences a NixOS warning on that reading.
           # userdbctl also prints "begin/end systemd-homed users" marker rows
           # for the UID ranges a filter covers, and homed's range is regular,
