@@ -41,7 +41,7 @@ let
 
   # Where the initrd mounts userdata. /run survives switch-root, so the mount
   # is still there afterwards, and android.nix hands it to Android as /data.
-  userdataMount = "/run/halium/userdata";
+  userdataMount = config.losos.halium.userdataMount;
 in
 {
   imports = [
@@ -50,6 +50,14 @@ in
   ];
 
   options.losos.halium = {
+    userdataMount = mkOption {
+      type = types.path;
+      default = "/run/halium/userdata";
+      readOnly = true;
+      internal = true;
+      description = "Where the initrd mounts userdata, shared with android.nix.";
+    };
+
     kernelPackages = mkOption {
       type = types.nullOr types.raw;
       default = null;

@@ -41,7 +41,7 @@ let
     lxc.mount.auto = cgroup:mixed proc:mixed sys:mixed
     lxc.mount.entry = /dev dev none rbind 0 0
     lxc.mount.entry = /vendor vendor none bind,optional 0 0
-    lxc.mount.entry = /run/halium/userdata data none bind 0 0
+    lxc.mount.entry = ${config.losos.halium.userdataMount} data none bind 0 0
     lxc.apparmor.profile = unconfined
     lxc.cap.drop = sys_module sys_rawio sys_time mac_admin mac_override
     lxc.init.cmd = /init
