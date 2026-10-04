@@ -25,9 +25,14 @@
     # which some build hosts cannot reach at all. `nix flake update nixpkgs`
     # moves it.
     #
-    # 26.05 is the stable release: this is an OS people install, and an
-    # update to it is a new image, so unstable's churn buys nothing.
-    nixpkgs.url = "https://channels.nixos.org/nixos-26.05/nixexprs.tar.xz";
+    # nixos-unstable, the channel rather than nixpkgs master: Hydra has built
+    # and tested every revision it points at, so the stock closures still
+    # substitute from cache.nixos.org. An update to this OS is a whole new
+    # image that CI builds and the VM test boots before it is published, so
+    # a breaking change upstream stops at CI rather than on a machine, and
+    # tracking unstable buys the newer kernel, Mesa and systemd that the
+    # desktop and the Halium target (nixos/modules/halium.nix) want.
+    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
   };
 
   outputs =

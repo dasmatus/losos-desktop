@@ -3,7 +3,8 @@
 `flake.nix` and `nixos/` are the operating system. It is a derisk desktop that
 uses systemd for everything it can, installs as an image, updates with
 `systemd-sysupdate`, and makes every user a `systemd-homed` LUKS volume.
-nixpkgs 26.05, pinned in `flake.lock`, provides the stock glibc package set,
+nixpkgs from the `nixos-unstable` channel, pinned in `flake.lock`, provides
+the stock glibc package set,
 and this repository decides how those packages fit together. Builds use
 cache.nixos.org by default; the project's own cache can provide project-built
 paths as well.
@@ -23,7 +24,8 @@ which `nixos/pkgs/` builds. pm ships in the image as the system manager.
 
 Everything the flake builds from, besides this repository:
 
-- **nixpkgs 26.05**, the channel tarball from `channels.nixos.org`, pinned by
+- **nixpkgs `nixos-unstable`**, the channel tarball from `channels.nixos.org`,
+  pinned by
   `narHash` in `flake.lock`. Its expressions are read, not trusted blindly:
   a different tarball fails the hash.
 - **Stock package binaries from cache.nixos.org.** nixpkgs' normal glibc
@@ -265,7 +267,7 @@ That buys two things the pm tree wrote down as limits:
 |---|---|---|
 | `recipes/10-systemd/linux`, `losos.config` | nixpkgs' kernel, `hardware.nix` | nixpkgs' `common-config.nix` already sets what systemd needs, `CONFIG_HIDRAW` included. zswap is built in and off, and `boot.zswap.enable` turns it on |
 | `recipes/10-systemd/nvidia-open` | nouveau, in nixpkgs' kernel | not configured; Mesa's NVK uses nouveau. `hardware.nix` says why |
-| `recipes/00-*` through `30-gnome`, `manifest/`, `share/` | nixpkgs 26.05 | every package the recipes built. Their build-system patches existed only for the CFI toolchain |
+| `recipes/00-*` through `30-gnome`, `manifest/`, `share/` | nixpkgs | every package the recipes built. Their build-system patches existed only for the CFI toolchain |
 | `recipes/30-gnome/gnome-control-center` patches | `nixos/pkgs/patches/gnome-control-center/` | kept and not applied, see "What is not done" |
 | `recipes/90-image/losos-image` (mkosi), `plugins/` | `nixos/modules/image.nix` (`image/repart.nix`) | the same `systemd-repart`; no fingerprint table to get past, so no plugins |
 | `mkuki.py`, `files/cmdline` | `boot.uki`, verity-store module | the UKI carries `usrhash=` |
@@ -314,9 +316,10 @@ wizard instead of no way to create the first user at all.
 
 ## The installer
 
-The pm tree's installer was `systemd-sysinstall`, new in systemd v261. nixpkgs
-26.05 ships 260.4, so the installer does the same job by hand with the same
-tools. It is its own small live system, `nixos/installer/`, on its own ISO,
+The pm tree's installer was `systemd-sysinstall`, new in systemd v261.
+nixpkgs 26.05 shipped 260.4, so the installer does the same job by hand with
+the same tools. nixos-unstable now carries 261, so sysinstall is available;
+the installer has not been moved onto it yet. It is its own small live system, `nixos/installer/`, on its own ISO,
 and `nixos/modules/installer.nix` evaluates it from the OS's configuration.
 
 It boots by UEFI only: the ISO's appended FAT partition holds the installer's
@@ -413,7 +416,7 @@ repart created it with would hold the right bytes and never be found.
   owns the machine.
 - **The two gnome-control-center patches** in `nixos/pkgs/patches/`. Nothing
   upstream has them, so they stay. They are written against
-  gnome-control-center 51.0, and nixpkgs 26.05 carries 50.4, which moved the
+  gnome-control-center 51.0, and nixpkgs carries 50.4, which moved the
   System panel to Blueprint; neither applies. The factory reset is reachable
   through `systemctl start factory-reset.target` and the Varlink API, and the
   security report answers on the bus, but neither has a button in Settings.

@@ -1,6 +1,6 @@
 # Build, check and publish the NixOS flake using nixpkgs' stock glibc packages.
 #
-# nixpkgs 26.05, pinned by flake.lock, provides every package. The runner uses
+# nixpkgs nixos-unstable, pinned by flake.lock, provides every package. The runner uses
 # cache.nixos.org for stock packages and may also use this project's GHCR cache
 # for paths used by CI (docs/nixos.md, "Binary cache").
 #

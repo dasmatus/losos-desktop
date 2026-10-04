@@ -7,7 +7,7 @@ Guidance for Claude Code (claude.ai/code) working in this repository.
 `losos-desktop` is a derisk desktop OS written as a NixOS configuration. It
 installs as an image, uses systemd for everything it can, and uses nixpkgs'
 stock glibc packages.
-`flake.nix` and `nixos/` are the OS. nixpkgs 26.05, pinned in `flake.lock`,
+`flake.nix` and `nixos/` are the OS. nixpkgs `nixos-unstable`, pinned in `flake.lock`,
 provides stock packages, normally substituted from cache.nixos.org.
 [`pm`](https://github.com/dichhead/pm) ships in the image as the system
 manager.

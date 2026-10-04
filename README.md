@@ -4,8 +4,8 @@ A [derisk](https://github.com/dasmatus/derisk) desktop operating system that use
 installs as an image.
 
 The OS is a NixOS configuration, `flake.nix` plus the modules in `nixos/`.
-nixpkgs 26.05, pinned by `flake.lock`, provides the stock glibc packages for
-`x86_64-linux` and `aarch64-linux`. Nix uses cache.nixos.org for those packages;
+nixpkgs from the `nixos-unstable` channel, pinned by `flake.lock`, provides the
+stock glibc packages for `x86_64-linux` and `aarch64-linux`. Nix uses cache.nixos.org for those packages;
 this project's GHCR cache, served through [`proxy/`](proxy/), can also provide
 paths used by CI.
 [`pm`](https://github.com/dichhead/pm) ships in the image as the system

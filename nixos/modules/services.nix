@@ -12,7 +12,7 @@
   # survives an update but not a factory reset. Crashes go to
   # systemd-coredump and firmware panic records to systemd-pstore, both of
   # which NixOS enables already.
-  services.journald.storage = "persistent";
+  services.journald.settings.Journal.Storage = "persistent";
 
   # Containers, VMs and portable services: systemd-nspawn, systemd-vmspawn,
   # machined, importd and portabled are all in the systemd package NixOS ships,

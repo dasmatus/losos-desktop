@@ -30,7 +30,7 @@ let
   inherit (config.image.repart.verityStore) partitionIds;
   inherit (config.system.boot.loader) ukiFile;
 
-  # nixpkgs 26.05 hard-codes unshare in repart-image.nix. Add a local per-image
+  # nixpkgs hard-codes unshare in repart-image.nix. Add a local per-image
   # switch here so it also applies when the VM test imports this module.
   nixpkgsImageModules = "${modulesPath}/image";
   patchNixpkgsModule =
@@ -140,6 +140,11 @@ in
   };
 
   image.repart = {
+    # nixpkgs unstable gates the whole repart image module on this switch.
+    # Without it image.repart.image is never defined and every output built
+    # from the disk fails to evaluate.
+    enable = true;
+
     name = id;
 
     # The vfat ESP and erofs /usr formatter do not need a nested user namespace,
