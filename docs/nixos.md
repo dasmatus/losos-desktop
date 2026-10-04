@@ -424,7 +424,7 @@ How a device boots it:
 Every mount on the Android side is `nofail`, so a device whose Android half is
 missing or broken still reaches the login screen.
 
-`nix build .#halium` (aarch64) produces `boot.img` and `rootfs.img.xz` with
+`nix build .#packages.aarch64-linux.halium` produces `boot.img` and `rootfs.img.xz` with
 `SHA256SUMS`. Install with `fastboot flash boot boot.img`, unpack
 `rootfs.img.xz`, and copy it in from a recovery with
 `adb push rootfs.img /data/losos/rootfs.img`.
