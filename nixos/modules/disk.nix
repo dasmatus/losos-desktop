@@ -164,11 +164,9 @@ in
   # The factory reset Varlink API at /run/systemd/io.systemd.FactoryReset.
   # Socket-activated, so enabling it costs a socket and no process. Without it
   # the only way to ask is the kernel command line, which a desktop user cannot
-  # reach. NixOS already carries factory-reset.target and its request units.
-  systemd.additionalUpstreamSystemUnits = [
-    "systemd-factory-reset.socket"
-    "systemd-factory-reset@.service"
-  ];
+  # reach. NixOS ships the socket and its service unit since unstable, and
+  # listing them here again made system-units link the socket twice and fail;
+  # starting it is the part left to this module.
   systemd.sockets.systemd-factory-reset.wantedBy = [ "sockets.target" ];
 
   # Let an active, local administrator ask for a factory reset.
