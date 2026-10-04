@@ -16,6 +16,11 @@ on:
 
 # Read-only by default, because a pull request's run executes branch code. The
 # jobs that write ask for it themselves.
+#
+# Every action is pinned to a commit, with its tag beside it. A tag can be
+# moved by whoever controls the action's repository, and the jobs that run
+# these hold packages: write, contents: write and the cache signing key, so a
+# moved tag would be code running beside all three.
 permissions:
   contents: read
 
@@ -58,6 +63,10 @@ jobs:
       NIX_CACHE_URL: ${{ vars.LOSOS_PROXY_URL }}
       NIX_CACHE_PUBLIC_KEY: ${{ vars.NIX_CACHE_PUBLIC_KEY }}
       NIX_VERSION: "2.34.8"
+      # The installer script's own hash, from releases.nixos.org's
+      # install.sha256 for that version. The script carries the tarball's
+      # hash, so checking it pins every byte the install runs as root.
+      NIX_INSTALLER_SHA256: "96c10e102c88809dd9ec0bee89200c4a51eae4c9f6d8698c26b16788d131e078"
     steps:
       - name: Free disk space
         run: |
@@ -79,6 +88,7 @@ jobs:
           fi
           curl -sSfL --proto '=https' \
             "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
+          echo "$NIX_INSTALLER_SHA256  install-nix" | sha256sum -c -
           sh install-nix --daemon --yes --no-channel-add
           features="nixos-test benchmark big-parallel"
           if [ -e /dev/kvm ]; then
@@ -99,7 +109,7 @@ jobs:
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
 
       # Fixed-output inputs come from cache.nixos.org where it has them, with
@@ -138,7 +148,7 @@ jobs:
       # build it again. A pull request reads the cache and writes nothing.
       # Uploading is independent of NIX_CACHE_URL: the GHCR paths can be served
       # by the proxy later, even when CI is not configured to fetch through it.
-      - uses: oras-project/setup-oras@v1
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
         if: always() && github.event_name != 'pull_request'
       - name: Push what was built to the cache
         if: always() && github.event_name != 'pull_request'
@@ -179,7 +189,7 @@ jobs:
           nix eval --impure --raw ".#nixosConfigurations.losos-desktop-$arch.config.losos.version" \
             > "$RUNNER_TEMP/release/.version"
           echo "arch=$arch" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: steps.collect.outputs.arch != ''
         with:
           name: release-${{ steps.collect.outputs.arch }}
@@ -200,13 +210,24 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: oras-project/setup-oras@v1
-      - uses: actions/download-artifact@v4
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with: { pattern: "release-*", path: built }
 
+      # Each architecture's SHA256SUMS is signed here, beside nothing but the
+      # downloaded release, so the key never shares a runner with build code.
+      # sysupdate on an installed system fetches SHA256SUMS.gpg next to it and
+      # refuses an update the key in nixos/keys/update-signing.asc did not
+      # sign. A release is never pushed unsigned: an image that trusts the key
+      # could not install it, and one that does not would install anything.
       - name: Push the releases to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          # The primary fingerprint of nixos/keys/update-signing.asc. This job
+          # checks out no code, so it cannot read that file; change both
+          # together.
+          UPDATE_SIGNING_FPR: "7FD984194AB8DDFF17DA0B0CDCDCF53B64988CBD"
         run: |
           shopt -s nullglob
           dirs=(built/release-*)
@@ -214,12 +235,37 @@ jobs:
             echo "No architecture finished a build, so there is nothing to push."
             exit 0
           fi
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::error::UPDATE_SIGNING_KEY is not set, so the release cannot be signed. docs/nixos.md says how to make it."
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          trap 'rm -rf "$GNUPGHOME"; oras logout ghcr.io || true' EXIT
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$UPDATE_SIGNING_KEY" | gpg --batch --import
+          # Verifying below only proves the secret matches itself. An update
+          # signed by any other key would be refused by every installed image.
+          have=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          if [ "$have" != "$UPDATE_SIGNING_FPR" ]; then
+            echo "::error::UPDATE_SIGNING_KEY is key ${have:-none}, but the images trust $UPDATE_SIGNING_FPR."
+            exit 1
+          fi
           printf '%s' "$GHCR_TOKEN" \
             | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           mkdir -p refs
           for dir in "${dirs[@]}"; do
             arch=${dir#built/release-}
             version=$(cat "$dir/.version")
+            # Name the key: without --local-user gpg signs with whichever
+            # secret key it prefers, which need not be the one checked above.
+            gpg --batch --yes --local-user "$UPDATE_SIGNING_FPR" --detach-sign \
+              --output "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS"
+            signer=$(gpg --batch --status-fd 1 --verify "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS" \
+              | awk '$2 == "VALIDSIG" { print $NF }')
+            if [ "$signer" != "$UPDATE_SIGNING_FPR" ]; then
+              echo "::error::$arch SHA256SUMS was signed by ${signer:-no valid key}, not $UPDATE_SIGNING_FPR."
+              exit 1
+            fi
             (
               cd "$dir"
               oras push "ghcr.io/${GITHUB_REPOSITORY,,}/images:nightly-$version-$arch" \
@@ -232,7 +278,7 @@ jobs:
             echo "- $arch: \`$(cat "refs/release-ref-$arch.txt")\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-refs
           path: refs/
@@ -248,16 +294,21 @@ jobs:
     timeout-minutes: 15
     env:
       NIX_VERSION: "2.34.8"
+      # The installer script's own hash, from releases.nixos.org's
+      # install.sha256 for that version. The script carries the tarball's
+      # hash, so checking it pins every byte the install runs as root.
+      NIX_INSTALLER_SHA256: "96c10e102c88809dd9ec0bee89200c4a51eae4c9f6d8698c26b16788d131e078"
     steps:
       - name: Install Nix
         run: |
           curl -sSfL --proto '=https' \
             "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
+          echo "$NIX_INSTALLER_SHA256  install-nix" | sha256sum -c -
           sh install-nix --daemon --yes --no-channel-add
           echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - name: Check formatting
         run: |
@@ -276,13 +327,13 @@ jobs:
       run:
         working-directory: proxy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test
       # The tests are TypeScript run by node itself, which strips the types
       # from 22.6 on; the runner's own node may be older.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with: { node-version: 22 }
       - run: npm ci
       - run: npm run typecheck
@@ -322,8 +373,8 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: oras-project/setup-oras@v1
-      - uses: actions/download-artifact@v4
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         continue-on-error: true
         with: { name: release-refs, path: refs }
 
