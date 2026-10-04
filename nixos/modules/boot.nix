@@ -57,24 +57,6 @@
   ];
   systemd.services.systemd-boot-check-no-failures.requiredBy = [ "boot-complete.target" ];
 
-  # The system is an image. It cannot be rebuilt in place, and it carries no
-  # Nix: an update is a new /usr from systemd-sysupdate, not a switch.
-  nix.enable = false;
-  system.switch.enable = false;
-
-  # /etc is an overlay of the generated tree rather than files written by an
-  # activation script, which is what lets it be assembled without perl and
-  # makes it read the same on every boot. Mutable, because networkd, homed and
-  # hostnamed all keep state under /etc and the root partition is where state
-  # lives here.
-  system.etc.overlay = {
-    enable = true;
-    mutable = true;
-  };
-
-  # System users come from systemd-sysusers, reading sysusers.d generated from
-  # users.users -- the upstream tool, not NixOS's perl script and not userborn.
-  # Human users are not here at all: see accounts.nix.
-  systemd.sysusers.enable = true;
-  users.mutableUsers = false;
+  # nix.enable, the /etc overlay and sysusers are in base.nix: a Halium build
+  # is the same kind of image and shares them.
 }

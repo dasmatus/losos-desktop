@@ -134,11 +134,6 @@ in
     inherit version;
   };
 
-  system.nixos = {
-    distroId = "losos-desktop";
-    distroName = "LosOS Desktop";
-  };
-
   image.repart = {
     # nixpkgs unstable gates the whole repart image module on this switch.
     # Without it image.repart.image is never defined and every output built
