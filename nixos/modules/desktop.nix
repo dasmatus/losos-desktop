@@ -6,11 +6,9 @@
 # socket-activated user unit, so `systemctl --user status` still describes
 # the desktop and systemd-oomd can still act on one application's cgroup.
 #
-# derisk has no DRM/KMS backend yet: `derisk session` only runs nested inside
-# another Wayland or X11 session. Until it grows one, the session runs it
-# inside cage, a kiosk compositor that owns the seat through logind and shows
-# exactly one fullscreen client, and so does the greeter. Drop cage from the
-# display manager's command once derisk can drive a TTY on its own.
+# derisk drives the display itself: with no Wayland or X11 session to nest in,
+# its compositor takes the seat's GPU and input devices from logind and
+# scans out through DRM/KMS, for the login screen and the session alike.
 {
   lib,
   pkgs,
@@ -18,26 +16,11 @@
 }:
 
 let
-  # cage asks wlroots for a GL renderer, then Vulkan, and gives up rather than
-  # draw in software. A GPU with no GL driver, such as QEMU's virtio-vga
-  # without virgl, made every login end within a second and land back at the
-  # login screen with no message. So a cage that exits at startup is run once
-  # more on pixman, wlroots' CPU renderer: slow, but a screen. Ten seconds
-  # separates that from a client that ran and ended, which a logout does by
-  # terminating the logind session and never returns here. The greeter and
-  # the session both run in cage, so both go through this; cage's -s keeps VT
-  # switching, so a hung one can still be left for a console.
-  derisk-cage = pkgs.writeShellScript "derisk-cage" ''
-    start=$(${pkgs.coreutils}/bin/date +%s)
-    ${lib.getExe pkgs.cage} -s -- "$@" && exit 0
-    status=$?
-    if [ -z "''${WLR_RENDERER:-}" ] && [ $(($(${pkgs.coreutils}/bin/date +%s) - start)) -lt 10 ]; then
-      echo "derisk-cage: cage exited at startup ($status), retrying with WLR_RENDERER=pixman" >&2
-      WLR_RENDERER=pixman exec ${lib.getExe pkgs.cage} -s -- "$@"
-    fi
-    exit "$status"
-  '';
-
+  # cage is gone. It ran the greeter and the session while derisk could only
+  # draw nested in another compositor's window, and needed a wrapper to retry
+  # on wlroots' CPU renderer when a GPU had no GL driver. derisk now scans out
+  # on its own, and Mesa's software rasterizer covers a GPU without GL, so
+  # there is nothing left for a kiosk compositor to do underneath it.
   derisk = lib.getExe pkgs.derisk;
 in
 {
@@ -78,11 +61,9 @@ in
         "--vt"
         "1"
         "--"
-        derisk-cage
         derisk
         "greeter"
         "--"
-        derisk-cage
         derisk
         "session"
         "--execute"
@@ -110,7 +91,7 @@ in
   # derisk-login is a full login: startSession puts pam_systemd (the logind
   # session) in it, and homed adds pam_systemd_home. derisk-greeter is the
   # greeter's own session, which only needs pam_systemd, for the logind
-  # session cage opens the display through. Its auth stack goes unused: the
+  # session derisk takes the display and input devices through. Its auth stack goes unused: the
   # display manager never authenticates the greeter or sets its credentials.
   security.pam.services.derisk-login.startSession = true;
   security.pam.services.derisk-greeter.startSession = true;
@@ -177,7 +158,7 @@ in
   # timer is what makes updates appear without anyone asking.
   services.fwupd.enable = true;
 
-  # Mesa, for cage and for derisk's GLES renderer.
+  # Mesa, for derisk's GLES renderer and its GBM scanout buffers.
   hardware.graphics.enable = true;
 
   # Nothing is needed for FIDO2. The pm tree had to add CONFIG_HIDRAW to its

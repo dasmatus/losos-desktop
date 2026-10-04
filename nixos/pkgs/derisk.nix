@@ -32,13 +32,13 @@ rustPlatform.buildRustPackage {
     url = "https://github.com/dasmatus/derisk";
     # dasmatus/derisk#19, `derisk display-manager` and its greeter (the
     # login screen), until it merges. It is stacked on derisk#11, the lock
-    # screen, which builds against dasmatus/mcsapi#24, which ends a client's
-    # held press when the lock hides its window.
-    rev = "d8dbe6a05f092dac5c18bc13172583c1b7bd3b20";
-    hash = "sha256-pdR4bcFv0FTIdNrjh/yuk/SFKqAn0yLoz3lGvXMoPII=";
+    # screen, and builds against dasmatus/mcsapi#31, the compositor's DRM/KMS
+    # backend, which is stacked on mcsapi#24.
+    rev = "f0c12e43712150dd6bddc9a52cf2212898faf0d6";
+    hash = "sha256-f+ofvUi+plclxV25gE3KyNAJtozRZG+WSa5ZVlr2q5M=";
   };
 
-  cargoHash = "sha256-eNIhuAyEsmueeq4a8im0QNf0f95UaIZ5QwTWT2tL3bU=";
+  cargoHash = "sha256-eEg9pHLPaglzwcaCviX7RLnIt7o3otDiw8JPFECNP5Y=";
 
   # `host` is the compositor; without it the binary has only the headless
   # commands.
