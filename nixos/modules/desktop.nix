@@ -11,7 +11,12 @@
 # inside cage, a kiosk compositor that owns the seat through logind and shows
 # exactly one fullscreen client. Drop cage from the session's Exec= once
 # derisk can drive a TTY on its own.
-{ lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 
 let
   # One wayland-sessions entry, so gdm offers derisk and nothing else.
@@ -41,6 +46,24 @@ in
 
   # derisk-session.target, derisk-agent.socket and derisk-agent.service.
   systemd.packages = [ pkgs.derisk ];
+
+  # The PAM service derisk's lock screen checks passwords against. NixOS
+  # generates it like any login service, pam_systemd_home included, so a
+  # homed user unlocks with the same password that opens their home.
+  security.pam.services.derisk = { };
+
+  # Lock every session before the machine sleeps. logind does not do this by
+  # itself (GNOME's shell did); derisk locks when logind sends its session
+  # Lock, which `loginctl lock-sessions` does.
+  systemd.services.lock-before-sleep = {
+    description = "Lock sessions before sleep";
+    wantedBy = [ "sleep.target" ];
+    before = [ "sleep.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${config.systemd.package}/bin/loginctl lock-sessions";
+    };
+  };
 
   # derisk's Files, Settings, Text Editor, System Monitor and Calculator are
   # built into the derisk binary, which replaces GNOME's Files. A terminal is
