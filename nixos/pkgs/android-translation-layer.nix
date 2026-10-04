@@ -69,7 +69,6 @@ stdenv.mkDerivation {
       --replace-fail '/usr/lib/jvm/java-21-openjdk-amd64' "$JAVA_HOME"
   '';
 
-
   nativeBuildInputs = [
     cmake
     meson
