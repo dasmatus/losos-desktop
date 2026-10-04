@@ -42,6 +42,11 @@ in
   # --execute makes app launches and lock/suspend/reboot real rather than
   # simulated. There is one session, so no session chooser and no
   # wayland-sessions entry: the greeter is handed the command outright.
+  #
+  # Boot to graphical.target, which is what pulls the display manager in.
+  # NixOS' display-manager module used to set this for gdm; with gdm gone the
+  # default fell back to multi-user.target and VT1 stayed dark.
+  systemd.defaultUnit = "graphical.target";
   systemd.services.derisk-display-manager = {
     description = "derisk display manager";
     aliases = [ "display-manager.service" ];
