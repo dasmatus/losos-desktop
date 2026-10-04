@@ -144,8 +144,9 @@ in
       default = "16G";
       description = ''
         What first boot grows rootfs.img to. The image is built only as large
-        as the system closure; the initrd extends the file to this size before
-        mounting it, and x-systemd.growfs grows the filesystem to match.
+        as the system closure; the initrd allocates the file to this size
+        before mounting it, and x-systemd.growfs grows the filesystem to
+        match. If userdata has no room for it, the file keeps its size.
       '';
     };
   };
@@ -206,8 +207,13 @@ in
         ];
 
         # Grow rootfs.img to its full size before it is mounted. Only ever
-        # grows (`>`): a file that is already larger is left alone.
-        systemd.extraBin.truncate = "${pkgs.coreutils}/bin/truncate";
+        # grows: fallocate allocates up to the length and never shrinks a
+        # file that is already larger. Allocated, not truncated: a sparse
+        # file would let Android's /data and the root filesystem inside it
+        # both count the same free blocks, and the loser's writes would fail
+        # under the root filesystem. `-` because a userdata partition without
+        # the room leaves rootfs.img at its built size, which still boots.
+        systemd.extraBin.fallocate = "${pkgs.util-linux}/bin/fallocate";
         systemd.services.losos-halium-grow-rootfs = {
           description = "Grow rootfs.img to its full size";
           unitConfig = {
@@ -218,7 +224,7 @@ in
           requiredBy = [ "sysroot.mount" ];
           serviceConfig = {
             Type = "oneshot";
-            ExecStart = "/bin/truncate --no-create --size=>${cfg.rootfsSize} ${userdataMount}/${cfg.rootfsImage}";
+            ExecStart = "-/bin/fallocate --length ${cfg.rootfsSize} ${userdataMount}/${cfg.rootfsImage}";
           };
         };
       };

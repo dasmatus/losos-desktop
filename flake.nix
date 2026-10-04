@@ -181,9 +181,9 @@
           pm-plugins = self.packages.${system}.pm-plugins;
         }
         // lib.optionalAttrs (system == "aarch64-linux") {
-          # Every Halium module and assertion, and libhybris's build. The
-          # images themselves are left to `nix build .#halium`: the rootfs is
-          # the whole system closure a second time.
+          # Every Halium module and assertion, libhybris's build, and the
+          # images themselves: mkbootimg, the ext4 rootfs and its
+          # compression only run when the images are built.
           halium = self.packages.${system}.halium;
           libhybris = self.packages.${system}.libhybris;
         }

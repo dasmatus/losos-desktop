@@ -23,6 +23,13 @@ let
   # whose network is the host's. The system image is mounted read-only, so
   # nothing here asks LXC to create a mount point inside it; Android's root
   # already has /dev, /data and /vendor.
+  #
+  # This container is host root, not isolation: no user namespace and the
+  # host's whole /dev, as in Halium's lxc-android, because which nodes a
+  # vendor's HALs open differs per device and ueventd creates them at run
+  # time. The vendor blobs are trusted as much as the kernel. What can go
+  # without a known HAL needing it does: loading modules (the host's udev
+  # does that), raw I/O ports, the clock, and changing MAC policy.
   lxcConfig = pkgs.writeText "android.conf" ''
     lxc.rootfs.path = /android/system
     lxc.uts.name = android
@@ -36,6 +43,7 @@ let
     lxc.mount.entry = /vendor vendor none bind,optional 0 0
     lxc.mount.entry = /run/halium/userdata data none bind 0 0
     lxc.apparmor.profile = unconfined
+    lxc.cap.drop = sys_module sys_rawio sys_time mac_admin mac_override
     lxc.init.cmd = /init
   '';
 in

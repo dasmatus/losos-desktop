@@ -424,6 +424,14 @@ How a device boots it:
 Every mount on the Android side is `nofail`, so a device whose Android half is
 missing or broken still reaches the login screen.
 
+The container is not a security boundary. Android's init and the vendor HALs
+run as host root with the host's whole `/dev`, every block device included,
+so the vendor partition's closed blobs are trusted as much as the kernel, and
+nothing here plays the part of the PC build's verity `/usr`. It drops
+`sys_module`, `sys_rawio`, `sys_time` and the MAC capabilities; a `/dev`
+holding only the HAL nodes would narrow it further, but which nodes those are
+is per device, and it waits for a device bring-up to find out.
+
 `nix build .#packages.aarch64-linux.halium` produces `boot.img` and `rootfs.img.xz` with
 `SHA256SUMS`. Install with `fastboot flash boot boot.img`, unpack
 `rootfs.img.xz`, and copy it in from a recovery with
