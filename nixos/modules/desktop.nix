@@ -10,7 +10,7 @@
 # another Wayland or X11 session. Until it grows one, the session runs it
 # inside cage, a kiosk compositor that owns the seat through logind and shows
 # exactly one fullscreen client, and so does the greeter. Drop cage from the
-# greetd command once derisk can drive a TTY on its own.
+# display manager's command once derisk can drive a TTY on its own.
 {
   lib,
   pkgs,
@@ -41,27 +41,79 @@ let
   derisk = lib.getExe pkgs.derisk;
 in
 {
-  # The login screen is derisk's own lock screen, run as a greetd greeter
-  # (`derisk greeter`), so logging in and unlocking look the same. greetd
-  # replaced gdm: gdm is a GNOME Shell process with its own accounts daemon
-  # and session chooser, all to offer one session, while greetd is a small
-  # daemon that runs PAM and opens the logind session for whatever greeter it
-  # is given. The greeter only relays the conversation; greetd's PAM service,
-  # which NixOS generates with pam_systemd_home in it, is what unlocks a
-  # homed user's home area at login. greetd runs the greeter as its own
-  # unprivileged `greeter` user, and once the greeter has a user
-  # authenticated and exits, starts the session command it was handed.
+  # derisk is the display manager too: `derisk display-manager` runs as root
+  # on VT1 and does only PAM and session starts, drawing nothing. It runs
+  # derisk's lock screen as the login screen (`derisk greeter`), so logging in
+  # and unlocking are the same screen, and the greeter runs as its own
+  # unprivileged user and talks to it over a socket only that user can open.
+  # After a login it opens the user's session through the derisk-login PAM
+  # service and runs the session command as them; when the session ends the
+  # greeter comes back.
+  #
+  # This replaced gdm, a GNOME Shell process with its own accounts daemon and
+  # session chooser, all to offer one session. greetd would also have done:
+  # the greeter speaks its protocol and runs under it unchanged. But it is one
+  # more daemon between derisk and PAM doing the same small job, and without
+  # it nothing on the login path is anything but derisk and systemd.
   #
   # --execute makes app launches and lock/suspend/reboot real rather than
   # simulated. There is one session, so no session chooser and no
-  # wayland-sessions entry: the greeter is told the command outright.
-  services.greetd = {
-    enable = true;
-    settings.default_session = {
-      command = "${derisk-cage} ${derisk} greeter -- ${derisk-cage} ${derisk} session --execute";
-      user = "greeter";
+  # wayland-sessions entry: the greeter is handed the command outright.
+  systemd.services.derisk-display-manager = {
+    description = "derisk display manager";
+    aliases = [ "display-manager.service" ];
+    wantedBy = [ "graphical.target" ];
+    # VT1 is the display manager's, as it was gdm's: no getty there.
+    conflicts = [ "getty@tty1.service" ];
+    after = [
+      "systemd-user-sessions.service"
+      "getty@tty1.service"
+      "systemd-logind.service"
+    ];
+    wants = [ "systemd-user-sessions.service" ];
+    serviceConfig = {
+      ExecStart = lib.escapeShellArgs [
+        derisk
+        "display-manager"
+        "--vt"
+        "1"
+        "--"
+        derisk-cage
+        derisk
+        "greeter"
+        "--"
+        derisk-cage
+        derisk
+        "session"
+        "--execute"
+      ];
+      Type = "notify";
+      Restart = "always";
+      # Sessions live in their own logind scopes; stopping the display
+      # manager should not take a logged-in desktop down with it.
+      KillMode = "process";
+      # Its own runtime directory, for the greeter's socket.
+      RuntimeDirectory = "derisk-dm";
+      RuntimeDirectoryMode = "0711";
     };
   };
+
+  # The greeter's user: a system user with no home and no login, whose only
+  # power is asking the display manager to check a password.
+  users.users.derisk-greeter = {
+    isSystemUser = true;
+    group = "derisk-greeter";
+    description = "derisk login screen";
+  };
+  users.groups.derisk-greeter = { };
+
+  # derisk-login is a full login: startSession puts pam_systemd (the logind
+  # session) in it, and homed adds pam_systemd_home. derisk-greeter is the
+  # greeter's own session, which only needs pam_systemd, for the logind
+  # session cage opens the display through. Its auth stack goes unused: the
+  # display manager never authenticates the greeter or sets its credentials.
+  security.pam.services.derisk-login.startSession = true;
+  security.pam.services.derisk-greeter.startSession = true;
 
   # derisk-session.target, derisk-agent.socket and derisk-agent.service.
   systemd.packages = [ pkgs.derisk ];

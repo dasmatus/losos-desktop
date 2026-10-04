@@ -2,11 +2,11 @@
 #
 # There is no human user in users.users and no /etc/passwd entry for one. A
 # person is a systemd-homed record: a signed identity plus an encrypted home
-# image on the /home partition, created with homectl. greetd and its PAM
-# stack see them through NSS, answered by nss-systemd from systemd-userdbd.
-# The reason is the update model: /etc can be reset (disk.nix) and a user who
-# lived there would go with it, while a homed user travels with their own
-# home area.
+# image on the /home partition, created with homectl. The display manager
+# and its PAM stack see them through NSS, answered by nss-systemd from
+# systemd-userdbd. The reason is the update model: /etc can be reset
+# (disk.nix) and a user who lived there would go with it, while a homed user
+# travels with their own home area.
 #
 # This is also where NixOS closes a gap the pm tree never did. That tree
 # shipped no PAM configuration at all -- Linux-PAM's tarball carries none and
@@ -23,8 +23,8 @@
 
     # systemd-homed-firstboot: on the first boot, before any login screen is
     # reachable, ask for the first user on the console. Without it a fresh
-    # install reaches the login screen with nobody to log in as, because there is no
-    # useradd here and no account in the image.
+    # install reaches the login screen with nobody to log in as, because
+    # there is no useradd here and no account in the image.
     promptOnFirstBoot = true;
 
     settings.Home = {
@@ -46,15 +46,13 @@
   # userdbd serves homed's records over Varlink to NSS and to everything else
   # that asks. The homed module enables it; it is named here because it is
   # half of how a user exists at all.
-  # userdbd serves homed's records over Varlink to NSS and to everything else
-  # that asks. The homed module enables it; it is named here because it is
-  # half of how a user exists at all.
   #
   # It used to set silenceHighSystemUsers, for gdm's greeter users at 60578
-  # and up. greetd's one `greeter` user takes a UID from the ordinary system
-  # range, so nothing is left to silence, and the warning stays on to catch a
-  # system user that could make homed's first-boot wizard think a regular
-  # user already exists. The VM test's userdbctl step checks the same thing.
+  # and up. derisk's one `derisk-greeter` user takes a UID from the ordinary
+  # system range, so nothing is left to silence, and the warning stays on to
+  # catch a system user that could make homed's first-boot wizard think a
+  # regular user already exists. The VM test's userdbctl step checks the
+  # same thing.
   services.userdbd.enable = true;
 
   # NixOS routes NSS through a caching daemon so that glibc can find
