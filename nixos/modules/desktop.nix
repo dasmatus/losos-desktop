@@ -11,9 +11,31 @@
 # inside cage, a kiosk compositor that owns the seat through logind and shows
 # exactly one fullscreen client. Drop cage from the session's Exec= once
 # derisk can drive a TTY on its own.
-{ lib, pkgs, ... }:
+{
+  lib,
+  pkgs,
+  ...
+}:
 
 let
+  # cage asks wlroots for a GL renderer, then Vulkan, and gives up rather than
+  # draw in software. A GPU with no GL driver, such as QEMU's virtio-vga
+  # without virgl, made every gdm login end within a second and land back at
+  # the greeter with no message. So a cage that exits at startup is run once
+  # more on pixman, wlroots' CPU renderer: slow, but a desktop. Ten seconds
+  # separates that from a session that ran and ended, which a logout does by
+  # terminating the logind session and never returns here.
+  derisk-cage = pkgs.writeShellScript "derisk-cage" ''
+    start=$(${pkgs.coreutils}/bin/date +%s)
+    ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute && exit 0
+    status=$?
+    if [ -z "''${WLR_RENDERER:-}" ] && [ $(($(${pkgs.coreutils}/bin/date +%s) - start)) -lt 10 ]; then
+      echo "derisk-cage: cage exited at startup ($status), retrying with WLR_RENDERER=pixman" >&2
+      WLR_RENDERER=pixman exec ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute
+    fi
+    exit "$status"
+  '';
+
   # One wayland-sessions entry, so gdm offers derisk and nothing else.
   # --execute makes app launches and lock/suspend/reboot real rather than
   # simulated. cage's -s keeps VT switching, so a hung session can still be
@@ -23,7 +45,7 @@ let
       [Desktop Entry]
       Name=derisk
       Comment=Adaptive, agent-first Wayland desktop
-      Exec=${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute
+      Exec=${derisk-cage}
       Type=Application
       DesktopNames=derisk
     '').overrideAttrs
@@ -41,6 +63,19 @@ in
 
   # derisk-session.target, derisk-agent.socket and derisk-agent.service.
   systemd.packages = [ pkgs.derisk ];
+
+  # Generate the PAM stack used by derisk's lock screen. With homed enabled,
+  # NixOS includes pam_systemd_home in this service.
+  security.pam.services.derisk = { };
+
+  # Do not implement pre-sleep locking from a system oneshot: `loginctl
+  # lock-sessions` only emits logind's Lock signal and returns immediately, so
+  # ordering this Before=sleep.target does not guarantee the lock screen is
+  # actually active before suspend.
+  #
+  # Reliable pre-sleep locking must be implemented by the session compositor
+  # itself using a logind `sleep` delay inhibitor, locking, and only then
+  # releasing the inhibitor.
 
   # derisk's Files, Settings, Text Editor, System Monitor and Calculator are
   # built into the derisk binary, which replaces GNOME's Files. A terminal is

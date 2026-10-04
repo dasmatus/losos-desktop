@@ -133,6 +133,27 @@ What has to be set up once, outside the repository:
    checking and collecting the release. CI uploads its signed cache paths to
    GHCR whenever `NIX_CACHE_SIGNING_KEY` is configured, even if this URL is
    unset for a non-CI build; the proxy can serve them once configured.
+5. **The update signing key**, which every image trusts and every release
+   is signed with. Make it on a machine you trust, with no passphrase,
+   because CI signs unattended:
+
+   ```
+   export GNUPGHOME=$(mktemp -d)
+   mkdir -p nixos/keys
+   gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'LosOS Desktop updates' ed25519 sign never
+   gpg --armor --export > nixos/keys/update-signing.asc
+   gpg --armor --export-secret-keys   # paste into the secret UPDATE_SIGNING_KEY
+   rm -rf "$GNUPGHOME"                # once the secret and an offline copy are saved
+   ```
+
+   Commit `nixos/keys/update-signing.asc`; `losos.update.pubring` picks it
+   up and turns sysupdate's verification on. Put the key's fingerprint
+   (`gpg --show-keys --with-colons nixos/keys/update-signing.asc`) in
+   `UPDATE_SIGNING_FPR` in `ci.yml`. The `push` job fails without the secret,
+   or with a secret for a different key, rather than publish a release the
+   images would refuse. Keep an offline copy of the secret half: an image
+   only ever trusts the key it shipped with, so a lost key means every
+   installed machine stops taking updates until it is reinstalled.
 
 Before setting `LOSOS_PROXY_URL`, check the public deployment without a
 Vercel login: `/nix-cache-info` must return the cache metadata, an absent
@@ -280,7 +301,7 @@ That buys two things the pm tree wrote down as limits:
 | `user@.service.d/10-oomd.conf` | `systemd.oomd`, `systemd.slices.user` | |
 | `losos-security.service`, its D-Bus files | `services.nix` | same sandbox, line for line |
 | `50-losos-factory-reset.rules` | `security.polkit.extraConfig` in `disk.nix` | same rule |
-| `losos-selftest.service`, `losos-ota-test.service` | `testing.nix` | same kernel command line conditions |
+| `losos-selftest.service` | `testing.nix` | same kernel command line condition; `losos-ota-test.service` is gone, see `testing.nix` |
 | `recipes/10-core/losos-release` | `system.nixos.distroId`, `system.image.*` | NixOS writes os-release itself, with `IMAGE_VERSION` |
 | `manifest/architectures.yaml` | `losos.arch` in `options.nix` | x86_64 and aarch64 |
 | `tools/configure --version --channel` | `losos.version`, `losos.channel` | the flake derives the version from the commit date |
@@ -407,8 +428,12 @@ repart created it with would hold the right bytes and never be found.
   A `stable` release needs a second release output built with
   `losos.channel = "stable"`, and the flake has only the one.
 
-- **Signing.** `losos.update.pubring` is unset, so sysupdate installs updates
-  without verifying `SHA256SUMS.gpg`, and the build warns. Secure Boot signing
+- **Signing.** Until `nixos/keys/update-signing.asc` is committed,
+  `losos.update.pubring` is unset, sysupdate installs updates without
+  verifying `SHA256SUMS.gpg`, and the build warns. The `SHA256SUMS` attached
+  to the GitHub release for the installer ISOs is not signed, and there is no
+  key rotation: a new key needs an update signed by the old one that carries
+  both. Secure Boot signing
   of the UKI is not done either; as in the pm tree, a key belongs to whoever
   owns the machine.
 - **The two gnome-control-center patches** in `nixos/pkgs/patches/`. Nothing
@@ -419,8 +444,11 @@ repart created it with would hold the right bytes and never be found.
   security report answers on the bus, but neither has a button in Settings.
 - **derisk runs nested, inside cage.** derisk has no DRM/KMS backend yet, so
   gdm's derisk session starts `cage -s -- derisk session --execute` and derisk
-  draws in cage's one fullscreen window (`nixos/modules/desktop.nix`). derisk
-  also has no polkit agent, no layer-shell or XWayland yet, and no UI for
+  draws in cage's one fullscreen window (`nixos/modules/desktop.nix`). Its
+  lock screen (PAM service `derisk`) locks when asked and on logind's Lock,
+  but nothing locks before sleep or on idle yet: that needs derisk to hold a
+  logind `sleep` delay inhibitor until its lock screen is up. derisk also has no polkit agent, no layer-shell or
+  XWayland yet, and no UI for
   Bluetooth or power profiles, so those are left off. `run0` from a terminal
   still asks polkit on the terminal. The gnome-control-center patches below
   have no Settings app to go into any more.
