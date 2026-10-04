@@ -63,6 +63,10 @@ jobs:
       NIX_CACHE_URL: ${{ vars.LOSOS_PROXY_URL }}
       NIX_CACHE_PUBLIC_KEY: ${{ vars.NIX_CACHE_PUBLIC_KEY }}
       NIX_VERSION: "2.34.8"
+      # The installer script's own hash, from releases.nixos.org's
+      # install.sha256 for that version. The script carries the tarball's
+      # hash, so checking it pins every byte the install runs as root.
+      NIX_INSTALLER_SHA256: "96c10e102c88809dd9ec0bee89200c4a51eae4c9f6d8698c26b16788d131e078"
     steps:
       - name: Free disk space
         run: |
@@ -84,6 +88,7 @@ jobs:
           fi
           curl -sSfL --proto '=https' \
             "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
+          echo "$NIX_INSTALLER_SHA256  install-nix" | sha256sum -c -
           sh install-nix --daemon --yes --no-channel-add
           features="nixos-test benchmark big-parallel"
           if [ -e /dev/kvm ]; then
@@ -253,11 +258,16 @@ jobs:
     timeout-minutes: 15
     env:
       NIX_VERSION: "2.34.8"
+      # The installer script's own hash, from releases.nixos.org's
+      # install.sha256 for that version. The script carries the tarball's
+      # hash, so checking it pins every byte the install runs as root.
+      NIX_INSTALLER_SHA256: "96c10e102c88809dd9ec0bee89200c4a51eae4c9f6d8698c26b16788d131e078"
     steps:
       - name: Install Nix
         run: |
           curl -sSfL --proto '=https' \
             "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
+          echo "$NIX_INSTALLER_SHA256  install-nix" | sha256sum -c -
           sh install-nix --daemon --yes --no-channel-add
           echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
           sudo systemctl restart nix-daemon
