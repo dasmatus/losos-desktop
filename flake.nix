@@ -25,9 +25,14 @@
     # which some build hosts cannot reach at all. `nix flake update nixpkgs`
     # moves it.
     #
-    # 26.05 is the stable release: this is an OS people install, and an
-    # update to it is a new image, so unstable's churn buys nothing.
-    nixpkgs.url = "https://channels.nixos.org/nixos-26.05/nixexprs.tar.xz";
+    # nixos-unstable, the channel rather than nixpkgs master: Hydra has built
+    # and tested every revision it points at, so the stock closures still
+    # substitute from cache.nixos.org. An update to this OS is a whole new
+    # image that CI builds and the VM test boots before it is published, so
+    # a breaking change upstream stops at CI rather than on a machine, and
+    # tracking unstable buys the newer kernel, Mesa and systemd that the
+    # desktop and the Halium target (nixos/halium/) want.
+    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
   };
 
   outputs =
@@ -83,17 +88,37 @@
           ];
         };
 
+      # The Halium build: the same OS on an Android phone's hardware layer
+      # (nixos/halium/). arm64 only, since that is what Halium devices are.
+      # This configuration has no device kernel and boots no device; it is
+      # what CI evaluates and builds, and a device port is this plus its
+      # losos.halium settings.
+      haliumSystem = lib.nixosSystem {
+        modules = [
+          self.nixosModules.halium
+          {
+            nixpkgs.hostPlatform = "aarch64-linux";
+            losos.version = lib.mkDefault version;
+          }
+        ];
+      };
+
       archOf = system: lib.head (lib.splitString "-" system);
       configOf = system: self.nixosConfigurations."losos-desktop-${archOf system}".config;
     in
     {
       nixosModules.default = ./nixos/modules;
+      nixosModules.halium = ./nixos/halium;
 
       overlays.default = import ./nixos/pkgs;
 
-      nixosConfigurations = lib.listToAttrs (
-        map (system: lib.nameValuePair "losos-desktop-${archOf system}" (mkSystem system)) systems
-      );
+      nixosConfigurations =
+        lib.listToAttrs (
+          map (system: lib.nameValuePair "losos-desktop-${archOf system}" (mkSystem system)) systems
+        )
+        // {
+          losos-desktop-halium-aarch64 = haliumSystem;
+        };
 
       packages = forAllSystems (
         system: pkgs:
@@ -123,6 +148,12 @@
           nix = ours.nix;
           default = requireProxy build.image;
         }
+        // lib.optionalAttrs (system == "aarch64-linux") {
+          # boot.img and rootfs.img.xz, with SHA256SUMS. No update URL is
+          # baked into them, so this needs no LOSOS_PROXY_URL.
+          halium = haliumSystem.config.system.build.haliumImages;
+          inherit (ours) libhybris;
+        }
       );
 
       # The whole of nixpkgs at the pinned revision, as this OS builds it:
@@ -148,6 +179,13 @@
           derisk = self.packages.${system}.derisk;
           pm = self.packages.${system}.pm;
           pm-plugins = self.packages.${system}.pm-plugins;
+        }
+        // lib.optionalAttrs (system == "aarch64-linux") {
+          # Every Halium module and assertion, libhybris's build, and the
+          # images themselves: mkbootimg, the ext4 rootfs and its
+          # compression only run when the images are built.
+          halium = self.packages.${system}.halium;
+          libhybris = self.packages.${system}.libhybris;
         }
         # Boots the image under QEMU and checks the systemd pieces are actually
         # in place. Needs KVM, which the test driver asks for, so a builder

@@ -144,6 +144,22 @@ in
     swap /dev/disk/by-partlabel/losos-swap /dev/urandom swap,nofail
   '';
 
+  # udev probes /dev/mapper/swap when the mapping appears, before
+  # systemd-makefs has written the swap signature, and on systemd 261 no
+  # change event follows the mkswap. A CRYPT- device with no filesystem on
+  # record is SYSTEMD_READY=0 by 99-systemd.rules, so dev-mapper-swap.device
+  # never came up and swap timed out. Asking udev to look again once the
+  # signature is there is the event that went missing. A drop-in shipped as a
+  # package, because a whole unit here would shadow the one
+  # systemd-cryptsetup-generator writes, and systemd.services would also set
+  # PATH and hide the mkswap systemd-makefs runs.
+  systemd.packages = [
+    (pkgs.writeTextDir "lib/systemd/system/systemd-cryptsetup@swap.service.d/udev-change.conf" ''
+      [Service]
+      ExecStartPost=${config.systemd.package}/bin/udevadm trigger --settle --action=change /dev/mapper/swap
+    '')
+  ];
+
   # Naming the mapping here does two things: it activates /dev/mapper/swap, and
   # a swap line in fstab is what stops systemd-gpt-auto-generator activating
   # the raw partition underneath it.
@@ -164,11 +180,9 @@ in
   # The factory reset Varlink API at /run/systemd/io.systemd.FactoryReset.
   # Socket-activated, so enabling it costs a socket and no process. Without it
   # the only way to ask is the kernel command line, which a desktop user cannot
-  # reach. NixOS already carries factory-reset.target and its request units.
-  systemd.additionalUpstreamSystemUnits = [
-    "systemd-factory-reset.socket"
-    "systemd-factory-reset@.service"
-  ];
+  # reach. NixOS ships the socket and its service unit since unstable, and
+  # listing them here again made system-units link the socket twice and fail;
+  # starting it is the part left to this module.
   systemd.sockets.systemd-factory-reset.wantedBy = [ "sockets.target" ];
 
   # Let an active, local administrator ask for a factory reset.
