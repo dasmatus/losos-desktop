@@ -31,8 +31,8 @@ rustPlatform.buildRustPackage {
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
     # dasmatus/derisk#11, the lock screen, until it merges.
-    rev = "28876f0d7f94d81d62abdb6b8a298b81168918f1";
-    hash = "sha256-em4eB7uRnoVmxPm6LK+ppZsYhcstu0WbY09UVI5+PwI=";
+    rev = "aad30d7f015c452ee8adbc5a0d8c80685181aad7";
+    hash = "sha256-HGiQ4lrkQZXWjN8c/9apsQYMWUOQz8M+FwEK+E4EPAg=";
   };
 
   cargoHash = "sha256-Lz+3FxRVq6GObEwUuNZvC+MnILnPDZjugdk6L2gCTpE=";
