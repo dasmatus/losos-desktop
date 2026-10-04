@@ -3,6 +3,11 @@
 A [derisk](https://github.com/dasmatus/derisk) desktop operating system that uses systemd for everything it can and
 installs as an image.
 
+derisk is an adaptive, agent-first Wayland shell built on mcsapi. Its command
+palette brings together app and window management, an assistant, and an agent
+protocol; Files, Settings, Text Editor, System Monitor and Calculator are built
+in. Until derisk has a DRM/KMS backend, the desktop runs nested inside `cage`.
+
 The OS is a NixOS configuration, `flake.nix` plus the modules in `nixos/`.
 nixpkgs 26.05, pinned by `flake.lock`, provides the stock glibc packages for
 `x86_64-linux` and `aarch64-linux`. Nix uses cache.nixos.org for those packages;
