@@ -31,6 +31,7 @@ Evaluate both architectures before trusting a change:
 ```sh
 nix eval --raw .#nixosConfigurations.losos-desktop-x86_64.config.system.build.toplevel.drvPath
 nix eval --raw .#nixosConfigurations.losos-desktop-aarch64.config.system.build.toplevel.drvPath
+nix eval --raw .#nixosConfigurations.losos-desktop-halium-aarch64.config.system.build.toplevel.drvPath
 ```
 
 That runs every module and assertion in a few minutes. A full image build
@@ -40,13 +41,17 @@ still takes time, so don't start one to check a module edit.
 
 - `nixos/modules/` has one file per concern: `boot`, `disk`, `update`,
   `accounts`, `desktop`, `services`, `hardware`, `installer`, `pm` and
-  a few more. `default.nix` imports them all.
+  a few more. `base.nix` imports what every target shares; `default.nix`
+  adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
+- `nixos/halium/` is the Halium target: `base.nix` plus an Android boot image,
+  a loop-mounted `rootfs.img` on userdata, and the vendor HALs in an LXC
+  container. `docs/nixos.md`, "Halium", says what a device port supplies.
 - `nixos/installer/` is the installer ISO's live system: networkd,
   `wpa_supplicant` and `losos-installer` on tty1. `modules/installer.nix`
   evaluates it with the OS's own repart definitions and sysupdate transfers.
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
-  plugins, `losos-installer`, `losos-security`, `losos-swap`, and the pm
-  payload builder.
+  plugins, `losos-installer`, `losos-security`, `losos-swap`, the pm
+  payload builder, and Halium's `libhybris` and `android-headers`.
   `patches/` holds the two gnome-control-center patches. They target 51.0 and
   nothing applies them (`docs/nixos.md`).
 - `src/` holds the three programs this repository writes. The overlay builds

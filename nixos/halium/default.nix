@@ -81,12 +81,15 @@ in
 
     mkbootimgArgs = mkOption {
       type = types.listOf types.str;
+      # Header v2 is the first to carry a DTB, and mkbootimg refuses v2
+      # without one, so the default follows whether a DTB was given.
       default = [
         "--header_version"
-        "2"
+        (if cfg.dtb != null then "2" else "0")
         "--pagesize"
         "4096"
       ];
+      defaultText = lib.literalExpression ''[ "--header_version" (if dtb != null then "2" else "0") "--pagesize" "4096" ]'';
       example = [
         "--header_version"
         "2"
@@ -148,6 +151,17 @@ in
   };
 
   config = {
+    # systemd's README calls 5.10 its minimum baseline and says older kernels
+    # are "not supported at all". Most Halium ports of Android 9 and 10 run
+    # 4.x vendor kernels, so this is the line that says which devices can
+    # carry this OS, at evaluation rather than as a hang on the phone.
+    assertions = [
+      {
+        assertion = lib.versionAtLeast config.boot.kernelPackages.kernel.version "5.10";
+        message = "losos.halium: the device kernel is ${config.boot.kernelPackages.kernel.version}, and systemd ${config.systemd.package.version} needs at least 5.10.";
+      }
+    ];
+
     warnings = lib.optional (cfg.kernelPackages == null) ''
       losos.halium.kernelPackages is unset, so boot.img carries nixpkgs'
       generic kernel. It evaluates and builds, but no Halium device boots it:

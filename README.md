@@ -11,6 +11,11 @@ paths used by CI.
 [`pm`](https://github.com/dichhead/pm) ships in the image as the system
 manager, the tool a user of the running system builds and runs software with.
 
+The same OS also builds for [Halium](https://halium.org) phones and tablets
+(`nixos/halium/`): an Android boot image with NixOS's systemd initrd, and the
+device's vendor HALs running in an LXC container. It has not run on a device
+yet; `docs/nixos.md`, "Halium", says what a device port supplies.
+
 [`losos`](https://codeberg.org/dasmatus/losos) is the headless sibling: an
 appliance with no desktop, no graphical session and no seat management, on
 purpose. This repository takes its house style and none of its technical

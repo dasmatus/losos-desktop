@@ -391,6 +391,68 @@ reads with `@u` and gives the partition it writes. The initrd finds `/usr` by
 the UUIDs repart derived from `usrhash=`, so a slot that kept the random UUID
 repart created it with would hold the right bytes and never be found.
 
+## Halium
+
+`nixos/halium/` is a second target: the same OS on a phone or tablet through
+[Halium](https://halium.org), the Android hardware layer that ports such as
+Ubuntu Touch and Droidian build on. `nixosModules.halium` imports
+`nixos/modules/base.nix`, which holds everything a PC and a phone share (the
+derisk desktop, homed accounts, networkd, pm, no Nix on the device, the `/etc`
+overlay, sysusers), and adds its own boot and Android layer in place of the
+PC's UEFI, verity `/usr`, sysupdate and installer.
+
+How a device boots it:
+
+1. The Android bootloader loads `boot.img` from the boot partition. It holds
+   the device's kernel and NixOS's systemd initrd, with `init=` naming the
+   system as the UKI does on a PC. Halium's own rootfs boots through
+   halium-boot, a busybox ramdisk; this keeps systemd in the initrd instead.
+2. The initrd mounts `userdata` at `/run/halium/userdata`, grows
+   `losos/rootfs.img` on it to `losos.halium.rootfsSize`, and loop-mounts it
+   as `/` with `x-systemd.growfs`.
+3. After switch-root, the Halium system image (system-as-root, `/init` at its
+   top) is mounted read-only at `/android/system`, `vendor` at `/vendor`, and
+   `/android/system/system` at `/system`, where libhybris's linker looks.
+4. `losos-android.service` starts Android's init with `lxc-start`. The
+   container shares the host's `/dev` and network and gets userdata as
+   `/data`, as in Halium's lxc-android. It is LXC rather than
+   `systemd-nspawn` because nspawn always gives a container a private `/dev`,
+   and the HAL device nodes ueventd creates must be the ones the host opens.
+   It starts before the display manager.
+5. libhybris is a GLVND EGL vendor in `hardware.graphics`, beside Mesa.
+
+Every mount on the Android side is `nofail`, so a device whose Android half is
+missing or broken still reaches the login screen.
+
+`nix build .#halium` (aarch64) produces `boot.img` and `rootfs.img.xz` with
+`SHA256SUMS`. Install with `fastboot flash boot boot.img`, unpack
+`rootfs.img.xz`, and copy it in from a recovery with
+`adb push rootfs.img /data/losos/rootfs.img`.
+
+### What a device port supplies
+
+`losos-desktop-halium-aarch64` has no device in it: it carries nixpkgs'
+generic kernel, warns that it boots nothing, and exists so CI evaluates and
+builds the target. A port is that configuration plus:
+
+- `losos.halium.kernelPackages`: the port's kernel, for example from
+  `pkgs.linuxManualConfig` over the vendor tree and its Halium defconfig. It
+  must be 5.10 or newer, systemd's minimum baseline, and evaluation fails
+  otherwise. That rules out most Android 9 and 10 era ports, which run 4.x
+  kernels.
+- `losos.halium.mkbootimgArgs` and `losos.halium.dtb`: the device's
+  `BOARD_MKBOOTIMG_ARGS` and device tree, copied from its `BoardConfig.mk`.
+- `losos.halium.android.system` and `.vendor` when the partition labels
+  differ (A/B slots), and `losos.halium.userdataFsType` for f2fs.
+- `losos.halium.android.udevRules`: rules generated from the device's
+  `ueventd.rc`.
+- The Halium system image itself, built from the Halium tree for the device
+  and flashed to `system`.
+
+`nixos/pkgs/` builds `libhybris` from its upstream master and Halium's
+`android-headers` (one tree serves Halium 11 to 16). A device whose vendor
+HALs need older headers overrides `android-headers`.
+
 ## What is not done
 
 - **pm on a NixOS host.** pm's jail mirrors the host's `/bin`, `/lib` and
@@ -427,6 +489,27 @@ repart created it with would hold the right bytes and never be found.
   Bluetooth or power profiles, so those are left off. `run0` from a terminal
   still asks polkit on the terminal. The gnome-control-center patches below
   have no Settings app to go into any more.
+- **Halium has not run on a device.** It evaluates, `libhybris` builds on
+  x86_64, and an x86_64 build of the target (nixpkgs' kernel, no Android
+  partitions) booted under QEMU from a disk whose only partition was
+  `userdata`: the initrd mounted it, grew and loop-mounted `rootfs.img`,
+  switched root, timed out on the missing `vendor` and `system` without
+  failing, skipped the Android container and reached a login prompt. No
+  arm64 build, `boot.img` on a device, or Android container has been run.
+  Beyond that:
+  - **The display.** derisk runs inside cage, and cage needs DRM/KMS. A
+    device whose kernel has a DRM driver (msm, mediatek, panfrost) can show
+    the desktop with Mesa; one that only has Android's hwcomposer cannot,
+    because nothing here drives hwcomposer. That needs a hwcomposer backend
+    in derisk or a compositor in front of it.
+  - **Dynamic partitions.** Devices from Android 10 on keep `system` and
+    `vendor` inside `super`. Nothing maps its logical partitions yet, so such
+    a device has to name device-mapper targets set up by its port.
+  - **Updates.** sysupdate is not wired up; an update is a new `rootfs.img`
+    and `boot.img`, flashed by hand. There is no verity on the root either.
+  - **Telephony, audio, sensors, camera.** No ofono, no PulseAudio/PipeWire
+    droid modules, no sensorfw. Android's init starts the HALs, and nothing
+    on the Linux side talks to them yet beyond EGL.
 - **Wi-Fi.** As in the pm tree: networkd handles wired links, and nothing in
   the session configures Wi-Fi. `iwd` would be the smallest
   non-systemd addition that fixes it.
