@@ -30,7 +30,7 @@ let
   inherit (config.image.repart.verityStore) partitionIds;
   inherit (config.system.boot.loader) ukiFile;
 
-  # nixpkgs 26.05 hard-codes unshare in repart-image.nix. Add a local per-image
+  # nixpkgs hard-codes unshare in repart-image.nix. Add a local per-image
   # switch here so it also applies when the VM test imports this module.
   nixpkgsImageModules = "${modulesPath}/image";
   patchNixpkgsModule =
@@ -134,12 +134,12 @@ in
     inherit version;
   };
 
-  system.nixos = {
-    distroId = "losos-desktop";
-    distroName = "LosOS Desktop";
-  };
-
   image.repart = {
+    # nixpkgs unstable gates the whole repart image module on this switch.
+    # Without it image.repart.image is never defined and every output built
+    # from the disk fails to evaluate.
+    enable = true;
+
     name = id;
 
     # The vfat ESP and erofs /usr formatter do not need a nested user namespace,
@@ -154,6 +154,13 @@ in
       enable = true;
       ukiPath = "/EFI/Linux/${ukiFile}";
     };
+
+    # systemd 261's repart hands mkfs.erofs the image's 512-byte sector size
+    # as the filesystem block size. libblkid cannot identify an erofs with
+    # 512-byte blocks, so udev never learns /dev/mapper/usr holds a
+    # filesystem, marks it SYSTEMD_READY=0, and the initrd waits out the
+    # device with /usr unmounted. A later -b wins over repart's own.
+    mkfsOptions.erofs = [ "-b4096" ];
 
     partitions = {
       ${partitionIds.esp} = {

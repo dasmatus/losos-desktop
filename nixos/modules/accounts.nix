@@ -72,7 +72,12 @@
   users.allowNoPasswordLogin = true;
 
   # run0 instead of sudo: a transient unit started by the service manager
-  # rather than a setuid binary inheriting the caller's environment.
+  # rather than a setuid binary inheriting the caller's environment. nixpkgs
+  # unstable gave run0 its own enable switch and made the sudo alias depend on
+  # it, so both are named.
   security.sudo.enable = false;
-  security.run0.enableSudoAlias = true;
+  security.run0 = {
+    enable = true;
+    sudo-shim.enable = true;
+  };
 }
