@@ -15,6 +15,7 @@
 let
   inherit (lib) mkOption types;
   hostPlatform = pkgs.stdenv.hostPlatform;
+  updateKey = ../keys/update-signing.asc;
 in
 {
   options.losos = {
@@ -57,13 +58,24 @@ in
 
       pubring = mkOption {
         type = types.nullOr types.path;
-        default = null;
+        # The release key's public half is committed armored, so a change to
+        # it reads as text in review. gpg's --keyring, which systemd-pull
+        # verifies with, takes only binary keys, hence the dearmor.
+        default =
+          if builtins.pathExists updateKey then
+            pkgs.runCommand "import-pubring.gpg" { nativeBuildInputs = [ pkgs.buildPackages.gnupg ]; } ''
+              gpg --dearmor < ${updateKey} > $out
+            ''
+          else
+            null;
+        defaultText = lib.literalMD "`nixos/keys/update-signing.asc`, dearmored, when that file exists";
         description = ''
-          The GPG public keyring SHA256SUMS.gpg is verified against. With no
-          keyring, verification is turned off and the build says so with a
-          warning; sysupdate's default is to refuse an unsigned manifest, and
-          an image that shipped with that default and no key would never
-          update at all.
+          The GPG public keyring SHA256SUMS.gpg is verified against. CI signs
+          each release's SHA256SUMS with the secret half (docs/nixos.md says
+          how the two are made). With no keyring, verification is turned off
+          and the build says so with a warning; sysupdate's default is to
+          refuse an unsigned manifest, and an image that shipped with that
+          default and no key would never update at all.
         '';
       };
     };

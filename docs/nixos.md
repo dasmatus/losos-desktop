@@ -133,6 +133,24 @@ What has to be set up once, outside the repository:
    checking and collecting the release. CI uploads its signed cache paths to
    GHCR whenever `NIX_CACHE_SIGNING_KEY` is configured, even if this URL is
    unset for a non-CI build; the proxy can serve them once configured.
+5. **The update signing key**, which every image trusts and every release
+   is signed with. Make it on a machine you trust, with no passphrase,
+   because CI signs unattended:
+
+   ```
+   export GNUPGHOME=$(mktemp -d)
+   mkdir -p nixos/keys
+   gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key 'LosOS Desktop updates' ed25519 sign never
+   gpg --armor --export > nixos/keys/update-signing.asc
+   gpg --armor --export-secret-keys   # paste into the secret UPDATE_SIGNING_KEY
+   ```
+
+   Commit `nixos/keys/update-signing.asc`; `losos.update.pubring` picks it
+   up and turns sysupdate's verification on. The `push` job fails without
+   the secret rather than publish an unsigned release. Keep an offline copy
+   of the secret half: an image only ever trusts the key it shipped with,
+   so a lost key means every installed machine stops taking updates until
+   it is reinstalled.
 
 Before setting `LOSOS_PROXY_URL`, check the public deployment without a
 Vercel login: `/nix-cache-info` must return the cache metadata, an absent
@@ -407,8 +425,12 @@ repart created it with would hold the right bytes and never be found.
   A `stable` release needs a second release output built with
   `losos.channel = "stable"`, and the flake has only the one.
 
-- **Signing.** `losos.update.pubring` is unset, so sysupdate installs updates
-  without verifying `SHA256SUMS.gpg`, and the build warns. Secure Boot signing
+- **Signing.** Until `nixos/keys/update-signing.asc` is committed,
+  `losos.update.pubring` is unset, sysupdate installs updates without
+  verifying `SHA256SUMS.gpg`, and the build warns. The `SHA256SUMS` attached
+  to the GitHub release for the installer ISOs is not signed, and there is no
+  key rotation: a new key needs an update signed by the old one that carries
+  both. Secure Boot signing
   of the UKI is not done either; as in the pm tree, a key belongs to whoever
   owns the machine.
 - **The two gnome-control-center patches** in `nixos/pkgs/patches/`. Nothing

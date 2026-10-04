@@ -45,8 +45,9 @@ in
 {
   warnings = lib.optional (cfg.update.pubring == null) ''
     losos.update.pubring is unset, so systemd-sysupdate will install updates
-    without verifying SHA256SUMS.gpg. Set it to the release signing key's
-    public keyring before shipping an image to anyone.
+    without verifying SHA256SUMS.gpg. Commit the release signing key's public
+    half as nixos/keys/update-signing.asc (docs/nixos.md) before shipping an
+    image to anyone.
   '';
 
   environment.etc."systemd/import-pubring.gpg" = lib.mkIf (cfg.update.pubring != null) {

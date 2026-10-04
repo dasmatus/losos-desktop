@@ -214,9 +214,16 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { pattern: "release-*", path: built }
 
+      # Each architecture's SHA256SUMS is signed here, beside nothing but the
+      # downloaded release, so the key never shares a runner with build code.
+      # sysupdate on an installed system fetches SHA256SUMS.gpg next to it and
+      # refuses an update the key in nixos/keys/update-signing.asc did not
+      # sign. A release is never pushed unsigned: an image that trusts the key
+      # could not install it, and one that does not would install anything.
       - name: Push the releases to GHCR
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           shopt -s nullglob
           dirs=(built/release-*)
@@ -224,12 +231,22 @@ jobs:
             echo "No architecture finished a build, so there is nothing to push."
             exit 0
           fi
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::error::UPDATE_SIGNING_KEY is not set, so the release cannot be signed. docs/nixos.md says how to make it."
+            exit 1
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          trap 'rm -rf "$GNUPGHOME"; oras logout ghcr.io || true' EXIT
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$UPDATE_SIGNING_KEY" | gpg --batch --import
           printf '%s' "$GHCR_TOKEN" \
             | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           mkdir -p refs
           for dir in "${dirs[@]}"; do
             arch=${dir#built/release-}
             version=$(cat "$dir/.version")
+            gpg --batch --yes --detach-sign --output "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS"
+            gpg --batch --verify "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS"
             (
               cd "$dir"
               oras push "ghcr.io/${GITHUB_REPOSITORY,,}/images:nightly-$version-$arch" \
