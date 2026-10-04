@@ -99,7 +99,7 @@ jobs:
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
 
       # Fixed-output inputs come from cache.nixos.org where it has them, with
@@ -138,7 +138,7 @@ jobs:
       # build it again. A pull request reads the cache and writes nothing.
       # Uploading is independent of NIX_CACHE_URL: the GHCR paths can be served
       # by the proxy later, even when CI is not configured to fetch through it.
-      - uses: oras-project/setup-oras@v1
+      - uses: oras-project/setup-oras@v2
         if: always() && github.event_name != 'pull_request'
       - name: Push what was built to the cache
         if: always() && github.event_name != 'pull_request'
@@ -179,7 +179,7 @@ jobs:
           nix eval --impure --raw ".#nixosConfigurations.losos-desktop-$arch.config.losos.version" \
             > "$RUNNER_TEMP/release/.version"
           echo "arch=$arch" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: steps.collect.outputs.arch != ''
         with:
           name: release-${{ steps.collect.outputs.arch }}
@@ -200,8 +200,8 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: oras-project/setup-oras@v1
-      - uses: actions/download-artifact@v4
+      - uses: oras-project/setup-oras@v2
+      - uses: actions/download-artifact@v8
         with: { pattern: "release-*", path: built }
 
       - name: Push the releases to GHCR
@@ -232,7 +232,7 @@ jobs:
             echo "- $arch: \`$(cat "refs/release-ref-$arch.txt")\`" >> "$GITHUB_STEP_SUMMARY"
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-refs
           path: refs/
@@ -257,7 +257,7 @@ jobs:
           echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - name: Check formatting
         run: |
@@ -276,13 +276,13 @@ jobs:
       run:
         working-directory: proxy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo test
       # The tests are TypeScript run by node itself, which strips the types
       # from 22.6 on; the runner's own node may be older.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 22 }
       - run: npm ci
       - run: npm run typecheck
@@ -322,8 +322,8 @@ jobs:
       contents: write
       packages: write
     steps:
-      - uses: oras-project/setup-oras@v1
-      - uses: actions/download-artifact@v4
+      - uses: oras-project/setup-oras@v2
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with: { name: release-refs, path: refs }
 
