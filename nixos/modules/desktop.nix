@@ -45,9 +45,13 @@ in
   # derisk's Files, Settings, Text Editor, System Monitor and Calculator are
   # built into the derisk binary, which replaces GNOME's Files. A terminal is
   # the one app it does not have, and foot is the one its own docs launch.
+  # Papirus gives derisk the greyscale icons it draws for its own actions
+  # (window buttons, overview, search, palette rows); without it derisk
+  # falls back to glyphs.
   environment.systemPackages = [
     pkgs.derisk
     pkgs.foot
+    pkgs.papirus-icon-theme
   ];
 
   # What GNOME's module used to switch on, kept where something in the session
