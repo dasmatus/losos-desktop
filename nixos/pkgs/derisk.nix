@@ -70,6 +70,10 @@ rustPlatform.buildRustPackage {
     install -Dm644 -t $out/lib/systemd/user data/systemd/user/*
     substituteInPlace $out/lib/systemd/user/derisk-agent.service \
       --replace-fail "ExecStart=derisk " "ExecStart=$out/bin/derisk "
+    # The graphical host owns the live agent socket; do not start the headless
+    # listener on the same pathname when the session target starts.
+    substituteInPlace $out/lib/systemd/user/derisk-session.target \
+      --replace-fail " derisk-agent.socket" ""
   '';
 
   meta = {
