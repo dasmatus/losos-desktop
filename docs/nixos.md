@@ -535,7 +535,7 @@ HALs need older headers overrides `android-headers`.
   failing, skipped the Android container and reached a login prompt. No
   arm64 build, `boot.img` on a device, or Android container has been run.
   Beyond that:
-  - **The display.** derisk runs inside cage, and cage needs DRM/KMS. A
+  - **The display.** derisk drives the display itself through DRM/KMS. A
     device whose kernel has a DRM driver (msm, mediatek, panfrost) can show
     the desktop with Mesa; one that only has Android's hwcomposer cannot,
     because nothing here drives hwcomposer. That needs a hwcomposer backend
