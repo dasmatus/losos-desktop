@@ -52,18 +52,14 @@ in
   # homed user unlocks with the same password that opens their home.
   security.pam.services.derisk = { };
 
-  # Lock every session before the machine sleeps. logind does not do this by
-  # itself (GNOME's shell did); derisk locks when logind sends its session
-  # Lock, which `loginctl lock-sessions` does.
-  systemd.services.lock-before-sleep = {
-    description = "Lock sessions before sleep";
-    wantedBy = [ "sleep.target" ];
-    before = [ "sleep.target" ];
-    serviceConfig = {
-      Type = "oneshot";
-      ExecStart = "${config.systemd.package}/bin/loginctl lock-sessions";
-    };
-  };
+  # Do not implement pre-sleep locking from a system oneshot: `loginctl
+  # lock-sessions` only emits logind's Lock signal and returns immediately, so
+  # ordering this Before=sleep.target does not guarantee the lock screen is
+  # actually active before suspend.
+  #
+  # Reliable pre-sleep locking must be implemented by the session compositor
+  # itself using a logind `sleep` delay inhibitor, locking, and only then
+  # releasing the inhibitor.
 
   # derisk's Files, Settings, Text Editor, System Monitor and Calculator are
   # built into the derisk binary, which replaces GNOME's Files. A terminal is
