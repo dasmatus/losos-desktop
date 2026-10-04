@@ -432,15 +432,18 @@ repart created it with would hold the right bytes and never be found.
   bootloader on the ESP is the one the image shipped.
 - **sysext.** Extensions merge into `/usr`, which here holds little but the
   Nix store, so an extension can add a program and cannot replace one.
-- **Android apps.** `nixos/modules/atl.nix` adds a `losos.android.enable`
-  option that installs the Android Translation Layer and makes it the default
-  handler for `.apk` files. It is off by default and its package
-  (`nixos/pkgs/android-translation-layer.nix`) is a first cut that evaluates
-  but has not built to completion: ATL's build shells out to the Android SDK
-  build-tools (`dx`, `aapt`), which this recipe does not yet provide, and its
-  source hash is still a placeholder. Both files say so at the top. Because
-  the option is off, `nix flake check` never realises the package, so the
-  bring-up can land and mature without gating the image.
+- **Android apps.** `nixos/modules/atl.nix` has two options, both off by
+  default. `losos.android.enable` installs the Android Translation Layer.
+  `losos.android.openApks` additionally makes it the default handler for
+  `.apk` files. The package (`nixos/pkgs/android-translation-layer.nix`) is
+  pinned to a full commit with a real fixed-output hash, and it evaluates, but
+  it has not built to completion. Two gaps remain, and the package header
+  lists the first: ATL's build shells out to the Android SDK build-tools
+  (`dx`, `aapt`), which the recipe does not yet provide, and the pinned tree
+  has no `thirdparty/art_standalone/build`, which ART's Makefile includes, so
+  it needs another source input. Because both options are off, `nix flake
+  check` never realises the package, so the bring-up can land and mature
+  without gating the image.
   **APKs run unsandboxed.** ATL runs an app's dex and native code as an
   ordinary process of the session user: Android's per-app UID, permission
   model and SELinux domain are not there, so a malicious APK has the reach of
