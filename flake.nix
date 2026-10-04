@@ -184,7 +184,7 @@
           # Every Halium module and assertion, and libhybris's build. The
           # images themselves are left to `nix build .#halium`: the rootfs is
           # the whole system closure a second time.
-          halium-toplevel = haliumSystem.config.system.build.toplevel;
+          halium = self.packages.${system}.halium;
           libhybris = self.packages.${system}.libhybris;
         }
         # Boots the image under QEMU and checks the systemd pieces are actually
