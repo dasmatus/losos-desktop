@@ -256,8 +256,16 @@ jobs:
           for dir in "${dirs[@]}"; do
             arch=${dir#built/release-}
             version=$(cat "$dir/.version")
-            gpg --batch --yes --detach-sign --output "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS"
-            gpg --batch --verify "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS"
+            # Name the key: without --local-user gpg signs with whichever
+            # secret key it prefers, which need not be the one checked above.
+            gpg --batch --yes --local-user "$UPDATE_SIGNING_FPR" --detach-sign \
+              --output "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS"
+            signer=$(gpg --batch --status-fd 1 --verify "$dir/SHA256SUMS.gpg" "$dir/SHA256SUMS" \
+              | awk '$2 == "VALIDSIG" { print $NF }')
+            if [ "$signer" != "$UPDATE_SIGNING_FPR" ]; then
+              echo "::error::$arch SHA256SUMS was signed by ${signer:-no valid key}, not $UPDATE_SIGNING_FPR."
+              exit 1
+            fi
             (
               cd "$dir"
               oras push "ghcr.io/${GITHUB_REPOSITORY,,}/images:nightly-$version-$arch" \

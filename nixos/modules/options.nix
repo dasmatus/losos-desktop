@@ -64,7 +64,8 @@ in
         default =
           if builtins.pathExists updateKey then
             pkgs.runCommand "import-pubring.gpg" { nativeBuildInputs = [ pkgs.buildPackages.gnupg ]; } ''
-              gpg --dearmor < ${updateKey} > $out
+              export GNUPGHOME=$(mktemp -d)
+              gpg --batch --dearmor < ${updateKey} > $out
             ''
           else
             null;
