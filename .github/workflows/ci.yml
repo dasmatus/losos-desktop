@@ -31,10 +31,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Every package the OS compiles rather than substitutes, built on each
-  # architecture before the release: `.#prebuild` in flake.nix, which is the
-  # patched GTK and Qt, everything in the system that links them, and this
-  # repository's own programs. Outside a pull request whatever it builds goes
+  # Every package the release needs, built on each architecture before the
+  # image is assembled: the patched GTK and Qt, everything that links them,
+  # and this repository's own programs. Nothing lists them:
+  # tools/nix-prebuild-plan finds them by evaluating the release twice with
+  # different versions and keeping what did not change, so a package a
+  # later overlay or module adds is prebuilt without editing this file.
+  # Whatever a substituter has is skipped. Outside a pull request whatever it builds goes
   # to the project cache, so later runs, and any build host that reads the
   # proxy, substitute it instead of compiling it again. In every run it also
   # hands what it compiled to `flake` as an artifact, because a pull request
@@ -119,7 +122,7 @@ jobs:
       # copied outputs checked against their hashes. This includes pinned
       # bootstrap and compiler inputs as well as upstream source archives.
       - name: Fetch fixed-output inputs
-        run: tools/nix-fetch-sources .#prebuild
+        run: tools/nix-fetch-sources .#release
 
       # Record the store after preloading so the cache push excludes both the
       # Nix installer and every path added by the fetch, even if it failed.
@@ -128,11 +131,14 @@ jobs:
         if: always()
         run: nix path-info --all > "$RUNNER_TEMP/prebuilt.txt"
 
+      - name: Find the packages
+        run: tools/nix-prebuild-plan ${{ matrix.arch }} > "$RUNNER_TEMP/plan.txt"
+
       - name: Build the packages
         id: build
         run: |
           set +e
-          timeout --signal=INT 300m nix build --impure -L --keep-going --out-link prebuild .#prebuild \
+          timeout --signal=INT 300m nix build --impure -L --keep-going --no-link --stdin < "$RUNNER_TEMP/plan.txt" \
             2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           set -e
@@ -181,9 +187,9 @@ jobs:
       # `ultimate` marks, rather than one it substituted, which `flake` can
       # substitute as well. Import refuses a path before its references, so
       # the list is in closure order, and the references it does not carry
-      # are listed for `flake` to substitute first. `complete` says the
-      # whole of `.#prebuild` was built, which is what lets `flake` check
-      # that none of it is left to compile.
+      # are listed for `flake` to substitute first. The plan goes too, and
+      # `complete` says all of it was built, which is what lets `flake`
+      # check that none of it is left to compile.
       - name: Hand what was built to the release build
         if: always()
         env:
@@ -208,6 +214,7 @@ jobs:
             # shellcheck disable=SC2046 # one store path per line, no spaces
             nix-store --export $(cat "$out/paths.txt") | zstd -T0 -3 > "$out/paths.nar.zst"
           fi
+          cp "$RUNNER_TEMP/plan.txt" "$out/plan.txt" || true
           if [ "$COMPLETE" = true ]; then touch "$out/complete"; fi
           echo "Built $(wc -l < "$out/paths.txt") path(s); $(du -sh "$out" | cut -f1) to hand over."
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -271,7 +278,7 @@ jobs:
           echo "Imported $(wc -l < prebuilt/paths.txt) path(s)."
 
       # The check that the split saves anything. Once `prebuild` built all of
-      # `.#prebuild`, every package in it is either in this store or in a
+      # its plan, every package in it is either in this store or in a
       # substituter, so a plan that still compiles one means this job
       # evaluated different derivations, or the handover lost them. That is
       # a bug, and is reported here instead of costing hours below.
@@ -281,10 +288,10 @@ jobs:
             echo "::warning::prebuild did not finish, so this build compiles what it left."
             exit 0
           fi
-          nix build --dry-run .#prebuild 2> plan.txt
-          if grep -q 'will be built' plan.txt; then
-            sed -n '/will be built/,/will be fetched/p' plan.txt | head -60
-            echo "::error::prebuild built .#prebuild, but this job would compile the derivations above again."
+          nix build --dry-run --stdin < prebuilt/plan.txt 2> dry-run.txt
+          if grep -q 'will be built' dry-run.txt; then
+            sed -n '/will be built/,/will be fetched/p' dry-run.txt | head -60
+            echo "::error::prebuild built its whole plan, but this job would compile the derivations above again."
             exit 1
           fi
           echo "Every prebuilt package is in the store or a substituter."

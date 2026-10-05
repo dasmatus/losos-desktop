@@ -566,8 +566,10 @@ qtshadertools (qtbase links GTK3 for its GTK platform theme, and
 breeze-icons, which papirus-icon-theme builds against, needs Qt), and
 gjs, gcr, gnome-keyring, gnome-desktop, gnome-settings-daemon, libsecret,
 xdg-desktop-portal and its GTK backend, ostree, flatpak and geoclue: about
-thirty derivations per architecture. CI's `prebuild` job builds them, as
-`.#prebuild`, before the release build starts, pushes them to the project's
+thirty derivations per architecture. CI's `prebuild` job builds them before
+the release build starts (`tools/nix-prebuild-plan` finds them: every
+derivation the release needs that does not change with `losos.version`, so
+nothing lists them by name), pushes them to the project's
 cache, and hands them to the release build in the same run, which checks
 that none of them is left to compile. Later runs substitute them from the
 cache until nixpkgs moves GTK or Qt. Flatpak applications run on their runtime's own GTK and Qt

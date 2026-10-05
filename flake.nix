@@ -147,38 +147,6 @@
           # this package is for a build host that wants matching Nix.
           nix = ours.nix;
           default = requireProxy build.image;
-          # Every package the OS compiles rather than substitutes, without the
-          # image around them: the patched GTK and Qt, everything in the
-          # system that links them, and this repository's own programs. CI's
-          # `prebuild` job builds this ahead of `.#release` and hands the
-          # result to the release build and the project cache, so neither the
-          # release build nor the next run compiles them again. The system's
-          # packages are its `system.path`, the buildEnv of
-          # environment.systemPackages, which is where NixOS modules put what
-          # their services run. Nothing in it reads LOSOS_PROXY_URL, so it is
-          # the same store path with or without it.
-          prebuild = ours.linkFarm "losos-prebuild" (
-            {
-              gtk3 = ours.gtk3;
-              gtk4 = ours.gtk4;
-              qtbase = ours.qt6.qtbase;
-              system-path = (configOf system).system.path;
-              inherit (ours)
-                derisk
-                pm
-                pm-plugins
-                losos-installer
-                losos-security
-                losos-swap
-                ;
-            }
-            // lib.optionalAttrs (system == "aarch64-linux") {
-              # The Halium system shares the overlay, so its packages are
-              # mostly the same paths, and flake check builds the rest.
-              halium-system-path = haliumSystem.config.system.path;
-              inherit (ours) libhybris;
-            }
-          );
         }
         // lib.optionalAttrs (system == "aarch64-linux") {
           # boot.img and rootfs.img.xz, with SHA256SUMS. No update URL is
