@@ -11,6 +11,11 @@ paths used by CI.
 [`pm`](https://github.com/dichhead/pm) ships in the image as the system
 manager, the tool a user of the running system builds and runs software with.
 
+Apps the image does not carry come from [Flathub](https://flathub.org) as
+Flatpaks, through the [Bazaar](https://github.com/bazaar-org/bazaar) store.
+derisk's own portal backend gives them its theme, screenshots and the
+wallpaper; GTK's covers the file chooser and the rest.
+
 The same OS also builds for [Halium](https://halium.org) phones and tablets
 (`nixos/halium/`): an Android boot image with NixOS's systemd initrd, and the
 device's vendor HALs running in an LXC container. It has not run on a device

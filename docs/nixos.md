@@ -52,6 +52,16 @@ Everything the flake builds from, besides this repository:
   source. It is prebuilt by the hardware vendors, and nothing can compile it.
   `hardware.nix` ships it because amdgpu and nouveau cannot start current
   GPUs without it.
+- **derisk**, cloned from `github.com/dasmatus/derisk` at a pinned commit and
+  hash (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned
+  by its `Cargo.lock` and `cargoHash`. It is the desktop, the display manager
+  and the portal backend.
+- **Flathub**, for apps installed after the fact. Its repo file, with the
+  signing key every install is checked against, is
+  `nixos/modules/flathub.flatpakrepo` in this tree; the image adds the remote
+  from that copy at boot and never fetches the key. The apps themselves are
+  Flathub's builds, sandboxed by Flatpak and verified against that key, and
+  nothing in the image depends on one.
 - **The project's binary cache** in GHCR, through `proxy/` (below): optional
   paths the CI job stores and signs. A client checks every narinfo against
   the public key it was told to trust, so the proxy and GHCR carry bytes but
@@ -593,6 +603,12 @@ rebasing the two `Treat a display of phone-sized monitors` patches.
   Bluetooth or power profiles, so those are left off. `run0` from a terminal
   still asks polkit on the terminal. The gnome-control-center patches below
   have no Settings app to go into any more.
+- **Flatpak installs need wheel.** flatpak's polkit rule lets an active,
+  local wheel member install for the whole system without a password, which
+  is how Bazaar installs. With no polkit agent in derisk, anyone else cannot
+  be asked, and installs only for themselves. derisk's portal backend has no
+  area or color picker and does not set the lock screen's picture; it asks
+  for consent through GTK's access dialog, not one of its own.
 - **Halium has not run on a device.** It evaluates, `libhybris` builds on
   x86_64, and an x86_64 build of the target (nixpkgs' kernel, no Android
   partitions) booted under QEMU from a disk whose only partition was
