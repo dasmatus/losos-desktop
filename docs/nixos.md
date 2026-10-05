@@ -769,6 +769,7 @@ by choice. The counts are read with `PFCOUNT actives:<YYYY-MM>:eu` (or without
 `:eu`, for everyone) in the database's console. Where a person is comes
 from their address at the time of the ping, not from a setting on the
 machine, so a VPN moves them.
+
 ## One icon theme
 
 Every app draws its icons from the icon theme derisk's theme names
