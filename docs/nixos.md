@@ -586,7 +586,10 @@ same line as above, every screen under 600 logical pixels on its short
 side; the launcher measures it once, at launch, over xdg-output, and
 `URANIUM_FORM_FACTOR=phone` or `desktop` overrides it. On a phone it also
 turns on Chromium's touch layout for the tab strip and toolbar, overlay
-scrollbars and touch events. Everywhere it uses Wayland and
+scrollbars and touch events, and Chrome for Android's power saving, which
+the desktop build carries but leaves off: hidden pages are frozen after a
+grace period and give back their memory, and every background tab but the
+last one used can be frozen. Everywhere it uses Wayland and
 `text-input-unstable-v3`, so derisk's on-screen keyboard follows its text
 fields; Chromium speaks v1 unless told.
 

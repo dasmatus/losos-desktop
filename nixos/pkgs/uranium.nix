@@ -152,9 +152,18 @@ let
       # The touch layout of the tab strip and toolbar, overlay scrollbars as
       # on Android, and touch events on for every page, which sites test for
       # before they serve their touch version.
+      #
+      # The rest is Chrome for Android's power saving, which the desktop
+      # build has but leaves off: a page hidden past its grace period is
+      # frozen and stops running timers (stop-in-background, on by default
+      # only on Android), a frozen page gives back its memory
+      # (MemoryPurgeOnFreeze, likewise), and every background tab but the
+      # last one used can be frozen (InfiniteTabsFreezing), where Android
+      # freezes whatever is not on screen. The desktop freezing policy's
+      # exemptions still hold, such as a tab that is playing audio.
       set -- \
         --top-chrome-touch-ui=enabled \
-        --enable-features=OverlayScrollbar \
+        --enable-features=OverlayScrollbar,stop-in-background,MemoryPurgeOnFreeze,InfiniteTabsFreezing:num_protected_tabs/1 \
         --touch-events=enabled \
         "$@"
       ${
