@@ -1,7 +1,18 @@
 # The three programs this repository writes rather than fetches, pm, the
-# system manager, and the Halium hardware layer nixpkgs does not carry.
-# Everything else the OS runs comes from nixpkgs.
-final: _prev: {
+# system manager, and the Halium hardware layer nixpkgs does not carry, plus
+# GTK and Qt with the patches that make their applications fit a phone.
+# Everything else the OS runs comes from nixpkgs unchanged.
+final: prev:
+let
+  # A directory of patches, applied in file name order, which the numeric
+  # prefixes make the order they were written to apply in.
+  patchesIn =
+    dir:
+    map (name: dir + "/${name}") (
+      builtins.sort builtins.lessThan (builtins.attrNames (builtins.readDir dir))
+    );
+in
+{
   pm = final.callPackage ./pm.nix { };
   pm-plugins = final.callPackage ./pm-plugins.nix { };
   derisk = final.callPackage ./derisk.nix { };
@@ -18,4 +29,43 @@ final: _prev: {
   android-translation-layer = final.callPackage ./android-translation-layer.nix { };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
+
+  # Mobile-friendly toolkits (docs/nixos.md, "GTK and Qt on a phone").
+  # Replacing them here, rather than patching each application, gives every
+  # package that links them the patched build, on the PC and Halium alike.
+  # Each patch switches on only when every screen is phone-sized (under 600
+  # logical pixels on its short side, derisk's own phone line), so a PC sees
+  # stock behaviour; Qt's touch scrolling alone follows a touchscreen instead. The cost is that GTK, Qt and everything built against
+  # them no longer substitute from cache.nixos.org and are built by CI.
+  #
+  # GTK3: Purism's adaptive series, which PureOS and Mobian ship on phones:
+  # an adaptive file chooser, about, print and shortcuts windows built from
+  # libhandy widgets copied into GTK, maximized dialogs, a back button in
+  # dialog header bars, and touch event fixes. 0033 is ours and turns it on
+  # from the screen size instead of a per-device setting.
+  gtk3 = prev.gtk3.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk3;
+  });
+  # GTK4: Purism's three adaptive patches (postmarketOS carried the same two
+  # behaviour changes until libadwaita 1.5 made its own dialogs adaptive):
+  # resizable dialogs and transient windows open maximized, and get only a
+  # close button. Plain GTK4 windows still need them; libadwaita's
+  # AdwDialog and breakpoints already adapt and are left alone. 0004 is ours,
+  # as in GTK3.
+  gtk4 = prev.gtk4.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk4;
+  });
+  # Qt 6: nobody ships Qt phone patches (Plasma Mobile adapts in Kirigami
+  # and its own shell), so both are ours. A finger scrolls Qt Widgets'
+  # scroll areas kinetically, and resizable dialogs open maximized with
+  # their minimum size capped at the screen. Since Qt 6.10 the Wayland
+  # client lives in qtbase, so qtwayland, now only the compositor library,
+  # needs nothing. Qt 5 is left stock: nothing in the image links it.
+  qt6 = prev.qt6.overrideScope (
+    _: qtPrev: {
+      qtbase = qtPrev.qtbase.overrideAttrs (old: {
+        patches = (old.patches or [ ]) ++ patchesIn ./patches/qtbase;
+      });
+    }
+  );
 }
