@@ -13,8 +13,11 @@
 # one until a builder can produce the other (losos.uranium.patched).
 {
   lib,
+  stdenv,
   runCommand,
+  writeShellScript,
   makeDesktopItem,
+  ccache,
   runtimeShell,
   # nixpkgs' ungoogled-chromium build, without its wrapper, and the
   # ungoogled-chromium patch series it applies.
@@ -55,9 +58,65 @@ let
         postPatch = (old.postPatch or "") + ''
           python3 ${./uranium/rebrand.py}
         '';
+        # nixpkgs' gn arguments are fixed in its configurePhase, so these go
+        # into args.gn after it and gn runs again over the same directory.
+        #
+        # An official build already turns on ThinLTO on Linux, and CFI on
+        # x86_64: forward-edge checks on virtual calls, casts and indirect
+        # calls, so a corrupted function pointer or vtable stops the process
+        # instead of jumping where an attacker points it. They are set here
+        # so that gn refusing either fails the build rather than quietly
+        # building without, and checked after. Chromium does not build CFI
+        # for arm64 Linux; there the official build's branch protection
+        # (PAC and BTI, arm_control_flow_integrity) does that job in
+        # hardware where the CPU has it.
+        #
+        # cc_wrapper puts the compiler behind ccache when the builder has
+        # one (ccacheWrapper), which is what lets CI compile this in rounds.
+        postConfigure =
+          (old.postConfigure or "")
+          + ''
+            {
+              echo 'use_thin_lto = true'
+              echo 'cc_wrapper = "${ccacheWrapper}"'
+          ''
+          + lib.optionalString stdenv.hostPlatform.isx86_64 ''
+            echo 'is_cfi = true'
+            echo 'use_cfi_icall = true'
+          ''
+          + ''
+            } >> out/Release/args.gn
+            gn gen out/Release
+            for arg in use_thin_lto ${lib.optionalString stdenv.hostPlatform.isx86_64 "is_cfi use_cfi_icall"}; do
+              if ! gn args out/Release --short --list=$arg | grep -qx "$arg = true"; then
+                echo "uranium: gn did not keep $arg = true" >&2
+                exit 1
+              fi
+            done
+          '';
       })
     else
       chromium-unwrapped;
+
+  # The compiler, through ccache when the builder offers a cache at
+  # /var/cache/uranium-ccache (Nix's extra-sandbox-paths), and directly
+  # otherwise. The derivation is the same either way, so a build that used
+  # the cache is the one the image asks for, and ccache only returns an
+  # object for exactly the same preprocessed input and compiler. Paths are
+  # made relative to the build directory, and a source file's time is not
+  # held against it, because patching leaves every patched file newer than
+  # the cache entry.
+  ccacheWrapper = writeShellScript "uranium-cc-wrapper" ''
+    if [ -d /var/cache/uranium-ccache ] && [ -w /var/cache/uranium-ccache ]; then
+      export CCACHE_DIR=/var/cache/uranium-ccache
+      export CCACHE_BASEDIR="$NIX_BUILD_TOP"
+      export CCACHE_NOHASHDIR=1
+      export CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros
+      export CCACHE_MAXSIZE=40G
+      exec ${lib.getExe ccache} "$@"
+    fi
+    exec "$@"
+  '';
 
   patchesIn =
     dir:
