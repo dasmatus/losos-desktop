@@ -28,16 +28,28 @@ in
   # not carry either; only in the closure when losos.android.enable is set.
   android-translation-layer = final.callPackage ./android-translation-layer.nix { };
   # Uranium (uranium.nix), the web browser. The default build wraps
-  # nixpkgs' Chromium as nixpkgs alone builds it: taken from this package
-  # set, Chromium would link the patched GTK below and need compiling, which
-  # takes longer than CI's time budget, while nixpkgs' own build substitutes
-  # from cache.nixos.org. uranium-patched compiles it with
-  # patches/chromium; losos.uranium.patched picks it for the image.
-  uranium = final.callPackage ./uranium.nix {
-    chromium-unwrapped =
-      (import final.path { inherit (final.stdenv.hostPlatform) system; }).chromium.browser;
-  };
+  # nixpkgs' ungoogled-chromium as nixpkgs alone builds it: taken from this
+  # package set, it would link the patched GTK below and need compiling,
+  # which takes longer than CI's time budget, while nixpkgs' own build
+  # substitutes from cache.nixos.org. ungoogled-chromium, not chromium, so
+  # the browser has no Google API keys, no Safe Browsing lookups, no
+  # field trials and none of Google's domains to reach (docs/nixos.md,
+  # "Uranium"). uranium-patched compiles it with patches/chromium;
+  # losos.uranium.patched picks it for the image.
+  uranium =
+    let
+      plain = import final.path { inherit (final.stdenv.hostPlatform) system; };
+    in
+    final.callPackage ./uranium.nix {
+      chromium-unwrapped = plain.ungoogled-chromium.browser;
+      # The ungoogled-chromium patch series that build applies, which is
+      # not in its passthru: the same call nixpkgs makes, so the same path.
+      ungoogler = plain.callPackage (
+        final.path + "/pkgs/applications/networking/browsers/chromium/ungoogled.nix"
+      ) { } { inherit (plain.ungoogled-chromium.upstream-info.deps.ungoogled-patches) rev hash; };
+    };
   uranium-patched = final.uranium.override { patched = true; };
+  uranium-tabs = final.callPackage ./uranium-tabs.nix { };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 

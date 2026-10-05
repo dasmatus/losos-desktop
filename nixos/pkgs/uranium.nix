@@ -16,8 +16,10 @@
   runCommand,
   makeDesktopItem,
   runtimeShell,
-  # nixpkgs' Chromium build, chromium.browser, without its wrapper.
+  # nixpkgs' ungoogled-chromium build, without its wrapper, and the
+  # ungoogled-chromium patch series it applies.
   chromium-unwrapped,
+  ungoogler,
   patched ? false,
   wayland-utils,
   gawk,
@@ -33,6 +35,8 @@
   xdg-utils,
   zstd,
   python3,
+  patchutils,
+  fetchzip,
 }:
 
 let
@@ -56,6 +60,21 @@ let
     map (name: dir + "/${name}") (
       builtins.sort builtins.lessThan (builtins.attrNames (builtins.readDir dir))
     );
+
+  # uBlock Origin Lite, the ad blocker every profile starts with. It is
+  # the Manifest V3 uBlock Origin, which blocks through Chromium's own
+  # declarativeNetRequest engine with no code reading the pages, and its
+  # settings choose among its filter lists: ads, trackers, annoyances,
+  # malware domains, and each region's own. The Web Store, which would
+  # update it, is out of reach of an ungoogled build, so it updates with
+  # the OS.
+  ublockOriginLite = fetchzip {
+    pname = "ublock-origin-lite";
+    version = "2026.930.1227";
+    url = "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.930.1227/uBOLite_2026.930.1227.chromium.zip";
+    stripRoot = false;
+    hash = "sha256-RaCPzuREHDZqOGdnd1Ptuqg4oMqA0PNPTVrsZDtlWz4=";
+  };
 
   # Chrome for Android's whole User-Agent string since the reduction, the
   # one the unpatched build can send. The patched one builds the same string
@@ -137,11 +156,26 @@ let
     # Wayland, and text-input-v3 for the input method, the protocol derisk's
     # compositor serves its on-screen keyboard over; Chromium speaks v1
     # unless told. --class names the app id outright as well.
+    #
+    # Then nothing the browser sends on its own: no <a ping> requests to the
+    # addresses a page lists when a link is followed (--no-pings), and none
+    # of the requests Chromium makes with no page asking, such as component
+    # and extension update checks and the field trial configuration
+    # (--disable-background-networking). The policies in
+    # nixos/modules/browser.nix switch off the rest by name.
+    #
+    # And two extensions, loaded from the store on every launch, so they
+    # are in every profile and their version is the OS's: uBlock Origin
+    # Lite, and the one that lists the tabs in derisk's command palette
+    # (src/uranium-tabs says how).
     set -- \
       --ozone-platform-hint=auto \
       --enable-wayland-ime \
       --wayland-text-input-version=3 \
       --class=uranium \
+      --no-pings \
+      --disable-background-networking \
+      --load-extension=${ublockOriginLite},${./uranium/tabs} \
       "$@"
     ${lib.optionalString (!patched) ''
       # The patched build keeps its profile in ~/.config/uranium itself;
@@ -187,18 +221,32 @@ let
     exec -a "$0" ${browser}/libexec/chromium/chromium "$@"
   '';
 
-  # The patched build's patch phase, on the files it touches, from the
-  # Chromium source nixpkgs pins: patches/chromium apply, and rebrand.py
-  # renames every string and keeps every translation. Compiling is the part
-  # CI cannot afford; this is the part that breaks when nixpkgs moves
-  # Chromium, and it needs only the main source tarball, not its
-  # dependencies. nixpkgs' own patches touch none of these files.
+  # The files patches/chromium and rebrand.py touch, as the patched build
+  # sees them. Its patch phase applies nixpkgs' patches and ours; then
+  # nixpkgs' postPatch applies ungoogled-chromium's series, and rebrand.py
+  # runs last. Every ungoogled patch is applied here only for its hunks in
+  # these files, in the series' order, so a patch of ours that one of
+  # theirs no longer applies over fails here and not hours into a build.
+  # Compiling is the part CI cannot afford; this is the part that breaks
+  # when nixpkgs moves Chromium, and it needs only the main source
+  # tarball, not its dependencies. nixpkgs' own patches touch none of
+  # these files.
+  sourceFiles = [
+    "components/embedder_support/user_agent_utils.cc"
+    "content/browser/web_contents/web_contents_impl.cc"
+    "chrome/common/chrome_paths_linux.cc"
+    "chrome/common/channel_info_posix.cc"
+    "chrome/browser/shell_integration_linux.cc"
+    "chrome/browser/ui/views/toolbar/toolbar_view.cc"
+    "chrome/browser/ui/views/frame/browser_view.cc"
+  ];
   patchCheck =
     runCommand "uranium-patch-check-${chromium-unwrapped.version}"
       {
         nativeBuildInputs = [
           zstd
           python3
+          patchutils
         ];
       }
       ''
@@ -211,18 +259,22 @@ let
           './components/components_chromium_strings.grd' \
           './components/strings/components_chromium_strings_*.xtb' \
           './tools/grit/*' \
-          ${lib.concatMapStringsSep " " (file: "'./${file}'") [
-            "components/embedder_support/user_agent_utils.cc"
-            "content/browser/web_contents/web_contents_impl.cc"
-            "chrome/common/chrome_paths_linux.cc"
-            "chrome/common/channel_info_posix.cc"
-            "chrome/browser/shell_integration_linux.cc"
-            "chrome/browser/ui/views/toolbar/toolbar_view.cc"
-            "chrome/browser/ui/views/frame/browser_view.cc"
-          ]}
+          ${lib.concatMapStringsSep " " (file: "'./${file}'") sourceFiles}
         for p in ${lib.escapeShellArgs (patchesIn ./patches/chromium)}; do
           echo "applying $p"
           patch -p1 --forward --no-backup-if-mismatch < "$p"
+        done
+        grep -v '^#' ${ungoogler}/patches/series | while read -r p; do
+          [ -n "$p" ] || continue
+          filterdiff -p1 ${
+            lib.concatMapStringsSep " " (file: "-i '${file}'") (
+              sourceFiles ++ [ "chrome/app/settings_chromium_strings.grdp" ]
+            )
+          } ${ungoogler}/patches/"$p" > hunks
+          if [ -s hunks ]; then
+            echo "applying ungoogled-chromium's $p"
+            patch -p1 --forward --no-backup-if-mismatch < hunks
+          fi
         done
         python3 ${./uranium/rebrand.py}
         grep -qx 'PRODUCT_FULLNAME=Uranium' chrome/app/theme/chromium/BRANDING
@@ -272,7 +324,7 @@ runCommand "uranium-${browser.version}"
     passAsFile = [ "launcher" ];
     passthru = {
       unwrapped = browser;
-      inherit patched patchCheck;
+      inherit patched patchCheck ublockOriginLite;
     };
     meta = {
       description = "Chromium as Uranium, which turns into Chrome for Android on a phone";

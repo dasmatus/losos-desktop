@@ -1,13 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Uranium: the Chromium ring in glowing uranium-glass greens around a
+       radiation trefoil. Drawn here, not traced from Chromium's artwork. -->
   <defs>
-    <radialGradient id="glass" cx="26" cy="22" r="40" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#eaff9a"/>
-      <stop offset="0.5" stop-color="#9fe82c"/>
-      <stop offset="1" stop-color="#4c9a12"/>
+    <radialGradient id="glow" cx="32" cy="32" r="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0.8" stop-color="#c6ff4d" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#c6ff4d" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <circle cx="32" cy="32" r="30" fill="url(#glass)"/>
-  <circle cx="32" cy="32" r="28.5" fill="none" stroke="#f6ffd8" stroke-opacity="0.5" stroke-width="1.5"/>
-  <path d="M22.5 16v17.5a9.5 9.5 0 0 0 19 0V16" fill="none" stroke="#173a08" stroke-width="7.5" stroke-linecap="round"/>
-  <circle cx="47" cy="47" r="3.5" fill="#173a08"/>
+  <circle cx="32" cy="32" r="32" fill="url(#glow)"/>
+  <path fill="#e8ff3a" d="M32.00 18.50L58.79 18.50A30 30 0 0 1 30.30 61.95L43.69 38.75A13.5 13.5 0 0 0 32.00 18.50Z"/>
+  <path fill="#9fe82c" d="M43.69 38.75L30.30 61.95A30 30 0 0 1 6.91 15.55L20.31 38.75A13.5 13.5 0 0 0 43.69 38.75Z"/>
+  <path fill="#3fae1c" d="M20.31 38.75L6.91 15.55A30 30 0 0 1 58.79 18.50L32.00 18.50A13.5 13.5 0 0 0 20.31 38.75Z"/>
+  <circle cx="32" cy="32" r="13.5" fill="#f6ffe0"/>
+  <circle cx="32" cy="32" r="10.5" fill="#1b1b1b"/>
+  <path fill="#ffd400" d="M30.70 29.75L27.40 24.03A9.2 9.2 0 0 1 36.60 24.03L33.30 29.75A2.6 2.6 0 0 0 30.70 29.75Z"/>
+  <path fill="#ffd400" d="M34.60 32.00L41.20 32.00A9.2 9.2 0 0 1 36.60 39.97L33.30 34.25A2.6 2.6 0 0 0 34.60 32.00Z"/>
+  <path fill="#ffd400" d="M30.70 34.25L27.40 39.97A9.2 9.2 0 0 1 22.80 32.00L29.40 32.00A2.6 2.6 0 0 0 30.70 34.25Z"/>
+  <circle cx="32" cy="32" r="1.8" fill="#ffd400"/>
 </svg>
