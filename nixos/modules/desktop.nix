@@ -132,9 +132,14 @@ in
   # What GNOME's module used to switch on, kept where something in the session
   # still uses it. Audio for every app. udisks2 and upower are bus-activated
   # and back removable drives and the overview's battery widget. The keyring
-  # is the Secret Service every app that stores a password asks for. The GTK
-  # portal gives sandboxed and GTK apps a file chooser, since derisk ships no
-  # portal of its own.
+  # is the Secret Service every app that stores a password asks for.
+  #
+  # Portals are derisk's and GTK's. derisk's backend answers what only the
+  # session knows: the appearance from its theme, screenshots, the wallpaper
+  # and which apps have windows. GTK's does the rest, the file chooser and
+  # the access dialog derisk's own portals ask through among them. Which
+  # backend gets which portal is derisk's derisk-portals.conf, taken from the
+  # package rather than restated here.
   #
   # Left off, because nothing in derisk has a UI for them yet: Bluetooth,
   # power profiles and geoclue.
@@ -147,8 +152,11 @@ in
   services.gnome.gnome-keyring.enable = true;
   xdg.portal = {
     enable = true;
-    extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
-    config.derisk.default = [ "gtk" ];
+    extraPortals = [
+      pkgs.derisk
+      pkgs.xdg-desktop-portal-gtk
+    ];
+    configPackages = [ pkgs.derisk ];
   };
 
   # Let systemd-oomd act on a desktop session before the kernel OOM killer
