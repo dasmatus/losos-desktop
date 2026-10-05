@@ -35,11 +35,11 @@ rustPlatform.buildRustPackage {
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
     # derisk main: #22 (the xdg-desktop-portal backend), #23 and #24.
-    rev = "2a7499591d7d3ac6e8014c209d5f30ee7dc565f9";
-    hash = "sha256-INfNAt4+lvWRSNE88WPc2vlW5K7ITXRMDtyRNNFhGWA=";
+    rev = "3f060e14bab3104878d3b6b8e3022a6d1e0c5123";
+    hash = "sha256-ufYZsYj1DyOpAvAbc55h58LyUMvehXArjvzdr68TCko=";
   };
 
-  cargoHash = "sha256-zKUuG6gn779Pk28j3F5IQRCKnU9NWyyL1gwAabzfEW8=";
+  cargoHash = "sha256-Npo8FSOj3yKXkeiIWXTqNN8x1XAM/fUh/M5/RrBwGwk=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is
