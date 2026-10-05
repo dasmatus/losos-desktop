@@ -119,6 +119,15 @@ from another store path. The library has no `DT_SONAME`, so `ld.so` would map
 that copy and derisk's as two allocators. Halium does not import the module:
 see "What is not done".
 
+Uranium is the one exception. Chromium's own allocator, PartitionAlloc, is
+its malloc, and under the preload the two free each other's memory and the
+browser aborts at start ("fatal allocator error: invalid uninitialized
+allocator usage"). glibc has no way to skip the preload file for one program,
+so Uranium's launcher runs Chromium in an unprivileged bubblewrap mount
+namespace where `/etc/ld-nix.so.preload` is empty. Chromium's own sandbox
+still works inside it. PartitionAlloc is hardened in its own right, which is
+why GrapheneOS's own browser keeps it too.
+
 ## Binary cache
 
 `proxy/` is a Vercel edge function whose decisions are a WebAssembly module

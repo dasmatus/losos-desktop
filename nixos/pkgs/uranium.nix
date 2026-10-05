@@ -18,6 +18,7 @@
   writeShellScript,
   makeDesktopItem,
   ccache,
+  bubblewrap,
   runtimeShell,
   # nixpkgs' ungoogled-chromium build, without its wrapper, and the
   # ungoogled-chromium patch series it applies.
@@ -375,7 +376,24 @@ let
     ublockName = ublockOriginLite.name;
     tabs = ./uranium/tabs;
     appId = "uranium";
-    exec = "exec -a \"$0\" ${browser}/libexec/chromium/chromium";
+    # On a PC, /etc/ld-nix.so.preload puts hardened_malloc into every
+    # process (modules/allocator.nix), and Chromium aborts under it ("fatal
+    # allocator error: invalid uninitialized allocator usage"): its own
+    # allocator, PartitionAlloc, is malloc in Chromium, and the two end up
+    # freeing each other's memory. glibc reads that file for every program
+    # and has no switch to skip it, so the browser runs in a mount namespace
+    # where the file is empty. PartitionAlloc is hardened in its own right,
+    # which is why GrapheneOS keeps it in its own Chromium. The namespace
+    # is bubblewrap's unprivileged one, inside which Chromium's own sandbox
+    # still makes its namespaces. Halium has no preload and runs Chromium
+    # directly.
+    exec = ''
+      if [ -s /etc/ld-nix.so.preload ]; then
+        exec ${lib.getExe bubblewrap} --dev-bind / / \
+          --ro-bind /dev/null /etc/ld-nix.so.preload \
+          --argv0 "$0" -- ${browser}/libexec/chromium/chromium "$@"
+      fi
+      exec -a "$0" ${browser}/libexec/chromium/chromium'';
     inherit patched;
     x2mcsapi = lib.getExe x2mcsapi;
   };
