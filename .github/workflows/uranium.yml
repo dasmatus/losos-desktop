@@ -107,9 +107,11 @@ jobs:
       # there, and the store keeps the root disk. The cache directory is
       # bound into the sandbox, where uranium.nix's compiler wrapper finds
       # it; the build users are not root, so it is writable by all.
+      # Otherwise both live under /var/lib, not /var/tmp: Nix refuses a
+      # build-dir with a world-writable parent.
       - name: Install Nix
         run: |
-          scratch=/var/tmp
+          scratch=/var/lib/uranium-ci
           if [ "$(stat -c %d /mnt)" != "$(stat -c %d /)" ]; then
             scratch=/mnt
           fi
