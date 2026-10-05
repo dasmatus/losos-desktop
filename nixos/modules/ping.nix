@@ -6,9 +6,12 @@
 # user's home and the current month, so the proxy can count a user once per
 # month and cannot follow anyone from one month to the next. No account, no
 # hardware id, no version, nothing about the machine but its architecture.
-# The proxy (proxy/src/lib.rs) adds the id to the month's HyperLogLog and
+# The proxy (proxy/src/lib.rs) adds the id to the month's HyperLogLog, and
+# to the EU's when the edge network places the request in the EU, and
 # answers with a policy: whether the browser and search engine choice
-# screens are on. It decides from the count; the OS never learns the number.
+# screens are on. Those are the EU's Digital Markets Act rules, so they
+# come on for users in the EEA once the EU count passes the DMA's 45
+# million. The proxy decides; the OS never learns the number.
 #
 # The policy lands where derisk reads it, $XDG_STATE_HOME/derisk/policy.conf
 # (derisk_settings::choice). derisk shows the screens at the next login and
@@ -65,7 +68,8 @@ let
       # proxy may add later.
       jq -r '.choice_screens as $c
         | "choice_screens.browser = \($c.browser == true)",
-          "choice_screens.search = \($c.search == true)"' \
+          "choice_screens.search = \($c.search == true)",
+          "region = \(.region // "other" | ascii_downcase | gsub("[^a-z]"; ""))"' \
         <<<"$answer" >"$state/derisk/policy.conf.new"
       mv "$state/derisk/policy.conf.new" "$state/derisk/policy.conf"
     '';

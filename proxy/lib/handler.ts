@@ -125,42 +125,45 @@ async function ping(core: Core, env: Env, fetchImpl: Fetch, request: Request): P
   const body = await request.text();
   if (body.length > PING_MAX) return json(413, '{"error":"too long"}');
   const month = new Date().toISOString().slice(0, 7);
-  const verdict = core.ping(`${month}\n${body}`);
+  // Vercel's edge network names the request's country; only the code goes
+  // on, to decide whether the EU's rules apply. The address does not.
+  const country = request.headers.get("x-vercel-ip-country") || "";
+  const verdict = core.ping(`${month}\n${country}\n${body}`);
   if (!verdict.startsWith("count ")) {
     return json(400, JSON.stringify({ error: verdict.slice("bad ".length) }));
   }
-  const [, id, monthKey, archKey, previousKey] = verdict.split(" ");
+  const [, id, region, add, current, previous] = verdict.split(" ");
 
   const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
   const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
   let actives = "";
   if (url && token) {
     const keep = String(100 * 86400);
+    const keys = add.split(",");
     try {
       const response = await fetchImpl(`${url.replace(/\/$/, "")}/pipeline`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify([
-          ["PFADD", monthKey, id],
-          ["PFADD", archKey, id],
-          ["EXPIRE", monthKey, keep],
-          ["EXPIRE", archKey, keep],
-          ["PFCOUNT", monthKey],
-          ["PFCOUNT", previousKey],
+          ...keys.map((key) => ["PFADD", key, id]),
+          ...keys.map((key) => ["EXPIRE", key, keep]),
+          ["PFCOUNT", current],
+          ["PFCOUNT", previous],
         ]),
       });
       if (response.ok) {
         const results = (await response.json()) as { result?: number }[];
+        const [now, before] = results.slice(-2).map((r) => Number(r?.result) || 0);
         // The month that just started has barely been counted, so the
         // larger of it and the last full month is the size.
-        actives = String(Math.max(Number(results[4]?.result) || 0, Number(results[5]?.result) || 0));
+        actives = String(Math.max(now, before));
       }
     } catch {
       // Counted next time; the policy below still goes out.
     }
   }
   const mode = env.CHOICE_SCREENS || "auto";
-  return json(200, core.policy(`${mode}\n${env.CHOICE_SCREENS_AT || ""}\n${actives}`));
+  return json(200, core.policy(`${mode}\n${env.CHOICE_SCREENS_AT || ""}\n${actives}\n${region}`));
 }
 
 // Build the request handler. `env` is read as described on Env.

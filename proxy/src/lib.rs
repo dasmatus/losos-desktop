@@ -267,10 +267,57 @@ pub fn narinfo(input: &str) -> String {
 /// can still be read all through the next one, and no longer.
 pub const KEEP_DAYS: u32 = 100;
 
-/// Monthly active users at which the choice screens turn on by themselves.
-/// 45 million is where the EU's Digital Markets Act starts treating an
-/// operating system as a gatekeeper that must show them.
+/// Monthly active end users in the EU at which the choice screens turn on
+/// by themselves: where the Digital Markets Act starts treating an
+/// operating system as a gatekeeper (Art. 3(2)(b)), which then has to show
+/// them (Art. 6(3)).
 pub const DEFAULT_THRESHOLD: u64 = 45_000_000;
+
+/// The EU's member states, by ISO 3166-1 alpha-2 code. The DMA counts users
+/// "established or located in the Union".
+const EU: [&str; 27] = [
+    "AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GR", "HR", "HU", "IE", "IT",
+    "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK",
+];
+
+/// The rest of the EEA, which the DMA applies to as well: the choice
+/// screens show here too, though the count is the EU's.
+const EEA_ONLY: [&str; 3] = ["IS", "LI", "NO"];
+
+/// Where a request comes from, as far as the DMA is concerned.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Region {
+    /// An EU member state: counted, and shown the screens.
+    Eu,
+    /// Iceland, Liechtenstein or Norway: shown the screens, not counted.
+    Eea,
+    /// Anywhere else, or unknown.
+    Other,
+}
+
+impl Region {
+    /// The region of a country code, as the edge network reports it from
+    /// the request's address. Only the code is used; the address is not.
+    #[must_use]
+    pub fn of(country: &str) -> Self {
+        let country = country.trim();
+        if EU.contains(&country) {
+            Self::Eu
+        } else if EEA_ONLY.contains(&country) {
+            Self::Eea
+        } else {
+            Self::Other
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Eu => "eu",
+            Self::Eea => "eea",
+            Self::Other => "other",
+        }
+    }
+}
 
 /// A `YYYY-MM` month and the one before it, or `None` for anything else.
 fn months(month: &str) -> Option<(String, String)> {
@@ -291,20 +338,26 @@ fn months(month: &str) -> Option<(String, String)> {
     Some((format!("{year:04}-{mon:02}"), previous))
 }
 
-/// Check a ping and name the Redis keys it counts under.
+/// Check a ping and say what to count it under.
 ///
-/// Input: the server's current month as `YYYY-MM`, then the request body,
-/// which is `key=value` lines: `id` (64 lowercase hex digits, the client's
-/// SHA-256 of its secret and the month) and `arch`. Unknown keys are
-/// ignored, so a newer client can add one without older proxies refusing it.
+/// Input: the server's current month as `YYYY-MM`, the country code the
+/// edge network gives for the request (empty if none), then the request
+/// body, which is `key=value` lines: `id` (64 lowercase hex digits, the
+/// client's SHA-256 of its secret and the month) and `arch`. Unknown keys
+/// are ignored, so a newer client can add one without older proxies
+/// refusing it.
 ///
-/// Output: `count <id> <month key> <arch key> <previous month key>`, or
-/// `bad <reason>`. The id comes back so that the host adds exactly the
-/// string checked here. Nothing here sees an address; the host never
-/// passes one.
+/// Output: `count <id> <region> <keys to add to> <key to read> <previous
+/// month's key to read>`, the keys to add to joined by commas, or
+/// `bad <reason>`. Every user is counted in the month's total and its
+/// architecture's; an EU user also in the month's EU count, which is the
+/// one the threshold reads. The id comes back so that the host adds exactly
+/// the string checked here.
 #[must_use]
 pub fn ping(input: &str) -> String {
-    let Some((month, body)) = input.split_once('\n') else {
+    let mut parts = input.splitn(3, '\n');
+    let (Some(month), Some(country), Some(body)) = (parts.next(), parts.next(), parts.next())
+    else {
         return "bad no month".into();
     };
     let Some((month, previous)) = months(month) else {
@@ -319,24 +372,34 @@ pub fn ping(input: &str) -> String {
         }
     }
     let is_id = |s: &str| s.len() == 64 && s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'));
-    if !id.is_some_and(is_id) {
+    let Some(id) = id.filter(|i| is_id(i)) else {
         return "bad id".into();
-    }
+    };
     let Some(arch) = arch.filter(|a| ARCHES.contains(a)) else {
         return "bad arch".into();
     };
-    let id = id.unwrap_or_default();
-    format!("count {id} actives:{month} actives:{month}:{arch} actives:{previous}")
+    let region = Region::of(country);
+    let mut add = format!("actives:{month},actives:{month}:{arch}");
+    if region == Region::Eu {
+        add.push_str(&format!(",actives:{month}:eu"));
+    }
+    format!(
+        "count {id} {} {add} actives:{month}:eu actives:{previous}:eu",
+        region.as_str()
+    )
 }
 
 /// The policy a client gets back, as JSON.
 ///
-/// Input: three lines. The mode, `on`, `off` or `auto` (anything else is
+/// Input: four lines. The mode, `on`, `off` or `auto` (anything else is
 /// `auto`), so the screens can be forced either way for testing or by
-/// choice; the threshold in monthly active users, the default when empty or
-/// not a number; and the count, empty when there is no store to count in.
-/// `auto` turns both screens on once the count reaches the threshold, and
-/// keeps them off while nothing is being counted.
+/// choice; the threshold in monthly active EU users, the default when empty
+/// or not a number; the EU count, empty when there is no store to count in;
+/// and the client's region as [`ping`] named it.
+///
+/// `auto` turns both screens on for a client in the EEA once the EU count
+/// reaches the threshold, and keeps them off while nothing is being
+/// counted. The region goes back too, so the client knows why.
 #[must_use]
 pub fn policy(input: &str) -> String {
     let mut lines = input.split('\n');
@@ -346,12 +409,20 @@ pub fn policy(input: &str) -> String {
         .and_then(|t| t.trim().parse::<u64>().ok())
         .unwrap_or(DEFAULT_THRESHOLD);
     let actives = lines.next().and_then(|c| c.trim().parse::<u64>().ok());
+    let region = match lines.next().unwrap_or("").trim() {
+        "eu" => Region::Eu,
+        "eea" => Region::Eea,
+        _ => Region::Other,
+    };
     let on = match mode {
         "on" => true,
         "off" => false,
-        _ => actives.is_some_and(|n| n >= threshold),
+        _ => region != Region::Other && actives.is_some_and(|n| n >= threshold),
     };
-    format!(r#"{{"choice_screens":{{"browser":{on},"search":{on}}}}}"#)
+    format!(
+        r#"{{"region":"{}","choice_screens":{{"browser":{on},"search":{on}}}}}"#,
+        region.as_str()
+    )
 }
 
 // The linear-memory interface. Only compiled for the target the host loads,
@@ -541,27 +612,37 @@ mod tests {
     const ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     #[test]
-    fn a_ping_counts_under_its_month_and_arch() {
+    fn a_ping_counts_under_its_month_arch_and_region() {
         assert_eq!(
-            ping(&format!("2026-10\nid={ID}\narch=x86_64\nnew=1\n")),
-            format!("count {ID} actives:2026-10 actives:2026-10:x86_64 actives:2026-09")
+            ping(&format!("2026-10\nSK\nid={ID}\narch=x86_64\nnew=1\n")),
+            format!(
+                "count {ID} eu actives:2026-10,actives:2026-10:x86_64,actives:2026-10:eu \
+                 actives:2026-10:eu actives:2026-09:eu"
+            )
         );
         assert_eq!(
-            ping(&format!("2027-01\narch=aarch64\nid={ID}")),
-            format!("count {ID} actives:2027-01 actives:2027-01:aarch64 actives:2026-12")
+            ping(&format!("2027-01\nNO\narch=aarch64\nid={ID}")),
+            format!(
+                "count {ID} eea actives:2027-01,actives:2027-01:aarch64 \
+                 actives:2027-01:eu actives:2026-12:eu"
+            )
+        );
+        assert!(
+            ping(&format!("2026-10\n\nid={ID}\narch=x86_64"))
+                .starts_with(&format!("count {ID} other "))
         );
     }
 
     #[test]
     fn a_crafted_ping_is_refused() {
         for input in [
-            format!("2026-10\nid={}\narch=x86_64", ID.to_uppercase()),
-            format!("2026-10\nid={}\narch=x86_64", &ID[1..]),
-            format!("2026-10\nid={ID} x\narch=x86_64"),
-            format!("2026-10\nid={ID}\narch=riscv64"),
-            format!("2026-10\nid={ID}"),
-            format!("2026-13\nid={ID}\narch=x86_64"),
-            format!("26-10\nid={ID}\narch=x86_64"),
+            format!("2026-10\nDE\nid={}\narch=x86_64", ID.to_uppercase()),
+            format!("2026-10\nDE\nid={}\narch=x86_64", &ID[1..]),
+            format!("2026-10\nDE\nid={ID} x\narch=x86_64"),
+            format!("2026-10\nDE\nid={ID}\narch=riscv64"),
+            format!("2026-10\nDE\nid={ID}"),
+            format!("2026-13\nDE\nid={ID}\narch=x86_64"),
+            format!("26-10\nDE\nid={ID}\narch=x86_64"),
             format!("id={ID}"),
         ] {
             assert!(ping(&input).starts_with("bad "), "{input}");
@@ -569,16 +650,40 @@ mod tests {
     }
 
     #[test]
-    fn the_screens_follow_the_count_unless_forced() {
-        let on = r#"{"choice_screens":{"browser":true,"search":true}}"#;
-        let off = r#"{"choice_screens":{"browser":false,"search":false}}"#;
-        assert_eq!(policy("auto\n100\n99"), off);
-        assert_eq!(policy("auto\n100\n100"), on);
-        assert_eq!(policy("\n\n44999999"), off);
-        assert_eq!(policy("\n\n45000000"), on);
-        assert_eq!(policy("auto\n0\n"), off, "nothing counted is not big");
-        assert_eq!(policy("on\n\n"), on);
-        assert_eq!(policy("off\n1\n5"), off);
-        assert_eq!(policy("bogus\nx\n46000000"), on);
+    fn the_screens_follow_the_eu_count_in_the_eea_unless_forced() {
+        let on = |r: &str| {
+            format!(r#"{{"region":"{r}","choice_screens":{{"browser":true,"search":true}}}}"#)
+        };
+        let off = |r: &str| {
+            format!(r#"{{"region":"{r}","choice_screens":{{"browser":false,"search":false}}}}"#)
+        };
+        assert_eq!(policy("auto\n100\n99\neu"), off("eu"));
+        assert_eq!(policy("auto\n100\n100\neu"), on("eu"));
+        assert_eq!(policy("auto\n100\n100\neea"), on("eea"));
+        assert_eq!(
+            policy("auto\n100\n100\nother"),
+            off("other"),
+            "the DMA is the EEA's"
+        );
+        assert_eq!(policy("\n\n44999999\neu"), off("eu"));
+        assert_eq!(policy("\n\n45000000\neu"), on("eu"));
+        assert_eq!(
+            policy("auto\n0\n\neu"),
+            off("eu"),
+            "nothing counted is not big"
+        );
+        assert_eq!(policy("on\n\n\nother"), on("other"));
+        assert_eq!(policy("off\n1\n5\neu"), off("eu"));
+        assert_eq!(policy("bogus\nx\n46000000\nfr"), off("other"));
+    }
+
+    #[test]
+    fn regions_come_from_the_country_code() {
+        assert_eq!(Region::of("SK"), Region::Eu);
+        assert_eq!(Region::of("LI"), Region::Eea);
+        assert_eq!(Region::of("CH"), Region::Other);
+        assert_eq!(Region::of("GB"), Region::Other);
+        assert_eq!(Region::of(""), Region::Other);
+        assert_eq!(Region::of("sk"), Region::Other);
     }
 }

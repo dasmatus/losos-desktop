@@ -577,9 +577,10 @@ rebasing the two `Treat a display of phone-sized monitors` patches.
 
 ## Active users and the choice screens
 
-Large platforms are made to offer a choice of browser and search engine
-once they have enough users; the EU's Digital Markets Act draws the line at
-45 million monthly active users. derisk has both screens and keeps them
+The EU's Digital Markets Act makes an operating system with 45 million
+monthly active end users in the EU a gatekeeper (Art. 3(2)(b)), and a
+gatekeeper has to show users in the EEA a choice screen for the browser and
+the search engine (Art. 6(3)). derisk has both screens and keeps them
 hidden. What turns them on is a count of active users, so the OS has one.
 
 **What is sent.** `nixos/modules/ping.nix` gives every signed-in user a
@@ -594,13 +595,17 @@ in Settings, Privacy ("Count me as an active user"), which writes
 a build, and a build without `LOSOS_PROXY_URL` has no timer.
 
 **What is counted.** `proxy/` adds the id to the month's HyperLogLog in
-Redis (`actives:<YYYY-MM>`, and `actives:<YYYY-MM>:<arch>`), kept for 100
-days. The request's address is never read or stored, and a HyperLogLog
-cannot give an id back. The size is the larger of this month's and last
-month's count, so a new month does not start from zero.
+Redis (`actives:<YYYY-MM>`, and `actives:<YYYY-MM>:<arch>`), and, when
+Vercel's `x-vercel-ip-country` header names an EU member state, to
+`actives:<YYYY-MM>:eu`. Keys are kept for 100 days. Only that country code
+is read, to pick the keys; the address is never read or stored, and a
+HyperLogLog cannot give an id back. The size the threshold is held against
+is the larger of this month's and last month's EU count, so a new month
+does not start from zero.
 
-**What comes back.** `{"choice_screens":{"browser":…,"search":…}}`, both on
-once the count reaches the threshold. The script turns it into
+**What comes back.** `{"region":"eu","choice_screens":{"browser":…,"search":…}}`,
+both on for a request from the EEA (the EU, Iceland, Liechtenstein,
+Norway) once the EU count reaches the threshold, and off everywhere else. The script turns it into
 `~/.local/state/derisk/policy.conf`, which derisk reads: with a screen on
 and nothing chosen yet, derisk opens Settings on its Default apps page at
 login, and the page stays in Settings after. Both screens list their
@@ -613,8 +618,10 @@ Marketplace (Upstash), which sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`
 one, pings are answered with both screens off and nothing is counted.
 `CHOICE_SCREENS_AT` sets the threshold (default 45000000), and
 `CHOICE_SCREENS=on` or `off` forces both screens either way, for testing or
-by choice. The count itself is read with `PFCOUNT actives:<YYYY-MM>` in the
-database's console.
+by choice. The counts are read with `PFCOUNT actives:<YYYY-MM>:eu` (or without
+`:eu`, for everyone) in the database's console. Where a person is comes
+from their address at the time of the ping, not from a setting on the
+machine, so a VPN moves them.
 
 ## What is not done
 
