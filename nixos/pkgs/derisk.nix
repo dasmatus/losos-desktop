@@ -3,7 +3,7 @@
 # Monitor, Calculator) built into the same binary.
 #
 # Pinned to a commit and moved by hand, like pm, because both derisk and the
-# mcsapi branch it builds against are moving fast. mcsapi comes in through
+# mcsapi it builds against are moving fast. mcsapi comes in through
 # Cargo.lock's git entries, which the cargo vendor step fetches and cargoHash
 # covers.
 {
@@ -24,21 +24,19 @@
 
 rustPlatform.buildRustPackage {
   pname = "derisk";
-  version = "0.1.0-unstable-2026-10-04";
+  version = "0.1.0-unstable-2026-10-05";
 
   # fetchgit rather than fetchFromGitHub: a git clone reaches github.com from
   # hosts that cannot use its archive endpoint.
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
-    # dasmatus/derisk#19, `derisk display-manager` and its greeter (the
-    # login screen), until it merges. It is stacked on derisk#11, the lock
-    # screen, and builds against dasmatus/mcsapi#31, the compositor's DRM/KMS
-    # backend, which is stacked on mcsapi#24.
-    rev = "f0c12e43712150dd6bddc9a52cf2212898faf0d6";
-    hash = "sha256-f+ofvUi+plclxV25gE3KyNAJtozRZG+WSa5ZVlr2q5M=";
+    # derisk main with #19 merged: `derisk display-manager` and its greeter
+    # (the login screen), on mcsapi main's DRM/KMS backend.
+    rev = "623511bcbd3af4dcf3b3a0ef9e090687a47af36f";
+    hash = "sha256-UZ4/sFnhFQTp/PCH/gKWD+9rNG43q+r/Pz9CfdxzYBA=";
   };
 
-  cargoHash = "sha256-eEg9pHLPaglzwcaCviX7RLnIt7o3otDiw8JPFECNP5Y=";
+  cargoHash = "sha256-zb3su7/bD4kGDVkEhY/CTabUBNQDiI6Sf2Wd2+gzles=";
 
   # `host` is the compositor; without it the binary has only the headless
   # commands.
