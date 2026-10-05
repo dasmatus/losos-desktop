@@ -556,6 +556,32 @@ HALs need older headers overrides `android-headers`.
   bootloader on the ESP is the one the image shipped.
 - **sysext.** Extensions merge into `/usr`, which here holds little but the
   Nix store, so an extension can add a program and cannot replace one.
+- **Android apps.** `nixos/modules/atl.nix` has two options, both off by
+  default. `losos.android.enable` installs the Android Translation Layer.
+  `losos.android.openApks` additionally makes it the default handler for
+  `.apk` files. The package (`nixos/pkgs/android-translation-layer.nix`) is
+  pinned to a full commit with a real fixed-output hash, and it evaluates, but
+  it has not built to completion. Two gaps remain, and the package header
+  lists the first: ATL's build shells out to the Android SDK build-tools
+  (`dx`, `aapt`), which the recipe does not yet provide, and the pinned tree
+  has no `thirdparty/art_standalone/build`, which ART's Makefile includes, so
+  it needs another source input. The package is marked `meta.broken`, so
+  enabling `losos.android` fails at evaluation with nixpkgs' broken-package
+  error until both are fixed. Because both options are off, `nix flake
+  check` never realises the package, so the bring-up can land and mature
+  without gating the image.
+  **APKs run unsandboxed.** ATL runs an app's dex and native code as an
+  ordinary process of the session user: Android's per-app UID, permission
+  model and SELinux domain are not there, so a malicious APK has the reach of
+  any native program the user runs, including their home, their Wayland
+  session, the agent socket and the network. For that reason the default
+  `.apk` handler is a second, separate opt-in, `losos.android.openApks`, off
+  by default, so "open a downloaded file" never silently means "run untrusted
+  code"; with it off an APK is run only by someone who chose to launch ATL on
+  it. The real fix is a sandboxed launcher (bubblewrap with the usual
+  namespaces and a restricted filesystem view, or a confined transient
+  systemd user unit), which ATL's own README lists as future work. That is
+  not done; until it is, turn `openApks` on knowingly.
 - **Nothing has booted yet.** The disk image builds, with the layout above
   and a `usrhash=` equal to the root hash repart reported. The VM test
   evaluates and needs KVM, which the machine this was written on did not

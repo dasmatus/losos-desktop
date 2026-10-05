@@ -13,6 +13,9 @@ final: _prev: {
   # processes.
   android-headers = final.callPackage ./android-headers.nix { };
   libhybris = final.callPackage ./libhybris.nix { };
+  # The Android Translation Layer (nixos/modules/atl.nix), which nixpkgs does
+  # not carry either; only in the closure when losos.android.enable is set.
+  android-translation-layer = final.callPackage ./android-translation-layer.nix { };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 }

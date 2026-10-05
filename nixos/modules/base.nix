@@ -11,6 +11,7 @@
     ./accounts.nix
     ./network.nix
     ./desktop.nix
+    ./atl.nix
     ./services.nix
     ./pm.nix
   ];
