@@ -10,11 +10,23 @@ const TITLE = "org.opencontainers.image.title";
 
 // The environment the handler reads: GHCR_REPOSITORY (owner/name, the
 // namespace every artifact lives under) and optionally GHCR_TOKEN and
-// GHCR_USERNAME.
+// GHCR_USERNAME. For /ping, a Redis REST endpoint and its token, under the
+// names Vercel's Upstash integration sets (KV_* for stores made as Vercel
+// KV); without one, pings are answered but not counted. CHOICE_SCREENS
+// (on, off or auto), CHOICE_SCREENS_AT (monthly active EU users) and
+// CHOICE_SCREENS_DAILY_AT (daily EU pings, by distinct user) are read by
+// src/lib.rs's `policy`.
 export interface Env {
   GHCR_REPOSITORY?: string;
   GHCR_TOKEN?: string;
   GHCR_USERNAME?: string;
+  KV_REST_API_URL?: string;
+  KV_REST_API_TOKEN?: string;
+  UPSTASH_REDIS_REST_URL?: string;
+  UPSTASH_REDIS_REST_TOKEN?: string;
+  CHOICE_SCREENS?: string;
+  CHOICE_SCREENS_AT?: string;
+  CHOICE_SCREENS_DAILY_AT?: string;
 }
 
 // What src/lib.rs exports. Each decision takes a string and returns one, both
@@ -27,13 +39,19 @@ interface Exports {
   plan(ptr: number, length: number): bigint;
   pick(ptr: number, length: number): bigint;
   narinfo(ptr: number, length: number): bigint;
+  ping(ptr: number, length: number): bigint;
+  policy(ptr: number, length: number): bigint;
 }
 
 export interface Core {
   plan(path: string): string;
   pick(input: string): string;
   narinfo(input: string): string;
+  ping(input: string): string;
+  policy(input: string): string;
 }
+
+type Call = "plan" | "pick" | "narinfo" | "ping" | "policy";
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 export type Handler = (request: Request) => Promise<Response>;
@@ -43,7 +61,7 @@ export function bind(instance: WebAssembly.Instance): Core {
   const wasm = instance.exports as unknown as Exports;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const call = (name: "plan" | "pick" | "narinfo", input: string): string => {
+  const call = (name: Call, input: string): string => {
     const bytes = encoder.encode(input);
     const ptr = wasm.alloc(bytes.length);
     new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
@@ -58,6 +76,8 @@ export function bind(instance: WebAssembly.Instance): Core {
     plan: (path: string) => call("plan", path),
     pick: (input: string) => call("pick", input),
     narinfo: (input: string) => call("narinfo", input),
+    ping: (input: string) => call("ping", input),
+    policy: (input: string) => call("policy", input),
   };
 }
 
@@ -90,11 +110,76 @@ async function token(fetchImpl: Fetch, repository: string, env: Env): Promise<st
   return ((await response.json()) as { token: string }).token;
 }
 
+// A ping body is two short lines; anything much longer is not one.
+const PING_MAX = 512;
+
+// One /ping: count the id, then answer with the policy. Counting is
+// best-effort: a store that is down or missing still gets the client its
+// policy, from whatever count there is. No address, header or timestamp of
+// the request is stored; Redis holds only the month's HyperLogLog, from
+// which no id can be read back.
+async function ping(core: Core, env: Env, fetchImpl: Fetch, request: Request): Promise<Response> {
+  const json = (status: number, body: string) =>
+    new Response(body, {
+      status,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    });
+  const body = await request.text();
+  if (body.length > PING_MAX) return json(413, '{"error":"too long"}');
+  const date = new Date().toISOString().slice(0, 10);
+  // Vercel's edge network names the request's country; only the code goes
+  // on, to decide whether the EU's rules apply. The address does not.
+  const country = request.headers.get("x-vercel-ip-country") || "";
+  const verdict = core.ping(`${date}\n${country}\n${body}`);
+  if (!verdict.startsWith("count ")) {
+    return json(400, JSON.stringify({ error: verdict.slice("bad ".length) }));
+  }
+  const [, id, region, adds, reads] = verdict.split(" ");
+
+  const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
+  const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
+  let [monthly, daily] = ["", ""];
+  if (url && token) {
+    const add = adds.split(",").map((pair) => pair.split("="));
+    try {
+      const response = await fetchImpl(`${url.replace(/\/$/, "")}/pipeline`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify([
+          ...add.map(([key]) => ["PFADD", key, id]),
+          ...add.map(([key, keep]) => ["EXPIRE", key, keep]),
+          ...reads.split(",").map((key) => ["PFCOUNT", key]),
+        ]),
+      });
+      if (response.ok) {
+        const results = (await response.json()) as { result?: number }[];
+        const [month, lastMonth, today, yesterday] = results.slice(-4).map((r) => Number(r?.result) || 0);
+        // The month and the day that just started have barely been
+        // counted, so each size is the larger of it and the one before.
+        monthly = String(Math.max(month, lastMonth));
+        daily = String(Math.max(today, yesterday));
+      }
+    } catch {
+      // Counted next time; the policy below still goes out.
+    }
+  }
+  const settings = [env.CHOICE_SCREENS || "auto", region, env.CHOICE_SCREENS_AT || "", env.CHOICE_SCREENS_DAILY_AT || ""];
+  return json(200, core.policy([...settings, monthly, daily].join("\n")));
+}
+
 // Build the request handler. `env` is read as described on Env.
 export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler {
   const namespace = (env.GHCR_REPOSITORY || "").toLowerCase();
 
   return async function handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    // vercel.json rewrites every path to this function and passes the
+    // original one as ?path=, without its leading slash.
+    const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
+    if (path === "/ping") {
+      if (request.method !== "POST") return text(405, "POST\n", "no-store");
+      return ping(core, env, fetchImpl, request);
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return text(405, "GET or HEAD\n", "no-store");
     }
@@ -102,10 +187,6 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
       return text(500, "GHCR_REPOSITORY is not set to owner/name\n", "no-store");
     }
 
-    const url = new URL(request.url);
-    // vercel.json rewrites every path to this function and passes the
-    // original one as ?path=, without its leading slash.
-    const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
     const plan = core.plan(path);
     const head = request.method === "HEAD";
     const body = <T>(b: T): T | null => (head ? null : b);

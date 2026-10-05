@@ -45,6 +45,30 @@ in
       '';
     };
 
+    ping = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = ''
+          Count each signed-in user as an active user, once a day, and fetch
+          the policy that turns derisk's browser and search engine choice
+          screens on (ping.nix). A user turns it off for themselves with
+          Settings, Privacy, which writes `privacy.usage_ping = false`.
+        '';
+      };
+
+      url = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        example = "https://losos-desktop-proxy.dasmat.us/ping";
+        description = ''
+          Where the ping goes: the proxy's `/ping` (proxy/). The flake sets
+          it from LOSOS_PROXY_URL, like `losos.update.baseUrl`; with none,
+          nothing is sent and the choice screens stay hidden.
+        '';
+      };
+    };
+
     update = {
       baseUrl = mkOption {
         type = types.str;

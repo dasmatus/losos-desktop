@@ -64,7 +64,9 @@ still takes time, so don't start one to check a module edit.
   components. pm asks a plugin about a command only when no built-in
   fingerprint matched it.
 - `proxy/` is a Vercel edge function with its logic in Rust compiled to
-  WebAssembly. It serves the Nix binary cache and sysupdate's files from GHCR.
+  WebAssembly. It serves the Nix binary cache and sysupdate's files from GHCR,
+  and counts active users (`/ping`, `docs/nixos.md`, "Active users and the
+  choice screens").
 - `tools/nix-cache-push` pushes built store paths into that cache.
 - `tools/nix-fetch-sources` preloads fixed-output inputs in CI; copied outputs
   are hash-checked and can include bootstrap tools as well as source archives.
