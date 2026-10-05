@@ -8,6 +8,7 @@
     ./base.nix
     ./boot.nix
     ./hardware.nix
+    ./allocator.nix
     ./image.nix
     ./disk.nix
     ./update.nix

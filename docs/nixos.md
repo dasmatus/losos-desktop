@@ -102,6 +102,23 @@ and the package-generated documentation retain nixpkgs' defaults. glibc NSS
 lets GDM and ordinary account lookups see systemd-homed users through
 `nss-systemd` and the configured nscd forwarder.
 
+## The memory allocator
+
+On a PC every dynamically linked process allocates through GrapheneOS's
+[hardened_malloc](https://github.com/GrapheneOS/hardened_malloc), nixpkgs'
+`graphene-hardened-malloc` in its default (not light) configuration.
+`nixos/modules/allocator.nix` names it in `/etc/ld-nix.so.preload`, which
+nixpkgs' glibc reads in place of `/etc/ld.so.preload`. derisk is built with
+its `hardened-malloc` feature, mcsapi's `mcsapi-hardened-malloc` crate as its
+Rust global allocator: the same `libhardened_malloc.so`, mapped once, with
+Rust's frees going through `free_sized` so a wrong length aborts.
+
+The module writes the preload itself rather than setting NixOS's
+`environment.memoryAllocator.provider`, which preloads a copy of the library
+from another store path. The library has no `DT_SONAME`, so `ld.so` would map
+that copy and derisk's as two allocators. Halium does not import the module:
+see "What is not done".
+
 ## Binary cache
 
 `proxy/` is a Vercel edge function whose decisions are a WebAssembly module
@@ -627,6 +644,12 @@ rebasing the two `Treat a display of phone-sized monitors` patches.
     a device has to name device-mapper targets set up by its port.
   - **Updates.** sysupdate is not wired up; an update is a new `rootfs.img`
     and `boot.img`, flashed by hand. There is no verity on the root either.
+  - **hardened_malloc.** The PC build preloads it into every process; Halium
+    does not. Its default configuration reserves 32 GiB per size class per
+    arena and needs a 48-bit address space, and Android kernels are usually
+    built with 39-bit virtual addresses. A Halium build needs a
+    hardened_malloc with a smaller `CONFIG_CLASS_REGION_SIZE`, and derisk
+    built against it.
   - **Telephony, audio, sensors, camera.** No ofono, no PulseAudio/PipeWire
     droid modules, no sensorfw. Android's init starts the HALs, and nothing
     on the Linux side talks to them yet beyond EGL.

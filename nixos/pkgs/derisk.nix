@@ -20,6 +20,10 @@
   seatd,
   libdrm,
   linux-pam,
+  graphene-hardened-malloc,
+  # mcsapi-hardened-malloc as the global allocator (nixos/modules/allocator.nix
+  # turns it on where the system preloads hardened_malloc).
+  withHardenedMalloc ? false,
 }:
 
 rustPlatform.buildRustPackage {
@@ -32,8 +36,9 @@ rustPlatform.buildRustPackage {
     url = "https://github.com/dasmatus/derisk";
     # derisk main: #22 (the xdg-desktop-portal backend), #23, #24, #21
     # (icons from the set icon theme, Papirus by default), #31 and #33
-    # (the hardened-malloc feature, off here) and #32 (text fields in GTK
-    # and Qt apps open the on-screen keyboard, over text-input-v3).
+    # (the hardened-malloc feature, which allocator.nix turns on) and #32
+    # (text fields in GTK and Qt apps open the on-screen keyboard, over
+    # text-input-v3).
     rev = "69722e8928c7936dbd053a37c0727685bb5f750c";
     hash = "sha256-ySsuB+c2UszT+SEitDtY+Bcn0+AZa/b+Spx4cRWlt2Y=";
   };
@@ -50,7 +55,7 @@ rustPlatform.buildRustPackage {
     "-p"
     "derisk-portal"
   ];
-  buildFeatures = [ "derisk/host" ];
+  buildFeatures = [ "derisk/host" ] ++ lib.optional withHardenedMalloc "derisk/hardened-malloc";
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
@@ -64,7 +69,9 @@ rustPlatform.buildRustPackage {
     libdrm
     # The lock screen checks passwords through PAM.
     linux-pam
-  ];
+  ]
+  # Linked, and put on the RUNPATH, by the cc wrapper.
+  ++ lib.optional withHardenedMalloc graphene-hardened-malloc;
 
   # winit and glutin dlopen libwayland-client, libxkbcommon and libEGL at run
   # time rather than linking them, so nothing puts them on the RUNPATH and the
