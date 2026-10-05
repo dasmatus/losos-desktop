@@ -1,0 +1,59 @@
+From: losos <losos@localhost>
+Date: Mon, 5 Oct 2026 13:53:20 +0000
+Subject: [PATCH] QIconLoader: Keep the system icon theme whatever the
+ application sets
+
+The Qt 6 patch of the same name, for Qt 5.15: QIcon::setThemeName()
+cannot replace a theme the system names and becomes the fallback instead,
+and the system's directories lead the theme search path.
+---
+ src/gui/image/qiconloader.cpp | 26 +++++++++++++++++++++++++-
+ 1 file changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/src/gui/image/qiconloader.cpp b/src/gui/image/qiconloader.cpp
+index ac7a6864..66cd57e6 100644
+--- a/src/gui/image/qiconloader.cpp
++++ b/src/gui/image/qiconloader.cpp
+@@ -161,6 +161,21 @@ void QIconLoader::updateSystemTheme()
+ 
+ void QIconLoader::setThemeName(const QString &themeName)
+ {
++    // The icon theme is the desktop's choice, not the application's: while
++    // the system names one, an application asking for another (KDE apps ask
++    // for Breeze off Plasma) keeps the system's. Its theme still fills in
++    // icons the system's lacks, as the fallback, unless it chose one itself.
++    // Clearing the name with an empty string works as before.
++    if (!themeName.isEmpty()) {
++        const QString system = systemThemeName();
++        if (!system.isEmpty()) {
++            if (m_userFallbackTheme.isEmpty() && themeName != system) {
++                m_userFallbackTheme = themeName;
++                invalidateKey();
++            }
++            return;
++        }
++    }
+     m_userTheme = themeName;
+     invalidateKey();
+ }
+@@ -189,7 +204,16 @@ QStringList QIconLoader::themeSearchPaths() const
+         // Always add resource directory as search path
+         m_iconDirs.append(QLatin1String(":/icons"));
+     }
+-    return m_iconDirs;
++    // The system's directories come first, in their own order, whatever the
++    // application set: otherwise it could shadow the system theme with a
++    // directory of the same name, or drop the system's directories and with
++    // them the theme. The application's own directories follow.
++    QStringList dirs = systemIconSearchPaths();
++    for (const QString &dir : qAsConst(m_iconDirs)) {
++        if (!dirs.contains(dir))
++            dirs.append(dir);
++    }
++    return dirs;
+ }
+ 
+ void QIconLoader::setFallbackSearchPaths(const QStringList &searchPaths)
+-- 
+2.43.0
+

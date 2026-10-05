@@ -36,11 +36,14 @@ rustPlatform.buildRustPackage {
     url = "https://github.com/dasmatus/derisk";
     # derisk main: #22 (the xdg-desktop-portal backend), #23, #24, #21
     # (icons from the set icon theme, Papirus by default), #31 and #33
-    # (the hardened-malloc feature, which allocator.nix turns on) and #32
+    # (the hardened-malloc feature, which allocator.nix turns on), #32
     # (text fields in GTK and Qt apps open the on-screen keyboard, over
-    # text-input-v3).
-    rev = "69722e8928c7936dbd053a37c0727685bb5f750c";
-    hash = "sha256-ySsuB+c2UszT+SEitDtY+Bcn0+AZa/b+Spx4cRWlt2Y=";
+    # text-input-v3), #34 (the browser and search engine choice screens,
+    # which turn on from the policy file losos-ping writes) and #35 (a menu
+    # item picked in the palette reaches the app that registered it, which
+    # Uranium's tabs menus need).
+    rev = "39b2b2c3e76873dfe94b668c4cf61421330b55b8";
+    hash = "sha256-QH3+URPyZsLD4YN07CQD8brdoSi4/TAzxdTj0xSYmm4=";
   };
 
   cargoHash = "sha256-cPxWZOQV2dMTKMABxiBsdjYySO96iptzvTsdTHFQ6/w=";

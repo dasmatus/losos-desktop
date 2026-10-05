@@ -580,7 +580,8 @@ touchscreen rather than a screen size.
   with a finger. On a phone, resizable dialogs open maximized, and the
   minimum size a window asks the compositor for is capped at the screen.
   Since Qt 6.10 the Wayland client is part of qtbase, so `qtwayland` is left
-  stock, and so is Qt 5, which nothing in the image links.
+  stock. Qt 5, which nothing in the image links, gets no phone patches, only
+  the icon theme one (below, "One icon theme").
 
 The on-screen keyboard is derisk's. GTK3, GTK4 and Qt 6 all speak Wayland's
 `text-input-unstable-v3` without patches, so the keyboard can follow text
@@ -593,15 +594,274 @@ qtshadertools (qtbase links GTK3 for its GTK platform theme, and
 breeze-icons, which papirus-icon-theme builds against, needs Qt), and
 gjs, gcr, gnome-keyring, gnome-desktop, gnome-settings-daemon, libsecret,
 xdg-desktop-portal and its GTK backend, ostree, flatpak and geoclue: about
-thirty derivations per architecture. CI builds them once, pushes them to the
-project's cache, and later runs substitute them from there until nixpkgs
-moves GTK or Qt. Flatpak applications run on their runtime's own GTK and Qt
+thirty derivations per architecture. CI's `prebuild` job builds them before
+the release build starts (`tools/nix-prebuild-plan` finds them: every
+derivation the release needs that does not change with `losos.version`, so
+nothing lists them by name), pushes them to the project's
+cache, and hands them to the release build in the same run, which checks
+that none of them is left to compile. Later runs substitute them from the
+cache until nixpkgs moves GTK or Qt. Flatpak applications run on their runtime's own GTK and Qt
 and do not get these patches.
 
 When nixpkgs moves GTK or Qt and a patch stops applying, the build fails at
 that patch. Purism rebases the GTK series for each Debian release;
 refreshing means copying the series from `pureos/latest` again and
 rebasing the two `Treat a display of phone-sized monitors` patches.
+
+## Uranium
+
+Uranium is the OS's web browser and the default for links and web pages
+(`nixos/modules/browser.nix`). It is Chromium under the OS's own name, and
+on a phone it becomes Chrome for Android as far as the web can tell: it
+sends Chrome for Android's User-Agent string, so sites serve their Android
+version, and lays the page out as Chrome for Android does. A phone is the
+same line as above, every screen under 600 logical pixels on its short
+side; the launcher measures it once, at launch, over xdg-output, and
+`URANIUM_FORM_FACTOR=phone` or `desktop` overrides it. On a phone it also
+turns on Chromium's touch layout for the tab strip and toolbar, overlay
+scrollbars and touch events, and Chrome for Android's power saving, which
+the desktop build carries but leaves off: hidden pages are frozen after a
+grace period and give back their memory, and every background tab but the
+last one used can be frozen. Everywhere it uses Wayland and
+`text-input-unstable-v3`, so derisk's on-screen keyboard follows its text
+fields; Chromium speaks v1 unless told.
+
+There are two builds of it (`nixos/pkgs/uranium.nix`):
+
+Both start from nixpkgs' ungoogled-chromium rather than its Chromium:
+ungoogled-chromium's patches take out the code that talks to Google
+(sign-in, sync, Safe Browsing's lookups, the RLZ and field-trial pings,
+the Web Store's update checks) and replace Google's domains in what is
+left with ones that cannot resolve.
+
+There are two builds of it (`nixos/pkgs/uranium.nix`):
+
+- **`uranium-patched`** compiles Chromium from nixpkgs' source with
+  `nixos/pkgs/patches/chromium` and `nixos/pkgs/uranium/rebrand.py`,
+  after nixpkgs' patches and before ungoogled-chromium's. The
+  patches make two upstream switches mean Android on Linux, where
+  upstream reads them only on Android: `--use-mobile-user-agent` sends the
+  Android User-Agent string and client hints (`Sec-CH-UA-Mobile: ?1`,
+  `Sec-CH-UA-Platform: "Android"`), and `--enable-viewport` turns on all of
+  WebPreferences' Android viewport settings, as DevTools' phone emulation
+  does, where upstream turned on only the 980 pixel layout viewport and
+  still ignored the page's viewport tag. A third patch keeps the profile in
+  `~/.config/uranium` and names the desktop file and icon. The fourth is
+  the phone interface, behind `--uranium-phone-ui`: Chrome for Android's
+  own interface is Java written against Android's views and cannot be built
+  on Linux, so this gives the desktop interface its shape instead. The
+  toolbar is the only row, with no tab strip; a tab switcher button beside
+  the menu opens Tab Search's list of open tabs; the forward, extensions
+  and profile buttons are gone. The same patch adds
+  `--uranium-single-view`, which the launcher always passes to this
+  build: every window is one page, with the address bar but no tab strip,
+  and its tabs are reached through derisk's command palette (below). Kiosk
+  mode was not used for this because it also takes away the address bar,
+  the menu and the back button. Nobody has compiled it yet, and Tab
+  Search's bubble still anchors to the hidden tab strip's button, so where
+  it opens is the first thing a real build has to check. `rebrand.py`
+  renames Chromium to Uranium in the roughly 600 interface strings that say
+  it, in English and in all 81 translations, keeping ChromiumOS and the
+  Chromium Authors as they are. It has GRIT, from the same source tree,
+  re-hash each renamed message and moves the translations to the new ids;
+  renaming the text alone would leave every locale showing those strings in
+  English.
+- **`uranium`**, the one the image ships, wraps nixpkgs' own
+  ungoogled-chromium build, which substitutes from cache.nixos.org, in the same launcher,
+  desktop file, icon and profile directory. Without the patches it can send
+  only the Android User-Agent string, not the client hints, it keeps the
+  desktop viewport, the browser's own windows still say Chromium, and its
+  windows keep their tab strip.
+  Its Chromium comes from nixpkgs without this repository's overlay: from
+  the overlay's package set it would link the patched GTK and need
+  compiling as well.
+
+What the browser may do is set as Chromium policy, in
+`nixos/pkgs/uranium/config.nix`, which both builds read from
+`/etc/chromium` and the Flatpak from `/app/chromium`. Each policy there
+carries its reason; together they switch off what ungoogled-chromium's
+patches leave reaching out: metrics, the variations seed, Safe Browsing,
+search suggestions, network prediction, Domain Reliability, the time
+queries, component updates, the media router, translation, the spelling
+service, sign-in, sync and the AI features. The launcher adds
+`--no-pings` (no `<a ping>` beacons) and
+`--disable-background-networking`. V8's optimizing compilers are off by
+default through the first-run preference for the JavaScript optimizer, the
+same switch as Settings, Site settings, "V8 optimizer"; a site the user trusts
+can have them back there. JavaScript itself stays on, because most of the
+web does not work without it.
+
+Every profile starts with uBlock Origin Lite, the Manifest V3 uBlock
+Origin, which blocks through Chromium's own declarativeNetRequest engine.
+Its settings choose its filter lists: ads, trackers, annoyances, malware
+domains and each region's own. Chromium writes the lists' compiled rules
+into the extension's own directory, so the launcher copies it from the
+store to `~/.local/share/uranium/extensions` on each launch, and its
+manifest carries a fixed key so the user's choice of lists outlives an
+update. The Web Store is unreachable from an ungoogled build, so the
+extension updates with the OS.
+
+Uranium's interface is drawn in mcsapi's look, as every app derisk shows
+is. On each launch the launcher reads the theme id derisk publishes in
+`$XDG_RUNTIME_DIR/derisk/theme.json` and runs mcsapi's `x2mcsapi`
+(`nixos/pkgs/x2mcsapi.nix`, the mcsapi commit derisk builds against),
+which writes a GTK theme generated from that mcsapi theme; the launcher
+selects it with `GTK_THEME`, and new profiles start on Chromium's GTK
+theme, so the toolbar, tabs, menus and dialogs take its colours. A theme
+changed while Uranium runs shows from its next launch. Web pages are left
+as their authors made them: restyling them breaks sites.
+
+Tabs show up in derisk's command palette and top bar as each window's
+global menus, "Tabs" (switch to one, or open a new one) and "Close Tab".
+Chromium exports no menus on Wayland, so a second built-in extension
+sends each window's tabs, by native messaging, to `uranium-tabs`
+(`src/uranium-tabs`), which registers them on derisk's agent socket and
+hands a pick back to the extension. derisk delivers the pick to the
+connection that registered the menu (derisk#35). Windows pair by their
+title, which Chromium takes from the active tab.
+
+The patched build is compiled by `.github/workflows/uranium.yml`, in
+rounds: Chromium takes longer than one runner's six hours. Each round
+restores a ccache in GHCR (`uranium-ccache:<arch>`), builds for nearly
+five hours, saves the cache, pushes what it finished to the project's Nix
+cache, and dispatches the next round for the architectures still going,
+up to eight. The compiler wrapper uses the cache only where the builder
+binds one into the sandbox, so the derivation is the same with or
+without it. The build sets ThinLTO on both architectures and CFI
+(`is_cfi`, `use_cfi_icall`) on x86_64, and fails if gn drops any of them;
+an official build turns those on anyway, so this guards them rather than
+adding them. Chromium does not build CFI for arm64 Linux, where PAC and
+BTI cover what the CPU supports. ci.yml still checks, as
+`checks.<system>.uranium-patches`, that every patch applies, ungoogled's
+included, and the rename still finds every string, against the source
+nixpkgs pins. `losos.uranium.patched = true` puts the patched build in the
+image once the project cache holds it.
+
+The same workflow packs Uranium as the Flatpak `org.losos.Uranium`
+(`nixos/pkgs/uranium/flatpak`) on Flathub's Chromium base app, and on
+main pushes it to GHCR as `flatpak:uranium-<arch>`. A Flatpak cannot use
+a Chromium built into the Nix store, so its Chromium is
+ungoogled-chromium's portable build of the same version, unpatched; the
+launcher, both extensions, policies and helpers are the same Nix
+expressions as the image's. The proxy serves it as an OCI Flatpak remote
+at `/flatpak/`: an index listing each architecture's image by digest,
+and the registry calls Flatpak makes for them. The flake sets
+`losos.uranium.flatpakRemote` from `LOSOS_PROXY_URL`, and the OS adds it
+as the remote `losos`, beside Flathub. `losos.uranium.flatpak = true`
+installs and updates Uranium from there at boot instead of shipping it in
+the image.
+
+The other reading of "the Android version" is the real Chrome for Android
+APK, run through the Android Translation Layer (`losos.android.enable`).
+That is not done: ATL does not run yet (its package is still marked
+broken), and a browser would be the largest app it had been asked to run.
+
+## Active users and the choice screens
+
+The EU's Digital Markets Act makes an operating system with 45 million
+monthly active end users in the EU a gatekeeper (Art. 3(2)(b)), and a
+gatekeeper has to show users in the EEA a choice screen for the browser and
+the search engine (Art. 6(3)). derisk has both screens and keeps them
+hidden. What turns them on is a count of active users, so the OS has one.
+
+**What is sent.** `nixos/modules/ping.nix` gives every signed-in user a
+systemd user timer, `losos-ping`, that runs a few minutes into each session
+and then daily. It POSTs two lines to `$LOSOS_PROXY_URL/ping`: `id`, the
+SHA-256 of a random secret in `~/.local/state/losos/ping-secret` and the
+current month, and `arch`. The id changes every month, so the proxy can
+count a person once a month and cannot link one month to the next. Nothing
+else is sent: no account, no hardware id, no version. A user turns it off
+in Settings, Privacy ("Count me as an active user"), which writes
+`privacy.usage_ping = false`; `losos.ping.enable = false` turns it off for
+a build, and a build without `LOSOS_PROXY_URL` has no timer.
+
+**What is counted.** `proxy/` adds the id to the month's HyperLogLog in
+Redis (`actives:<YYYY-MM>`, and `actives:<YYYY-MM>:<arch>`), and, when
+Vercel's `x-vercel-ip-country` header names an EU member state, to
+`actives:<YYYY-MM>:eu` and the day's `actives:<YYYY-MM-DD>:eu`. Month keys
+are kept for 100 days and day keys for 3. Only that country code
+is read, to pick the keys; the address is never read or stored, and a
+HyperLogLog cannot give an id back. Each size is the larger of the current
+period's EU count and the one before, so a new month or day does not start
+from zero.
+
+**What comes back.** `{"region":"eu","choice_screens":{"browser":…,"search":…}}`,
+both on for a request from the EEA (the EU, Iceland, Liechtenstein,
+Norway) once either EU count reaches its threshold, and off everywhere
+else. The script turns it into
+`~/.local/state/derisk/policy.conf`, which derisk reads: with a screen on
+and nothing chosen yet, derisk opens Settings on its Default apps page at
+login, and the page stays in Settings after. Both screens list their
+options in a new random order each time, with none preselected; the browser
+screen offers the installed browsers and installs others from Flathub.
+
+To set it up, add a Redis database to the Vercel project from the
+Marketplace (Upstash), which sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`
+(`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` work too). Without
+one, pings are answered with both screens off and nothing is counted.
+`CHOICE_SCREENS_AT` sets the monthly threshold (default 45000000),
+`CHOICE_SCREENS_DAILY_AT` a threshold in daily EU pings by distinct user
+(none by default), and
+`CHOICE_SCREENS=on` or `off` forces both screens either way, for testing or
+by choice. The counts are read with `PFCOUNT actives:<YYYY-MM>:eu` (or without
+`:eu`, for everyone) in the database's console. Where a person is comes
+from their address at the time of the ping, not from a setting on the
+machine, so a VPN moves them.
+
+## One icon theme
+
+Every app draws its icons from the icon theme derisk's theme names
+(Papirus-Dark or Papirus by default; Settings, Appearance), not from one it
+ships or names in code. Two halves make that hold.
+
+derisk hands the name to every toolkit, through the channel each already
+reads (`src/theme.rs` in derisk):
+
+- **GTK 3 and 4** read `gtk-icon-theme-name` from `settings.ini` on the XDG
+  config path, which derisk publishes, but prefer GSettings'
+  `org.gnome.desktop.interface icon-theme` whenever the GNOME schemas are
+  installed, as they are for any app nixpkgs wraps. So derisk also writes
+  that key with `dconf`, which `programs.dconf` provides
+  (`nixos/modules/desktop.nix`); without it GSettings answers its default,
+  Adwaita, and GTK apps ignored derisk's theme. Running apps follow a change.
+- **Qt 5 and 6** ask their platform theme, which in a session that is
+  neither GNOME nor Plasma names no icon theme, so Qt apps had only
+  hicolor's few icons. Both read `QT_QPA_SYSTEM_ICON_THEME` first, and derisk
+  sets it in every app it launches and in the user manager's and D-Bus
+  activation's environment. A running Qt app keeps the theme it started
+  with.
+- **Flatpak apps** see the host's icon themes at `/run/host/share/icons`
+  (nixpkgs' flatpak binds `/run/current-system/sw/share/icons` there), and
+  their GTK asks the settings portal for the name, which the GTK backend
+  answers from the same GSettings key.
+
+The toolkits then refuse an app's attempt to replace it, in the overlay's
+patches (`nixos/pkgs/patches`, `gtk3/0034`, `gtk4/0005`, `qtbase/0003`,
+`qtbase5/0001`):
+
+- GTK ignores `gtk-icon-theme-name` set by the application on
+  `GtkSettings`, or by a GTK theme's own `settings.ini`. Only the desktop's
+  settings and the user's `~/.config/gtk-*/settings.ini` choose it.
+  `gtk_icon_theme_set_custom_theme()` (GTK 3) and
+  `gtk_icon_theme_set_theme_name()` (GTK 4) already refused the display's
+  icon theme.
+- Qt ignores `QIcon::setThemeName()` while the system names a theme. The
+  name the app asked for becomes its fallback theme instead, unless it set
+  one, so an icon only its own theme has still shows. This is how KDE apps
+  ask for Breeze on every desktop but Plasma.
+- In both, the system's icon directories always lead the search path,
+  whatever the app sets or prepends, so an app cannot shadow the system
+  theme with a directory of the same name or drop the directories it lives
+  in. App directories still follow, and icons in an app's own resources stay
+  hicolor-level fallbacks, as the icon theme specification has them.
+
+What is left: an app that loads an image file or resource by path instead of
+asking for an icon by name gets that image, since there is no name to look
+up. Chromium and Electron draw their own UI icons that way and use GTK only
+for file icons and the file chooser, which follow the theme. Flatpak apps
+run on their runtime's unpatched GTK and Qt, so one can still name its own
+theme in code; KDE runtime apps, which carry Breeze and never read
+`QT_QPA_SYSTEM_ICON_THEME` from the host, keep Breeze.
 
 ## What is not done
 

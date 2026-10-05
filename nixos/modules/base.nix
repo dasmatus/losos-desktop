@@ -12,10 +12,12 @@
     ./setup.nix
     ./network.nix
     ./desktop.nix
+    ./browser.nix
     ./flatpak.nix
     ./atl.nix
     ./services.nix
     ./pm.nix
+    ./ping.nix
   ];
 
   nixpkgs.overlays = [ (import ../pkgs) ];

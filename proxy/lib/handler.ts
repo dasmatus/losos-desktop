@@ -10,11 +10,23 @@ const TITLE = "org.opencontainers.image.title";
 
 // The environment the handler reads: GHCR_REPOSITORY (owner/name, the
 // namespace every artifact lives under) and optionally GHCR_TOKEN and
-// GHCR_USERNAME.
+// GHCR_USERNAME. For /ping, a Redis REST endpoint and its token, under the
+// names Vercel's Upstash integration sets (KV_* for stores made as Vercel
+// KV); without one, pings are answered but not counted. CHOICE_SCREENS
+// (on, off or auto), CHOICE_SCREENS_AT (monthly active EU users) and
+// CHOICE_SCREENS_DAILY_AT (daily EU pings, by distinct user) are read by
+// src/lib.rs's `policy`.
 export interface Env {
   GHCR_REPOSITORY?: string;
   GHCR_TOKEN?: string;
   GHCR_USERNAME?: string;
+  KV_REST_API_URL?: string;
+  KV_REST_API_TOKEN?: string;
+  UPSTASH_REDIS_REST_URL?: string;
+  UPSTASH_REDIS_REST_TOKEN?: string;
+  CHOICE_SCREENS?: string;
+  CHOICE_SCREENS_AT?: string;
+  CHOICE_SCREENS_DAILY_AT?: string;
 }
 
 // What src/lib.rs exports. Each decision takes a string and returns one, both
@@ -27,13 +39,19 @@ interface Exports {
   plan(ptr: number, length: number): bigint;
   pick(ptr: number, length: number): bigint;
   narinfo(ptr: number, length: number): bigint;
+  ping(ptr: number, length: number): bigint;
+  policy(ptr: number, length: number): bigint;
 }
 
 export interface Core {
   plan(path: string): string;
   pick(input: string): string;
   narinfo(input: string): string;
+  ping(input: string): string;
+  policy(input: string): string;
 }
+
+type Call = "plan" | "pick" | "narinfo" | "ping" | "policy";
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 export type Handler = (request: Request) => Promise<Response>;
@@ -43,7 +61,7 @@ export function bind(instance: WebAssembly.Instance): Core {
   const wasm = instance.exports as unknown as Exports;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const call = (name: "plan" | "pick" | "narinfo", input: string): string => {
+  const call = (name: Call, input: string): string => {
     const bytes = encoder.encode(input);
     const ptr = wasm.alloc(bytes.length);
     new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
@@ -58,6 +76,8 @@ export function bind(instance: WebAssembly.Instance): Core {
     plan: (path: string) => call("plan", path),
     pick: (input: string) => call("pick", input),
     narinfo: (input: string) => call("narinfo", input),
+    ping: (input: string) => call("ping", input),
+    policy: (input: string) => call("policy", input),
   };
 }
 
@@ -90,11 +110,76 @@ async function token(fetchImpl: Fetch, repository: string, env: Env): Promise<st
   return ((await response.json()) as { token: string }).token;
 }
 
+// A ping body is two short lines; anything much longer is not one.
+const PING_MAX = 512;
+
+// One /ping: count the id, then answer with the policy. Counting is
+// best-effort: a store that is down or missing still gets the client its
+// policy, from whatever count there is. No address, header or timestamp of
+// the request is stored; Redis holds only the month's HyperLogLog, from
+// which no id can be read back.
+async function ping(core: Core, env: Env, fetchImpl: Fetch, request: Request): Promise<Response> {
+  const json = (status: number, body: string) =>
+    new Response(body, {
+      status,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    });
+  const body = await request.text();
+  if (body.length > PING_MAX) return json(413, '{"error":"too long"}');
+  const date = new Date().toISOString().slice(0, 10);
+  // Vercel's edge network names the request's country; only the code goes
+  // on, to decide whether the EU's rules apply. The address does not.
+  const country = request.headers.get("x-vercel-ip-country") || "";
+  const verdict = core.ping(`${date}\n${country}\n${body}`);
+  if (!verdict.startsWith("count ")) {
+    return json(400, JSON.stringify({ error: verdict.slice("bad ".length) }));
+  }
+  const [, id, region, adds, reads] = verdict.split(" ");
+
+  const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
+  const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
+  let [monthly, daily] = ["", ""];
+  if (url && token) {
+    const add = adds.split(",").map((pair) => pair.split("="));
+    try {
+      const response = await fetchImpl(`${url.replace(/\/$/, "")}/pipeline`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify([
+          ...add.map(([key]) => ["PFADD", key, id]),
+          ...add.map(([key, keep]) => ["EXPIRE", key, keep]),
+          ...reads.split(",").map((key) => ["PFCOUNT", key]),
+        ]),
+      });
+      if (response.ok) {
+        const results = (await response.json()) as { result?: number }[];
+        const [month, lastMonth, today, yesterday] = results.slice(-4).map((r) => Number(r?.result) || 0);
+        // The month and the day that just started have barely been
+        // counted, so each size is the larger of it and the one before.
+        monthly = String(Math.max(month, lastMonth));
+        daily = String(Math.max(today, yesterday));
+      }
+    } catch {
+      // Counted next time; the policy below still goes out.
+    }
+  }
+  const settings = [env.CHOICE_SCREENS || "auto", region, env.CHOICE_SCREENS_AT || "", env.CHOICE_SCREENS_DAILY_AT || ""];
+  return json(200, core.policy([...settings, monthly, daily].join("\n")));
+}
+
 // Build the request handler. `env` is read as described on Env.
 export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler {
   const namespace = (env.GHCR_REPOSITORY || "").toLowerCase();
 
   return async function handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    // vercel.json rewrites every path to this function and passes the
+    // original one as ?path=, without its leading slash.
+    const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
+    if (path === "/ping") {
+      if (request.method !== "POST") return text(405, "POST\n", "no-store");
+      return ping(core, env, fetchImpl, request);
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return text(405, "GET or HEAD\n", "no-store");
     }
@@ -102,10 +187,6 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
       return text(500, "GHCR_REPOSITORY is not set to owner/name\n", "no-store");
     }
 
-    const url = new URL(request.url);
-    // vercel.json rewrites every path to this function and passes the
-    // original one as ?path=, without its leading slash.
-    const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
     const plan = core.plan(path);
     const head = request.method === "HEAD";
     const body = <T>(b: T): T | null => (head ? null : b);
@@ -118,6 +199,12 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
           "cache-control": "public, max-age=86400",
         },
       });
+    }
+    if (plan.startsWith("flatpak-index ")) {
+      return flatpakIndex(plan, url, fetchImpl, env, namespace, head);
+    }
+    if (plan.startsWith("registry ")) {
+      return registryObject(plan, fetchImpl, env, namespace, head);
     }
     if (!plan.startsWith("layer ")) {
       return text(404, body(`${plan.slice("missing ".length)}\n`), "public, max-age=3600");
@@ -202,4 +289,130 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
     }
     return text(502, body(`unknown kind ${kind}\n`), "no-store");
   };
+}
+
+// The media types a Flatpak OCI image's manifest can come in: what
+// `flatpak build-bundle --oci` writes, and what a copy to GHCR may turn it
+// into.
+const MANIFESTS = [MANIFEST, "application/vnd.docker.distribution.manifest.v2+json"].join(", ");
+
+async function sha256(bytes: ArrayBuffer): Promise<string> {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return `sha256:${Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+// The index of a Flatpak OCI remote, which flatpak asks for as
+// /flatpak/index/static?architecture=amd64&... and reads as a list of
+// images, each with the labels `flatpak build-bundle --oci` put in its
+// config (org.flatpak.ref, the metadata, and so on) and the digest to fetch
+// it by from the registry the index names, which is this proxy again.
+async function flatpakIndex(
+  plan: string,
+  url: URL,
+  fetchImpl: Fetch,
+  env: Env,
+  namespace: string,
+  head: boolean,
+): Promise<Response> {
+  const [, name, ...images] = plan.split(" ");
+  const wanted = url.searchParams.get("architecture");
+  const repository = `${namespace}/flatpak`;
+  let auth: Record<string, string>;
+  try {
+    auth = { authorization: `Bearer ${await token(fetchImpl, repository, env)}` };
+  } catch (error) {
+    return text(502, head ? null : `${(error as Error).message}\n`, "no-store");
+  }
+  const found = [];
+  for (const image of images) {
+    const [tag, architecture] = image.split(":");
+    if (wanted && wanted !== architecture) continue;
+    const manifest = await fetchImpl(`${REGISTRY}/v2/${repository}/manifests/${tag}`, {
+      headers: { ...auth, accept: MANIFESTS },
+    });
+    // An architecture CI has not pushed yet is simply not listed.
+    if (manifest.status === 404) continue;
+    if (!manifest.ok) return text(502, head ? null : `manifest: ${manifest.status}\n`, "no-store");
+    // The digest of the bytes as served, which is what the registry
+    // answers to, rather than any header's word for it.
+    const bytes = await manifest.arrayBuffer();
+    const digest = await sha256(bytes);
+    const stored = JSON.parse(new TextDecoder().decode(bytes)) as {
+      mediaType?: string;
+      config?: { digest?: string };
+    };
+    const configDigest = stored.config?.digest || "";
+    if (!/^sha256:[0-9a-f]{64}$/.test(configDigest)) {
+      return text(502, head ? null : `${tag} has no config\n`, "no-store");
+    }
+    const config = await fetchImpl(`${REGISTRY}/v2/${repository}/blobs/${configDigest}`, {
+      headers: auth,
+    });
+    if (!config.ok) return text(502, head ? null : `config: ${config.status}\n`, "no-store");
+    const labels = ((await config.json()) as { config?: { Labels?: Record<string, string> } })
+      .config?.Labels;
+    if (!labels || !labels["org.flatpak.ref"]) continue;
+    found.push({
+      Tags: ["latest"],
+      Digest: digest,
+      MediaType: stored.mediaType || MANIFEST,
+      OS: "linux",
+      Architecture: architecture,
+      Labels: labels,
+    });
+  }
+  const index = { Registry: `${url.origin}/flatpak/`, Results: [{ Name: name, Images: found }] };
+  return new Response(head ? null : JSON.stringify(index), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=60" },
+  });
+}
+
+// A manifest or blob of one of the index's images, by digest: the
+// registry half of the remote. A digest names its bytes, so either is
+// cached for good; a blob is a redirect to GHCR's storage, as a NAR is.
+async function registryObject(
+  plan: string,
+  fetchImpl: Fetch,
+  env: Env,
+  namespace: string,
+  head: boolean,
+): Promise<Response> {
+  const [, suffix, what, digest] = plan.split(" ");
+  const repository = `${namespace}/${suffix}`;
+  let auth: Record<string, string>;
+  try {
+    auth = { authorization: `Bearer ${await token(fetchImpl, repository, env)}` };
+  } catch (error) {
+    return text(502, head ? null : `${(error as Error).message}\n`, "no-store");
+  }
+  const objectUrl = `${REGISTRY}/v2/${repository}/${what}/${digest}`;
+  if (what === "manifests") {
+    const manifest = await fetchImpl(objectUrl, { headers: { ...auth, accept: MANIFESTS } });
+    if (!manifest.ok) {
+      const status = manifest.status === 404 ? 404 : 502;
+      return text(status, head ? null : `manifest: ${manifest.status}\n`, "no-store");
+    }
+    const bytes = await manifest.arrayBuffer();
+    if ((await sha256(bytes)) !== digest) {
+      return text(502, head ? null : "the manifest does not match its digest\n", "no-store");
+    }
+    return new Response(head ? null : bytes, {
+      headers: {
+        "content-type": manifest.headers.get("content-type") || MANIFEST,
+        "docker-content-digest": digest,
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+    });
+  }
+  const blob = await fetchImpl(objectUrl, { headers: auth, redirect: "manual" });
+  const location = blob.headers.get("location");
+  if (blob.status >= 300 && blob.status < 400 && location) {
+    return new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
+  }
+  if (blob.ok) {
+    return new Response(head ? null : blob.body, {
+      headers: { "content-type": "application/octet-stream", "cache-control": "no-store" },
+    });
+  }
+  return text(blob.status === 404 ? 404 : 502, head ? null : `blob: ${blob.status}\n`, "no-store");
 }

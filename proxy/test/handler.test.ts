@@ -143,3 +143,165 @@ test("an unset namespace is a configuration error, not a guess", async () => {
   const response = await get(handler(core, {}, registry()), "nix-cache-info");
   assert.equal(response.status, 500);
 });
+
+// A Flatpak OCI image as CI pushes it: a manifest by tag, and a config
+// whose labels carry the ref.
+const FLATPAK_CONFIG = JSON.stringify({
+  config: { Labels: { "org.flatpak.ref": "app/org.losos.Uranium/x86_64/master", "org.flatpak.metadata": "[Application]" } },
+});
+const D5 = `sha256:${"5".repeat(64)}`;
+const FLATPAK_MANIFEST = JSON.stringify({
+  schemaVersion: 2,
+  mediaType: "application/vnd.oci.image.manifest.v1+json",
+  config: { digest: D5 },
+  layers: [{ digest: D2 }],
+});
+const digestOf = async (s: string) =>
+  `sha256:${Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("")}`;
+
+function flatpakRegistry(log: Logged[] = []): Fetch {
+  return async (url, init = {}) => {
+    log.push({ url, init });
+    const u = new URL(url);
+    if (u.pathname === "/token") return Response.json({ token: "t" });
+    const [, repo, what, ref] = u.pathname.match(/^\/v2\/(.+)\/(manifests|blobs)\/(.+)$/)!;
+    assert.equal(repo, "dasmatus/losos-desktop/flatpak");
+    if (what === "manifests") {
+      const known = ref === "uranium-x86_64" || ref === (await digestOf(FLATPAK_MANIFEST));
+      return known
+        ? new Response(FLATPAK_MANIFEST, { headers: { "content-type": "application/vnd.oci.image.manifest.v1+json" } })
+        : new Response("", { status: 404 });
+    }
+    if (ref === D5) return new Response(FLATPAK_CONFIG);
+    return new Response(null, { status: 307, headers: { location: `https://blob.example/${ref}` } });
+  };
+}
+
+test("the Flatpak index lists each pushed image with its labels and digest", async () => {
+  const h = handler(core, env, flatpakRegistry());
+  const response = await h(
+    new Request("https://proxy.example/api/proxy?path=flatpak/index/static&architecture=amd64&os=linux"),
+  );
+  assert.equal(response.status, 200);
+  const index = await response.json();
+  assert.equal(index.Registry, "https://proxy.example/flatpak/");
+  assert.equal(index.Results[0].Name, "uranium");
+  const [image] = index.Results[0].Images;
+  assert.equal(image.Architecture, "amd64");
+  assert.equal(image.Digest, await digestOf(FLATPAK_MANIFEST));
+  assert.equal(image.Labels["org.flatpak.ref"], "app/org.losos.Uranium/x86_64/master");
+});
+
+test("an architecture CI has not pushed is left out of the index", async () => {
+  const h = handler(core, env, flatpakRegistry());
+  const response = await h(new Request("https://proxy.example/api/proxy?path=flatpak/index/static&architecture=arm64"));
+  assert.deepEqual((await response.json()).Results[0].Images, []);
+});
+
+test("the remote's manifests are checked against their digest, its blobs redirected", async () => {
+  const h = handler(core, env, flatpakRegistry());
+  const digest = await digestOf(FLATPAK_MANIFEST);
+  const manifest = await get(h, `flatpak/v2/uranium/manifests/${digest}`);
+  assert.equal(manifest.status, 200);
+  assert.equal(await manifest.text(), FLATPAK_MANIFEST);
+  const blob = await get(h, `flatpak/v2/uranium/blobs/${D2}`);
+  assert.equal(blob.status, 302);
+  assert.equal(blob.headers.get("location"), `https://blob.example/${D2}`);
+  assert.equal((await get(h, `flatpak/v2/uranium/manifests/${D1}`)).status, 404);
+});
+
+const ID = "0123456789abcdef".repeat(4);
+const post = (h: Handler, body: string, country = "SK") =>
+  h(
+    new Request("https://cache.example/api/proxy?path=ping", {
+      method: "POST",
+      body,
+      headers: country ? { "x-vercel-ip-country": country } : {},
+    }),
+  );
+
+// A Redis REST endpoint that keeps each HyperLogLog as a plain set.
+function redis(sets: Map<string, Set<string>>, log: Logged[] = []): Fetch {
+  return async (url, init = {}) => {
+    log.push({ url, init });
+    assert.equal(url, "https://kv.example/pipeline");
+    assert.equal((init.headers as Record<string, string>).authorization, "Bearer k");
+    const commands = JSON.parse(init.body as string) as string[][];
+    return Response.json(
+      commands.map(([command, key, value]) => {
+        const set = sets.get(key) ?? new Set();
+        sets.set(key, set);
+        if (command === "PFADD") return { result: set.has(value) ? 0 : (set.add(value), 1) };
+        if (command === "PFCOUNT") return { result: set.size };
+        return { result: 1 };
+      }),
+    );
+  };
+}
+const kv = { ...env, KV_REST_API_URL: "https://kv.example/", KV_REST_API_TOKEN: "k" };
+const ON = (region: string) => ({ region, choice_screens: { browser: true, search: true } });
+const OFF = (region: string) => ({ region, choice_screens: { browser: false, search: false } });
+
+test("a ping with no store is answered, not counted", async () => {
+  const log: Logged[] = [];
+  const response = await post(handler(core, env, registry(log)), `id=${ID}\narch=x86_64\n`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), OFF("eu"));
+  assert.equal(log.length, 0);
+});
+
+test("EU users are counted once each and turn the screens on in the EEA at the threshold", async () => {
+  const sets = new Map<string, Set<string>>();
+  const h = handler(core, { ...kv, CHOICE_SCREENS_AT: "2" }, redis(sets));
+  const month = new Date().toISOString().slice(0, 7);
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`, "DE")).json(), OFF("eu"));
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`, "DE")).json(), OFF("eu"));
+  // Outside the EU: counted in the total, not towards the threshold.
+  assert.deepEqual(await (await post(h, `id=${"e".repeat(64)}\narch=x86_64`, "US")).json(), OFF("other"));
+  assert.deepEqual(await (await post(h, `id=${"f".repeat(64)}\narch=aarch64`, "FR")).json(), ON("eu"));
+  assert.deepEqual(await (await post(h, `id=${"d".repeat(64)}\narch=aarch64`, "NO")).json(), ON("eea"));
+  assert.deepEqual(await (await post(h, `id=${"c".repeat(64)}\narch=aarch64`, "CH")).json(), OFF("other"));
+  assert.equal(sets.get(`actives:${month}`)!.size, 5);
+  assert.equal(sets.get(`actives:${month}:eu`)!.size, 2);
+  assert.equal(sets.get(`actives:${month}:aarch64`)!.size, 3);
+});
+
+test("daily EU pings past their own threshold turn the screens on too", async () => {
+  const sets = new Map<string, Set<string>>();
+  const h = handler(core, { ...kv, CHOICE_SCREENS_DAILY_AT: "2" }, redis(sets));
+  const day = new Date().toISOString().slice(0, 10);
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`, "IT")).json(), OFF("eu"));
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`, "IT")).json(), OFF("eu"));
+  assert.deepEqual(await (await post(h, `id=${"f".repeat(64)}\narch=x86_64`, "PL")).json(), ON("eu"));
+  assert.equal(sets.get(`actives:${day}:eu`)!.size, 2);
+});
+
+test("the screens can be forced either way", async () => {
+  const forced = handler(core, { ...env, CHOICE_SCREENS: "on" }, registry());
+  assert.deepEqual(await (await post(forced, `id=${ID}\narch=aarch64`, "")).json(), ON("other"));
+  const sets = new Map<string, Set<string>>();
+  const off = handler(core, { ...kv, CHOICE_SCREENS: "off", CHOICE_SCREENS_AT: "1" }, redis(sets));
+  assert.deepEqual(await (await post(off, `id=${ID}\narch=aarch64`)).json(), OFF("eu"));
+});
+
+test("a malformed ping is refused before anything is stored", async () => {
+  const log: Logged[] = [];
+  const h = handler(core, kv, redis(new Map(), log));
+  for (const body of [`id=${ID}`, `id=${ID.toUpperCase()}\narch=x86_64`, `id=x\narch=x86_64`, "x".repeat(600)]) {
+    assert.ok([400, 413].includes((await post(h, body)).status), body);
+  }
+  assert.equal((await get(h, "ping")).status, 405);
+  assert.equal(log.length, 0);
+});
+
+test("a store that is down still gets the client its policy", async () => {
+  const down: Fetch = async () => {
+    throw new Error("down");
+  };
+  const response = await post(handler(core, kv, down), `id=${ID}\narch=x86_64`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), OFF("eu"));
+});
