@@ -54,7 +54,9 @@ in
   # The languages the setup offers are the locales installed, so every one it
   # has a name for (derisk's locale.rs) is built into the locale archive.
   # glibc's whole set is ten times the size, for languages derisk's pages
-  # would show by their codes.
+  # would show by their codes. en_IN is left out: glibc builds it only as
+  # the bare `en_IN/UTF-8`, which `locale -a` lists without a charset and
+  # derisk skips, and the archive build refuses the `.UTF-8` spelling.
   i18n.extraLocales = map (l: "${l}.UTF-8/UTF-8") [
     "cs_CZ"
     "da_DK"
@@ -66,7 +68,6 @@ in
     "en_CA"
     "en_GB"
     "en_IE"
-    "en_IN"
     "en_US"
     "es_ES"
     "es_MX"
