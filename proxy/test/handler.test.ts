@@ -201,6 +201,16 @@ test("EU users are counted once each and turn the screens on in the EEA at the t
   assert.equal(sets.get(`actives:${month}:aarch64`)!.size, 3);
 });
 
+test("daily EU pings past their own threshold turn the screens on too", async () => {
+  const sets = new Map<string, Set<string>>();
+  const h = handler(core, { ...kv, CHOICE_SCREENS_DAILY_AT: "2" }, redis(sets));
+  const day = new Date().toISOString().slice(0, 10);
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`, "IT")).json(), OFF("eu"));
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`, "IT")).json(), OFF("eu"));
+  assert.deepEqual(await (await post(h, `id=${"f".repeat(64)}\narch=x86_64`, "PL")).json(), ON("eu"));
+  assert.equal(sets.get(`actives:${day}:eu`)!.size, 2);
+});
+
 test("the screens can be forced either way", async () => {
   const forced = handler(core, { ...env, CHOICE_SCREENS: "on" }, registry());
   assert.deepEqual(await (await post(forced, `id=${ID}\narch=aarch64`, "")).json(), ON("other"));

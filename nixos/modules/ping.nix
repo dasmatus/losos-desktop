@@ -10,8 +10,9 @@
 # to the EU's when the edge network places the request in the EU, and
 # answers with a policy: whether the browser and search engine choice
 # screens are on. Those are the EU's Digital Markets Act rules, so they
-# come on for users in the EEA once the EU count passes the DMA's 45
-# million. The proxy decides; the OS never learns the number.
+# come on for users in the EEA once the EU's monthly count passes the DMA's
+# 45 million, or its daily pings pass a threshold set on the proxy. The
+# proxy decides; the OS never learns the numbers.
 #
 # The policy lands where derisk reads it, $XDG_STATE_HOME/derisk/policy.conf
 # (derisk_settings::choice). derisk shows the screens at the next login and

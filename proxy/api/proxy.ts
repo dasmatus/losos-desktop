@@ -21,6 +21,7 @@ export default async function proxy(request: Request): Promise<Response> {
       UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
       CHOICE_SCREENS: process.env.CHOICE_SCREENS,
       CHOICE_SCREENS_AT: process.env.CHOICE_SCREENS_AT,
+      CHOICE_SCREENS_DAILY_AT: process.env.CHOICE_SCREENS_DAILY_AT,
     });
   }
   return handle(request);

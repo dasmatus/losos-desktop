@@ -13,7 +13,8 @@ const TITLE = "org.opencontainers.image.title";
 // GHCR_USERNAME. For /ping, a Redis REST endpoint and its token, under the
 // names Vercel's Upstash integration sets (KV_* for stores made as Vercel
 // KV); without one, pings are answered but not counted. CHOICE_SCREENS
-// (on, off or auto) and CHOICE_SCREENS_AT (monthly actives) are read by
+// (on, off or auto), CHOICE_SCREENS_AT (monthly active EU users) and
+// CHOICE_SCREENS_DAILY_AT (daily EU pings, by distinct user) are read by
 // src/lib.rs's `policy`.
 export interface Env {
   GHCR_REPOSITORY?: string;
@@ -25,6 +26,7 @@ export interface Env {
   UPSTASH_REDIS_REST_TOKEN?: string;
   CHOICE_SCREENS?: string;
   CHOICE_SCREENS_AT?: string;
+  CHOICE_SCREENS_DAILY_AT?: string;
 }
 
 // What src/lib.rs exports. Each decision takes a string and returns one, both
@@ -124,46 +126,45 @@ async function ping(core: Core, env: Env, fetchImpl: Fetch, request: Request): P
     });
   const body = await request.text();
   if (body.length > PING_MAX) return json(413, '{"error":"too long"}');
-  const month = new Date().toISOString().slice(0, 7);
+  const date = new Date().toISOString().slice(0, 10);
   // Vercel's edge network names the request's country; only the code goes
   // on, to decide whether the EU's rules apply. The address does not.
   const country = request.headers.get("x-vercel-ip-country") || "";
-  const verdict = core.ping(`${month}\n${country}\n${body}`);
+  const verdict = core.ping(`${date}\n${country}\n${body}`);
   if (!verdict.startsWith("count ")) {
     return json(400, JSON.stringify({ error: verdict.slice("bad ".length) }));
   }
-  const [, id, region, add, current, previous] = verdict.split(" ");
+  const [, id, region, adds, reads] = verdict.split(" ");
 
   const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
   const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
-  let actives = "";
+  let [monthly, daily] = ["", ""];
   if (url && token) {
-    const keep = String(100 * 86400);
-    const keys = add.split(",");
+    const add = adds.split(",").map((pair) => pair.split("="));
     try {
       const response = await fetchImpl(`${url.replace(/\/$/, "")}/pipeline`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify([
-          ...keys.map((key) => ["PFADD", key, id]),
-          ...keys.map((key) => ["EXPIRE", key, keep]),
-          ["PFCOUNT", current],
-          ["PFCOUNT", previous],
+          ...add.map(([key]) => ["PFADD", key, id]),
+          ...add.map(([key, keep]) => ["EXPIRE", key, keep]),
+          ...reads.split(",").map((key) => ["PFCOUNT", key]),
         ]),
       });
       if (response.ok) {
         const results = (await response.json()) as { result?: number }[];
-        const [now, before] = results.slice(-2).map((r) => Number(r?.result) || 0);
-        // The month that just started has barely been counted, so the
-        // larger of it and the last full month is the size.
-        actives = String(Math.max(now, before));
+        const [month, lastMonth, today, yesterday] = results.slice(-4).map((r) => Number(r?.result) || 0);
+        // The month and the day that just started have barely been
+        // counted, so each size is the larger of it and the one before.
+        monthly = String(Math.max(month, lastMonth));
+        daily = String(Math.max(today, yesterday));
       }
     } catch {
       // Counted next time; the policy below still goes out.
     }
   }
-  const mode = env.CHOICE_SCREENS || "auto";
-  return json(200, core.policy(`${mode}\n${env.CHOICE_SCREENS_AT || ""}\n${actives}\n${region}`));
+  const settings = [env.CHOICE_SCREENS || "auto", region, env.CHOICE_SCREENS_AT || "", env.CHOICE_SCREENS_DAILY_AT || ""];
+  return json(200, core.policy([...settings, monthly, daily].join("\n")));
 }
 
 // Build the request handler. `env` is read as described on Env.
