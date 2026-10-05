@@ -30,6 +30,13 @@ let
       path = "${systemd}/lib/systemd/systemd-sysupdate";
     }
   ];
+
+  # Papirus without what nixpkgs propagates with it: breeze-icons, which
+  # Papirus inherits from for KDE's icon names, and through it Qt. Neither
+  # draws a single icon derisk asks for, and Qt alone would double the ISO.
+  papirus = pkgs.papirus-icon-theme.overrideAttrs {
+    propagatedBuildInputs = [ pkgs.hicolor-icon-theme ];
+  };
 in
 {
   imports = [
@@ -197,7 +204,7 @@ in
       # The icon theme derisk's built-in themes name, for the keyboard
       # toggle and the page icons. Named directly: minimal.nix leaves icons
       # out of the system profile, and a service has no profile anyway.
-      XDG_DATA_DIRS = "${pkgs.papirus-icon-theme}/share";
+      XDG_DATA_DIRS = "${papirus}/share";
     };
 
     serviceConfig = {
