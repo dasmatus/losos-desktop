@@ -7,3 +7,10 @@ rust-version = "1.95"
 [dependencies]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 serde_json = "1"
+
+# Fat LTO and one codegen unit, as every Rust crate in losos-desktop builds:
+# the release binary is the one on the installer ISO, so it trades build time
+# for inlining across crates and a smaller binary.
+[profile.release]
+lto = true
+codegen-units = 1

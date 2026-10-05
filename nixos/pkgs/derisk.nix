@@ -30,17 +30,25 @@ rustPlatform.buildRustPackage {
   # hosts that cannot use its archive endpoint.
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
-    # derisk main with #19 merged: `derisk display-manager` and its greeter
-    # (the login screen), on mcsapi main's DRM/KMS backend.
-    rev = "623511bcbd3af4dcf3b3a0ef9e090687a47af36f";
-    hash = "sha256-UZ4/sFnhFQTp/PCH/gKWD+9rNG43q+r/Pz9CfdxzYBA=";
+    # derisk main: #22 (the xdg-desktop-portal backend), #23, #24 and #21
+    # (icons from the set icon theme, Papirus by default).
+    rev = "dcc4f3076f2817897acfb94dfb5a18e3f9ad6997";
+    hash = "sha256-igDVH709ma8qNLZKOtjzpTDJNMC6/ZGZSxJGohxjHIQ=";
   };
 
-  cargoHash = "sha256-zb3su7/bD4kGDVkEhY/CTabUBNQDiI6Sf2Wd2+gzles=";
+  cargoHash = "sha256-MSDgW4GNCREgHLOTZbbm9dnvKDSBtoTed3t8OdTTnA8=";
 
-  # `host` is the compositor; without it the binary has only the headless
-  # commands.
-  buildFeatures = [ "host" ];
+  # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
+  # compositor; without it the binary has only the headless commands. It is
+  # named through its package because cargo refuses a bare feature name when
+  # more than one package is built.
+  cargoBuildFlags = [
+    "-p"
+    "derisk"
+    "-p"
+    "derisk-portal"
+  ];
+  buildFeatures = [ "derisk/host" ];
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
@@ -75,6 +83,16 @@ rustPlatform.buildRustPackage {
     install -Dm644 -t $out/lib/systemd/user data/systemd/user/*
     substituteInPlace $out/lib/systemd/user/derisk-agent.service \
       --replace-fail "ExecStart=derisk " "ExecStart=$out/bin/derisk "
+
+    # The portal backend. xdg.portal links share/xdg-desktop-portal from
+    # extraPortals and configPackages, and D-Bus wants an absolute Exec=.
+    install -Dm644 -t $out/share/xdg-desktop-portal/portals data/portal/derisk.portal
+    install -Dm644 -t $out/share/xdg-desktop-portal data/portal/derisk-portals.conf
+    install -Dm644 -t $out/share/dbus-1/services data/dbus-1/services/*
+    substituteInPlace $out/share/dbus-1/services/org.freedesktop.impl.portal.desktop.derisk.service \
+      --replace-fail "Exec=xdg-desktop-portal-derisk" "Exec=$out/bin/xdg-desktop-portal-derisk"
+    substituteInPlace $out/lib/systemd/user/xdg-desktop-portal-derisk.service \
+      --replace-fail "ExecStart=xdg-desktop-portal-derisk" "ExecStart=$out/bin/xdg-desktop-portal-derisk"
   '';
 
   meta = {
