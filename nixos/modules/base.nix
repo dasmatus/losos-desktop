@@ -11,6 +11,7 @@
     ./accounts.nix
     ./network.nix
     ./desktop.nix
+    ./browser.nix
     ./flatpak.nix
     ./atl.nix
     ./services.nix

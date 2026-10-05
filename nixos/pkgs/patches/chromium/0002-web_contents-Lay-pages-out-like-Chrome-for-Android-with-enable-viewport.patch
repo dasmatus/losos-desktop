@@ -1,0 +1,47 @@
+From: losos <losos@localhost>
+Date: Mon, 5 Oct 2026 12:30:00 +0000
+Subject: [PATCH] web_contents: Lay pages out like Chrome for Android with
+ --enable-viewport
+
+On Linux the switch turned on only the layout viewport and still ignored
+the page's viewport meta tag. Turn on the rest of what Android's
+WebPreferences defaults are, as DevTools' phone emulation does: the meta
+tag, fit to screen, the mobile viewport style, text-size-adjust, double
+tap to zoom and zooming focused fields to a legible scale.
+---
+ .../browser/web_contents/web_contents_impl.cc | 22 +++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index c6d3b30..db145ef 100644
+--- a/content/browser/web_contents/web_contents_impl.cc
++++ b/content/browser/web_contents/web_contents_impl.cc
+@@ -3981,6 +3981,28 @@ const blink::web_pref::WebPreferences WebContentsImpl::ComputeWebPreferences(
+ 
+   prefs.viewport_enabled = command_line.HasSwitch(switches::kEnableViewport);
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Uranium on a phone. Upstream, --enable-viewport turns on only the 980px
++  // layout viewport and leaves <meta name="viewport"> ignored, which reads
++  // worse on a phone than no viewport at all. The launcher passes it when
++  // every screen is phone-sized, so here it means what WebPreferences'
++  // Android defaults mean: honour the page's viewport tag, fit the page to
++  // the screen and let it zoom out to that, Android's viewport UA style,
++  // text-size-adjust, double tap to zoom, zooming a focused field up to a
++  // readable size, and a rotation that resizes the page as an orientation
++  // change. DevTools' phone emulation sets the same, so Blink already does
++  // all of it on Linux.
++  if (prefs.viewport_enabled) {
++    prefs.viewport_meta_enabled = true;
++    prefs.shrinks_viewport_contents_to_fit = true;
++    prefs.viewport_style = blink::mojom::ViewportStyle::kMobile;
++    prefs.text_size_adjust_enabled = true;
++    prefs.double_tap_to_zoom_enabled = true;
++    prefs.auto_zoom_focused_editable_to_legible_scale = true;
++    prefs.main_frame_resizes_are_orientation_changes = true;
++  }
++#endif
++
+ #if BUILDFLAG(IS_ANDROID)
+   // TODO(crbug.com/40925473): GetPrimaryDisplay() won't be correct for
+   // externally connected displays. Get the display where Chrome is opened

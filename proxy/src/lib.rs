@@ -14,6 +14,12 @@
 //!   the moving tag `<channel>-<arch>`. `/updates/<channel>/<arch>/<file>`
 //!   serves a file of the newest one, `SHA256SUMS` included, which is all a
 //!   `url-file` transfer asks of its source. That is the install side.
+//! * **A Flatpak remote.** CI pushes the Uranium Flatpak as an OCI image,
+//!   `flatpak:uranium-<arch>`, and flatpak reads an OCI remote
+//!   (`oci+https://...`) as an index of images, `/flatpak/index/static`, and
+//!   a registry the index names. The proxy builds the index from the images'
+//!   labels and is that registry too, for exactly those images' manifests
+//!   and blobs, so a Flatpak install never meets GHCR's token exchange.
 //! * **The active-user count.** `POST /ping` is what each signed-in user's
 //!   `losos-ping` timer sends once a day (`nixos/modules/ping.nix`): a
 //!   per-user id already hashed with the month, and the architecture. The
@@ -60,8 +66,36 @@ pub enum Route {
         /// How the layer's bytes reach the client.
         kind: Kind,
     },
+    /// The Flatpak remote's index, built from these images in the
+    /// namespace's `flatpak` repository: (tag, OCI architecture).
+    FlatpakIndex(&'static [(&'static str, &'static str)]),
+    /// A manifest or blob of an image in the namespace's `flatpak`
+    /// repository, by digest.
+    Registry {
+        /// `manifests` or `blobs`.
+        what: &'static str,
+        /// `sha256:` and 64 hex digits.
+        digest: String,
+    },
     /// Nothing here; the reason goes in the 404's body.
     Missing(&'static str),
+}
+
+/// The Flatpak images the remote lists: the tag CI pushes each
+/// architecture's under, and the name OCI gives the architecture, which is
+/// what flatpak asks the index for.
+const FLATPAK_IMAGES: &[(&str, &str)] =
+    &[("uranium-x86_64", "amd64"), ("uranium-aarch64", "arm64")];
+
+/// The image name the index gives the registry. One name for every image,
+/// since a request names a digest and the digest picks the image.
+const FLATPAK_NAME: &str = "uranium";
+
+/// A content digest: the only algorithm GHCR serves, and a string that goes
+/// into a URL path next.
+fn is_digest(s: &str) -> bool {
+    s.strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 /// How a layer is served.
@@ -172,14 +206,35 @@ pub fn route(path: &str) -> Route {
                 kind,
             }
         }
+        ["flatpak", "index", "static"] => Route::FlatpakIndex(FLATPAK_IMAGES),
+        [
+            "flatpak",
+            "v2",
+            name,
+            what @ ("manifests" | "blobs"),
+            digest,
+        ] => {
+            if *name != FLATPAK_NAME || !is_digest(digest) {
+                return Route::Missing("not an image of this remote");
+            }
+            Route::Registry {
+                what: if *what == "manifests" {
+                    "manifests"
+                } else {
+                    "blobs"
+                },
+                digest: (*digest).into(),
+            }
+        }
         _ => Route::Missing("unknown path"),
     }
 }
 
 /// Render a [`Route`] as the one-line plan the host reads.
 ///
-/// `static <content-type>\n<body>`, `layer <repository> <tag> <title> <kind>`
-/// or `missing <reason>`. Every field of a layer plan was validated above and
+/// `static <content-type>\n<body>`, `layer <repository> <tag> <title> <kind>`,
+/// `flatpak-index <name> <tag>:<arch>...`, `registry flatpak <what> <digest>`
+/// or `missing <reason>`. Every field of a plan was validated above and
 /// contains no space.
 #[must_use]
 pub fn plan(path: &str) -> String {
@@ -198,6 +253,14 @@ pub fn plan(path: &str) -> String {
             };
             format!("layer {repository} {tag} {title} {kind}")
         }
+        Route::FlatpakIndex(images) => {
+            let mut plan = format!("flatpak-index {FLATPAK_NAME}");
+            for (tag, arch) in images {
+                let _ = write!(plan, " {tag}:{arch}");
+            }
+            plan
+        }
+        Route::Registry { what, digest } => format!("registry flatpak {what} {digest}"),
         Route::Missing(reason) => format!("missing {reason}"),
     }
 }
@@ -218,11 +281,7 @@ pub fn pick(input: &str) -> String {
         .filter_map(|line| line.split_once('\t'))
         .find(|(_, t)| *t == title)
         .map(|(digest, _)| digest)
-        .filter(|digest| {
-            digest
-                .strip_prefix("sha256:")
-                .is_some_and(|hex| hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()))
-        })
+        .filter(|digest| is_digest(digest))
         .map(String::from)
         .unwrap_or_default()
 }
@@ -603,6 +662,23 @@ mod tests {
     }
 
     #[test]
+    fn the_flatpak_remote_is_an_index_and_its_images() {
+        assert_eq!(
+            plan("/flatpak/index/static"),
+            "flatpak-index uranium uranium-x86_64:amd64 uranium-aarch64:arm64"
+        );
+        let digest = format!("sha256:{}", "a".repeat(64));
+        assert_eq!(
+            plan(&format!("/flatpak/v2/uranium/manifests/{digest}")),
+            format!("registry flatpak manifests {digest}")
+        );
+        assert_eq!(
+            plan(&format!("/flatpak/v2/uranium/blobs/{digest}")),
+            format!("registry flatpak blobs {digest}")
+        );
+    }
+
+    #[test]
     fn crafted_paths_find_nothing() {
         for path in [
             "/",
@@ -618,6 +694,13 @@ mod tests {
             "/updates/nightly/x86_64/.hidden",
             "/updates/nightly/x86_64/a%2Fb",
             "/updates/nightly%20x/x86_64/SHA256SUMS",
+            "/flatpak/index",
+            "/flatpak/v2/uranium/manifests/latest",
+            "/flatpak/v2/uranium/tags/list",
+            "/flatpak/v2/nix-cache/blobs/sha256:0000",
+            &format!("/flatpak/v2/other/blobs/sha256:{}", "a".repeat(64)),
+            &format!("/flatpak/v2/uranium/blobs/sha256:{}", "g".repeat(64)),
+            &format!("/flatpak/v2/uranium/blobs/sha256:{}/x", "a".repeat(64)),
         ] {
             assert!(
                 plan(path).starts_with("missing "),

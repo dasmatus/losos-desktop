@@ -101,7 +101,9 @@ cited.
 
 ## CI
 
-`.github/workflows/ci.yml` is the only workflow. `prebuild` builds every
+`.github/workflows/ci.yml` is the main workflow; `uranium.yml` compiles
+the patched browser in rounds and publishes its Flatpak (`docs/nixos.md`,
+"Uranium"). `prebuild` builds every
 package the release needs (the patched GTK and Qt, what links them, and this
 repository's programs) for each architecture first. Nothing lists them:
 `tools/nix-prebuild-plan` keeps the derivations that do not change when

@@ -144,6 +144,74 @@ test("an unset namespace is a configuration error, not a guess", async () => {
   assert.equal(response.status, 500);
 });
 
+// A Flatpak OCI image as CI pushes it: a manifest by tag, and a config
+// whose labels carry the ref.
+const FLATPAK_CONFIG = JSON.stringify({
+  config: { Labels: { "org.flatpak.ref": "app/org.losos.Uranium/x86_64/master", "org.flatpak.metadata": "[Application]" } },
+});
+const D5 = `sha256:${"5".repeat(64)}`;
+const FLATPAK_MANIFEST = JSON.stringify({
+  schemaVersion: 2,
+  mediaType: "application/vnd.oci.image.manifest.v1+json",
+  config: { digest: D5 },
+  layers: [{ digest: D2 }],
+});
+const digestOf = async (s: string) =>
+  `sha256:${Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))), (b) =>
+    b.toString(16).padStart(2, "0"),
+  ).join("")}`;
+
+function flatpakRegistry(log: Logged[] = []): Fetch {
+  return async (url, init = {}) => {
+    log.push({ url, init });
+    const u = new URL(url);
+    if (u.pathname === "/token") return Response.json({ token: "t" });
+    const [, repo, what, ref] = u.pathname.match(/^\/v2\/(.+)\/(manifests|blobs)\/(.+)$/)!;
+    assert.equal(repo, "dasmatus/losos-desktop/flatpak");
+    if (what === "manifests") {
+      const known = ref === "uranium-x86_64" || ref === (await digestOf(FLATPAK_MANIFEST));
+      return known
+        ? new Response(FLATPAK_MANIFEST, { headers: { "content-type": "application/vnd.oci.image.manifest.v1+json" } })
+        : new Response("", { status: 404 });
+    }
+    if (ref === D5) return new Response(FLATPAK_CONFIG);
+    return new Response(null, { status: 307, headers: { location: `https://blob.example/${ref}` } });
+  };
+}
+
+test("the Flatpak index lists each pushed image with its labels and digest", async () => {
+  const h = handler(core, env, flatpakRegistry());
+  const response = await h(
+    new Request("https://proxy.example/api/proxy?path=flatpak/index/static&architecture=amd64&os=linux"),
+  );
+  assert.equal(response.status, 200);
+  const index = await response.json();
+  assert.equal(index.Registry, "https://proxy.example/flatpak/");
+  assert.equal(index.Results[0].Name, "uranium");
+  const [image] = index.Results[0].Images;
+  assert.equal(image.Architecture, "amd64");
+  assert.equal(image.Digest, await digestOf(FLATPAK_MANIFEST));
+  assert.equal(image.Labels["org.flatpak.ref"], "app/org.losos.Uranium/x86_64/master");
+});
+
+test("an architecture CI has not pushed is left out of the index", async () => {
+  const h = handler(core, env, flatpakRegistry());
+  const response = await h(new Request("https://proxy.example/api/proxy?path=flatpak/index/static&architecture=arm64"));
+  assert.deepEqual((await response.json()).Results[0].Images, []);
+});
+
+test("the remote's manifests are checked against their digest, its blobs redirected", async () => {
+  const h = handler(core, env, flatpakRegistry());
+  const digest = await digestOf(FLATPAK_MANIFEST);
+  const manifest = await get(h, `flatpak/v2/uranium/manifests/${digest}`);
+  assert.equal(manifest.status, 200);
+  assert.equal(await manifest.text(), FLATPAK_MANIFEST);
+  const blob = await get(h, `flatpak/v2/uranium/blobs/${D2}`);
+  assert.equal(blob.status, 302);
+  assert.equal(blob.headers.get("location"), `https://blob.example/${D2}`);
+  assert.equal((await get(h, `flatpak/v2/uranium/manifests/${D1}`)).status, 404);
+});
+
 const ID = "0123456789abcdef".repeat(4);
 const post = (h: Handler, body: string, country = "SK") =>
   h(
