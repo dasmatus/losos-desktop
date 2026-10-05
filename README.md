@@ -34,7 +34,7 @@ decisions.
 | Accounts | `systemd-homed`, `systemd-userdbd`, `pam_systemd_home`, `run0` |
 | Session | derisk as the display manager, with its lock screen as the login screen, `systemd-logind` seats, and the user manager driving `derisk-session.target` and `graphical-session.target` |
 | Network | `systemd-networkd`, `systemd-resolved`, `systemd-timesyncd` |
-| Memory | `systemd-oomd`, and zswap in front of a RAM-sized encrypted swap partition |
+| Memory | `systemd-oomd`, zswap in front of a RAM-sized encrypted swap partition, and GrapheneOS's hardened_malloc as every process's allocator on PCs |
 
 [`docs/nixos.md`](docs/nixos.md) covers how each piece is built, every outside
 input the build trusts, and what is not done yet.

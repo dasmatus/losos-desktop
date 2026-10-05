@@ -20,6 +20,10 @@
   seatd,
   libdrm,
   linux-pam,
+  graphene-hardened-malloc,
+  # mcsapi-hardened-malloc as the global allocator (nixos/modules/allocator.nix
+  # turns it on where the system preloads hardened_malloc).
+  withHardenedMalloc ? false,
 }:
 
 rustPlatform.buildRustPackage {
@@ -40,7 +44,7 @@ rustPlatform.buildRustPackage {
 
   # `host` is the compositor; without it the binary has only the headless
   # commands.
-  buildFeatures = [ "host" ];
+  buildFeatures = [ "host" ] ++ lib.optional withHardenedMalloc "hardened-malloc";
 
   nativeBuildInputs = [ pkg-config ];
   buildInputs = [
@@ -54,7 +58,9 @@ rustPlatform.buildRustPackage {
     libdrm
     # The lock screen checks passwords through PAM.
     linux-pam
-  ];
+  ]
+  # Linked, and put on the RUNPATH, by the cc wrapper.
+  ++ lib.optional withHardenedMalloc graphene-hardened-malloc;
 
   # winit and glutin dlopen libwayland-client, libxkbcommon and libEGL at run
   # time rather than linking them, so nothing puts them on the RUNPATH and the
