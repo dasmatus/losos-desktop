@@ -1,12 +1,16 @@
-# The installer's live system: a kernel, systemd, wpa_supplicant and the
-# installer TUI on tty1. installer.nix in the OS evaluates this and passes in,
-# as `losos`, what to install and from where; iso.nix turns it into the ISO.
+# The installer's live system: a kernel, systemd, wpa_supplicant and
+# `derisk installer` as the session on tty1. installer.nix in the OS evaluates
+# this and passes in, as `losos`, what to install and from where; iso.nix
+# turns it into the ISO.
 #
-# Nothing of the desktop is here. There is no NetworkManager: networkd runs
-# DHCP on every wired port that has a cable and on whatever wireless link
-# wpa_supplicant brings up, and the TUI drives wpa_supplicant over its control
-# socket. That is the
-# whole network stack, and the only one an install needs.
+# derisk draws the pages and joins networks; `losos-installer serve`, its
+# child, offers the disks and runs repart and sysupdate. Nothing else of the
+# desktop is here: no display manager, no apps, no user. There is no
+# NetworkManager: networkd runs DHCP on every wired port that has a cable and
+# on whatever wireless link wpa_supplicant brings up, and derisk drives
+# wpa_supplicant over its control socket, as first-boot setup does on the
+# installed system. That is the whole network stack, and the only one an
+# install needs.
 {
   config,
   lib,
@@ -50,8 +54,8 @@ in
     loader.grub.enable = false;
     initrd.systemd.enable = true;
 
-    # Errors only, so the kernel and systemd do not write over the TUI on the
-    # same console.
+    # Errors only, so the kernel and systemd do not write over the console
+    # before the installer takes the screen.
     kernelParams = [
       "quiet"
       "loglevel=3"
@@ -71,6 +75,10 @@ in
   hardware.enableRedistributableFirmware = lib.mkForce false;
   hardware.firmware = [ pkgs.linux-firmware ];
 
+  # Mesa, for derisk's GLES renderer and the GBM buffers it scans out, as on
+  # the installed system (desktop.nix).
+  hardware.graphics.enable = true;
+
   # The same choices as the OS (boot.nix): no Nix on the system, /etc as an
   # overlay, users from systemd-sysusers. Here they also keep perl out of a
   # system that never changes after it boots.
@@ -84,7 +92,7 @@ in
   users.mutableUsers = false;
 
   # tty2 and onwards log root in without a password, for wpa_cli and anything
-  # else the TUI does not cover. The machine is in front of whoever booted it,
+  # else the installer does not cover. The machine is in front of whoever booted it,
   # and the installer that already runs on tty1 can erase any disk.
   services.getty.autologinUser = "root";
   users.allowNoPasswordLogin = true;
@@ -100,7 +108,7 @@ in
 
     wireless = {
       enable = true;
-      # Control sockets under /run/wpa_supplicant, which the TUI uses to scan
+      # Control sockets under /run/wpa_supplicant, which derisk uses to scan
       # and to add the network someone picks.
       userControlled = true;
     };
@@ -112,8 +120,8 @@ in
 
   systemd.network = {
     # Any physical wired port, built in or on USB: a cable that is plugged in,
-    # at boot or later, gets an address with nothing asked, and the TUI goes
-    # straight on to the disks. Kind=!* leaves out bridges, bonds and the
+    # at boot or later, gets an address with nothing asked, and the installer
+    # goes straight on to the disks. Kind=!* leaves out bridges, bonds and the
     # like; wireless links have Type=wlan, so they are not matched here.
     networks."20-wired" = {
       matchConfig = {
@@ -128,7 +136,7 @@ in
     };
 
     # Whatever station wpa_supplicant associates, once someone picks a network
-    # in the TUI.
+    # in the installer.
     networks."30-wireless" = {
       matchConfig.WLANInterfaceType = "station";
       networkConfig.DHCP = "yes";
@@ -136,7 +144,7 @@ in
       ipv6AcceptRAConfig.RouteMetric = 600;
     };
 
-    # Nothing here waits for the network: the TUI watches for it, and a
+    # Nothing here waits for the network: the installer watches for it, and a
     # machine with neither a cable nor Wi-Fi in range must still reach it.
     wait-online.enable = false;
   };
@@ -152,11 +160,21 @@ in
     source = losos.pubring;
   };
 
-  systemd.services.losos-installer = {
+  # The installer is a logind session on tty1, as the login screen is on the
+  # installed system, so derisk can take the display and input devices
+  # through libseat. It runs as root: its backend partitions disks.
+  #
+  # This was `losos-installer` alone, a terminal interface on the same tty.
+  # derisk draws the pages now, the same ones first-boot setup is made of,
+  # so the installer works with a mouse, a touchscreen and a phone-sized
+  # screen, and losos-installer is only the backend it starts.
+  systemd.defaultUnit = "graphical.target";
+  systemd.services.derisk-installer = {
     description = "LosOS Desktop installer";
-    wantedBy = [ "multi-user.target" ];
+    wantedBy = [ "graphical.target" ];
     after = [
       "systemd-user-sessions.service"
+      "systemd-logind.service"
       "systemd-vconsole-setup.service"
     ];
     conflicts = [ "getty@tty1.service" ];
@@ -173,11 +191,24 @@ in
     # systemd-pull checks SHA256SUMS.gpg with gpg itself.
     ++ lib.optional (losos.pubring != null) pkgs.gnupg;
 
-    environment.TERM = "linux";
+    environment = {
+      # What pam_systemd records as the session's type.
+      XDG_SESSION_TYPE = "wayland";
+      # The icon theme derisk's built-in themes name, for the keyboard
+      # toggle and the page icons. Named directly: minimal.nix leaves icons
+      # out of the system profile, and a service has no profile anyway.
+      XDG_DATA_DIRS = "${pkgs.papirus-icon-theme}/share";
+    };
 
     serviceConfig = {
       ExecStart = lib.escapeShellArgs [
+        (lib.getExe pkgs.derisk)
+        "installer"
+        "--"
         (lib.getExe pkgs.losos-installer)
+        "serve"
+        "--name"
+        "LosOS Desktop"
         "--repart-definitions"
         losos.repartDefinitions
         "--sysupdate-definitions"
@@ -191,19 +222,25 @@ in
         "--source"
         losos.baseUrl
       ];
-      StandardInput = "tty";
-      StandardOutput = "tty";
-      # The TUI owns the screen. What the tools it runs print reaches its log
-      # pane through pipes; anything else goes to the journal.
-      StandardError = "journal";
+      PAMName = "derisk-installer";
+      User = "root";
       TTYPath = "/dev/tty1";
       TTYReset = true;
       TTYVHangup = true;
       TTYVTDisallocate = true;
-      # Ctrl+C quits, and a crash is still a crash; either way the next
-      # person to look at tty1 should find the installer there.
+      UtmpIdentifier = "tty1";
+      UtmpMode = "user";
+      StandardInput = "tty-fail";
+      # derisk and the tools its backend runs log to the journal; the log
+      # pane on the last page shows the tools' output from the backend.
+      StandardOutput = "journal";
+      StandardError = "journal";
+      # A crash is still a crash; the next person to look at the screen
+      # should find the installer there.
       Restart = "always";
       RestartSec = 1;
     };
   };
+
+  security.pam.services.derisk-installer.startSession = true;
 }
