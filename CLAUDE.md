@@ -99,8 +99,14 @@ cited.
 
 ## CI
 
-`.github/workflows/ci.yml` is the only workflow. `flake` builds `.#release`
-for each architecture within a time budget and pushes project-built paths to
+`.github/workflows/ci.yml` is the only workflow. `prebuild` builds every
+package the release needs (the patched GTK and Qt, what links them, and this
+repository's programs) for each architecture first. Nothing lists them:
+`tools/nix-prebuild-plan` keeps the derivations that do not change when
+`losos.version` does. It pushes them to the GHCR cache outside a pull
+request and hands what it compiled to `flake` as an artifact. `flake`
+imports that, fails if any of the plan would still compile, then builds
+`.#release` within a time budget and pushes project-built paths to
 the GHCR cache. When
 a build completes it checks the flake, and outside a pull request hands the
 release to `push` as an artifact. `format` runs `nix fmt -- --ci` on its own
