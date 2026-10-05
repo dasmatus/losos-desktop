@@ -38,9 +38,10 @@ rustPlatform.buildRustPackage {
     # (icons from the set icon theme, Papirus by default), #31 and #33
     # (the hardened-malloc feature, which allocator.nix turns on) and #32
     # (text fields in GTK and Qt apps open the on-screen keyboard, over
-    # text-input-v3).
-    rev = "69722e8928c7936dbd053a37c0727685bb5f750c";
-    hash = "sha256-ySsuB+c2UszT+SEitDtY+Bcn0+AZa/b+Spx4cRWlt2Y=";
+    # text-input-v3), and #34 (the browser and search engine choice screens,
+    # which turn on from the policy file losos-ping writes).
+    rev = "729ca0b6abdc8e17cba4b8070e414c74082e4c2f";
+    hash = "sha256-TQcoG6NlE44I9CheQTToXiAQCz67umkhKvg1EKOf8ZI=";
   };
 
   cargoHash = "sha256-cPxWZOQV2dMTKMABxiBsdjYySO96iptzvTsdTHFQ6/w=";
