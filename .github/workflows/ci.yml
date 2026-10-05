@@ -392,7 +392,13 @@ jobs:
             [ -f "$ref" ] || continue
             oras pull "$(cat "$ref")" --output "pulled/$arch"
             cat "pulled/$arch/SHA256SUMS" >> sums
-            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name .version -exec mv -n -t release {} +
+            # SHA256SUMS.gpg signs that architecture's own SHA256SUMS, which
+            # sysupdate fetches from GHCR, not from here. Both architectures
+            # carry one under the same name, so moving it made the second
+            # `mv -n` refuse and fail the job; nor would it verify against the
+            # merged SHA256SUMS below.
+            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name SHA256SUMS.gpg ! -name .version \
+              -exec mv -n -t release {} +
           done
           # Every file name carries its architecture, so the two manifests
           # merge by concatenation. sysupdate reads one SHA256SUMS per channel.
