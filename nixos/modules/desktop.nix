@@ -151,6 +151,11 @@ in
   };
   services.udisks2.enable = true;
   services.upower.enable = true;
+  # GSettings' dconf backend. GTK takes the icon theme from GSettings before
+  # derisk's settings.ini, and the GTK portal backend serves it to Flatpak
+  # apps, so derisk writes the theme's icon theme there; without dconf every
+  # app sees GSettings' default, Adwaita (docs/nixos.md, "One icon theme").
+  programs.dconf.enable = true;
   services.gnome.gnome-keyring.enable = true;
   xdg.portal = {
     enable = true;

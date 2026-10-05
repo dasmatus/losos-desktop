@@ -1,7 +1,8 @@
 # The three programs this repository writes rather than fetches, pm, the
 # system manager, and the Halium hardware layer nixpkgs does not carry, plus
-# GTK and Qt with the patches that make their applications fit a phone.
-# Everything else the OS runs comes from nixpkgs unchanged.
+# GTK and Qt with the patches that make their applications fit a phone and
+# keep the system's icon theme. Everything else the OS runs comes from
+# nixpkgs unchanged.
 final: prev:
 let
   # A directory of patches, applied in file name order, which the numeric
@@ -55,7 +56,8 @@ in
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 
-  # Mobile-friendly toolkits (docs/nixos.md, "GTK and Qt on a phone").
+  # Mobile-friendly toolkits that keep the system's icons (docs/nixos.md,
+  # "GTK and Qt on a phone" and "One icon theme").
   # Replacing them here, rather than patching each application, gives every
   # package that links them the patched build, on the PC and Halium alike.
   # Each patch switches on only when every screen is phone-sized (under 600
@@ -67,7 +69,10 @@ in
   # an adaptive file chooser, about, print and shortcuts windows built from
   # libhandy widgets copied into GTK, maximized dialogs, a back button in
   # dialog header bars, and touch event fixes. 0033 is ours and turns it on
-  # from the screen size instead of a per-device setting.
+  # from the screen size instead of a per-device setting. 0034, also ours,
+  # is the icon theme patch every toolkit here gets: an application can no
+  # longer name its own icon theme, through GtkSettings or its GTK theme, or
+  # put its icon directories ahead of the system's.
   gtk3 = prev.gtk3.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk3;
   });
@@ -75,8 +80,8 @@ in
   # behaviour changes until libadwaita 1.5 made its own dialogs adaptive):
   # resizable dialogs and transient windows open maximized, and get only a
   # close button. Plain GTK4 windows still need them; libadwaita's
-  # AdwDialog and breakpoints already adapt and are left alone. 0004 is ours,
-  # as in GTK3.
+  # AdwDialog and breakpoints already adapt and are left alone. 0004 and
+  # 0005 are ours, as in GTK3.
   gtk4 = prev.gtk4.overrideAttrs (old: {
     patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk4;
   });
@@ -85,11 +90,23 @@ in
   # scroll areas kinetically, and resizable dialogs open maximized with
   # their minimum size capped at the screen. Since Qt 6.10 the Wayland
   # client lives in qtbase, so qtwayland, now only the compositor library,
-  # needs nothing. Qt 5 is left stock: nothing in the image links it.
+  # needs nothing. 0003 is the icon theme patch: QIcon::setThemeName()
+  # cannot replace the theme QT_QPA_SYSTEM_ICON_THEME names, which derisk
+  # exports, and the system's directories lead the search path.
   qt6 = prev.qt6.overrideScope (
     _: qtPrev: {
       qtbase = qtPrev.qtbase.overrideAttrs (old: {
         patches = (old.patches or [ ]) ++ patchesIn ./patches/qtbase;
+      });
+    }
+  );
+  # Qt 5 gets only the icon theme patch, Qt 6's 0003 ported. Nothing in the
+  # image links Qt 5, so it costs CI nothing until an app the user installs
+  # through pm brings it in; libsForQt5 takes its qtbase from qt5.
+  qt5 = prev.qt5.overrideScope (
+    _: qtPrev: {
+      qtbase = qtPrev.qtbase.overrideAttrs (old: {
+        patches = (old.patches or [ ]) ++ patchesIn ./patches/qtbase5;
       });
     }
   );
