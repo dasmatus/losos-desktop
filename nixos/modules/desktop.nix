@@ -6,11 +6,9 @@
 # socket-activated user unit, so `systemctl --user status` still describes
 # the desktop and systemd-oomd can still act on one application's cgroup.
 #
-# derisk has no DRM/KMS backend yet: `derisk session` only runs nested inside
-# another Wayland or X11 session. Until it grows one, the session runs it
-# inside cage, a kiosk compositor that owns the seat through logind and shows
-# exactly one fullscreen client. Drop cage from the session's Exec= once
-# derisk can drive a TTY on its own.
+# derisk drives the display itself: with no Wayland or X11 session to nest in,
+# its compositor takes the seat's GPU and input devices from logind and
+# scans out through DRM/KMS, for the login screen and the session alike.
 {
   lib,
   pkgs,
@@ -18,48 +16,90 @@
 }:
 
 let
-  # cage asks wlroots for a GL renderer, then Vulkan, and gives up rather than
-  # draw in software. A GPU with no GL driver, such as QEMU's virtio-vga
-  # without virgl, made every gdm login end within a second and land back at
-  # the greeter with no message. So a cage that exits at startup is run once
-  # more on pixman, wlroots' CPU renderer: slow, but a desktop. Ten seconds
-  # separates that from a session that ran and ended, which a logout does by
-  # terminating the logind session and never returns here.
-  derisk-cage = pkgs.writeShellScript "derisk-cage" ''
-    start=$(${pkgs.coreutils}/bin/date +%s)
-    ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute && exit 0
-    status=$?
-    if [ -z "''${WLR_RENDERER:-}" ] && [ $(($(${pkgs.coreutils}/bin/date +%s) - start)) -lt 10 ]; then
-      echo "derisk-cage: cage exited at startup ($status), retrying with WLR_RENDERER=pixman" >&2
-      WLR_RENDERER=pixman exec ${lib.getExe pkgs.cage} -s -- ${lib.getExe pkgs.derisk} session --execute
-    fi
-    exit "$status"
-  '';
-
-  # One wayland-sessions entry, so gdm offers derisk and nothing else.
-  # --execute makes app launches and lock/suspend/reboot real rather than
-  # simulated. cage's -s keeps VT switching, so a hung session can still be
-  # left for a console.
-  derisk-session =
-    (pkgs.writeTextDir "share/wayland-sessions/derisk.desktop" ''
-      [Desktop Entry]
-      Name=derisk
-      Comment=Adaptive, agent-first Wayland desktop
-      Exec=${derisk-cage}
-      Type=Application
-      DesktopNames=derisk
-    '').overrideAttrs
-      { passthru.providedSessions = [ "derisk" ]; };
+  # cage is gone. It ran the greeter and the session while derisk could only
+  # draw nested in another compositor's window, and needed a wrapper to retry
+  # on wlroots' CPU renderer when a GPU had no GL driver. derisk now scans out
+  # on its own, and Mesa's software rasterizer covers a GPU without GL, so
+  # there is nothing left for a kiosk compositor to do underneath it.
+  derisk = lib.getExe pkgs.derisk;
 in
 {
-  # gdm stays as the login screen: it is what sees homed users through NSS
-  # (accounts.nix) and what the VM test boots to. It is a display manager, not
-  # the desktop, and it does not need GNOME's desktop module.
-  services.displayManager = {
-    gdm.enable = true;
-    sessionPackages = [ derisk-session ];
-    defaultSession = "derisk";
+  # derisk is the display manager too: `derisk display-manager` runs as root
+  # on VT1 and does only PAM and session starts, drawing nothing. It runs
+  # derisk's lock screen as the login screen (`derisk greeter`), so logging in
+  # and unlocking are the same screen, and the greeter runs as its own
+  # unprivileged user and talks to it over a socket only that user can open.
+  # After a login it opens the user's session through the derisk-login PAM
+  # service and runs the session command as them; when the session ends the
+  # greeter comes back.
+  #
+  # This replaced gdm, a GNOME Shell process with its own accounts daemon and
+  # session chooser, all to offer one session. greetd would also have done:
+  # the greeter speaks its protocol and runs under it unchanged. But it is one
+  # more daemon between derisk and PAM doing the same small job, and without
+  # it nothing on the login path is anything but derisk and systemd.
+  #
+  # --execute makes app launches and lock/suspend/reboot real rather than
+  # simulated. There is one session, so no session chooser and no
+  # wayland-sessions entry: the greeter is handed the command outright.
+  #
+  # Boot to graphical.target, which is what pulls the display manager in.
+  # NixOS' display-manager module used to set this for gdm; with gdm gone the
+  # default fell back to multi-user.target and VT1 stayed dark.
+  systemd.defaultUnit = "graphical.target";
+  systemd.services.derisk-display-manager = {
+    description = "derisk display manager";
+    aliases = [ "display-manager.service" ];
+    wantedBy = [ "graphical.target" ];
+    # VT1 is the display manager's, as it was gdm's: no getty there.
+    conflicts = [ "getty@tty1.service" ];
+    after = [
+      "systemd-user-sessions.service"
+      "getty@tty1.service"
+      "systemd-logind.service"
+    ];
+    wants = [ "systemd-user-sessions.service" ];
+    serviceConfig = {
+      ExecStart = lib.escapeShellArgs [
+        derisk
+        "display-manager"
+        "--vt"
+        "1"
+        "--"
+        derisk
+        "greeter"
+        "--"
+        derisk
+        "session"
+        "--execute"
+      ];
+      Type = "notify";
+      Restart = "always";
+      # Sessions live in their own logind scopes; stopping the display
+      # manager should not take a logged-in desktop down with it.
+      KillMode = "process";
+      # Its own runtime directory, for the greeter's socket.
+      RuntimeDirectory = "derisk-dm";
+      RuntimeDirectoryMode = "0711";
+    };
   };
+
+  # The greeter's user: a system user with no home and no login, whose only
+  # power is asking the display manager to check a password.
+  users.users.derisk-greeter = {
+    isSystemUser = true;
+    group = "derisk-greeter";
+    description = "derisk login screen";
+  };
+  users.groups.derisk-greeter = { };
+
+  # derisk-login is a full login: startSession puts pam_systemd (the logind
+  # session) in it, and homed adds pam_systemd_home. derisk-greeter is the
+  # greeter's own session, which only needs pam_systemd, for the logind
+  # session derisk takes the display and input devices through. Its auth stack goes unused: the
+  # display manager never authenticates the greeter or sets its credentials.
+  security.pam.services.derisk-login.startSession = true;
+  security.pam.services.derisk-greeter.startSession = true;
 
   # derisk-session.target, derisk-agent.socket and derisk-agent.service.
   systemd.packages = [ pkgs.derisk ];
@@ -127,7 +167,7 @@ in
   # timer is what makes updates appear without anyone asking.
   services.fwupd.enable = true;
 
-  # Mesa, for cage and for derisk's GLES renderer.
+  # Mesa, for derisk's GLES renderer and its GBM scanout buffers.
   hardware.graphics.enable = true;
 
   # Nothing is needed for FIDO2. The pm tree had to add CONFIG_HIDRAW to its
