@@ -392,7 +392,10 @@ jobs:
             [ -f "$ref" ] || continue
             oras pull "$(cat "$ref")" --output "pulled/$arch"
             cat "pulled/$arch/SHA256SUMS" >> sums
-            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name .version -exec mv -n -t release {} +
+            # Each arch signed its own SHA256SUMS, so the two .gpg files share a name
+            # and would collide here (mv -n exits 1 on a skipped file); neither
+            # signs the merged manifest anyway, and updates are served per arch.
+            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name SHA256SUMS.gpg ! -name .version -exec mv -n -t release {} +
           done
           # Every file name carries its architecture, so the two manifests
           # merge by concatenation. sysupdate reads one SHA256SUMS per channel.
