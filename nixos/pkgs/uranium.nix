@@ -170,8 +170,9 @@ let
         if patched then
           ''
             # The two upstream switches patches/chromium make mean Android on
-            # Linux: the User-Agent string and client hints, and the viewport.
-            set -- --use-mobile-user-agent --enable-viewport "$@"
+            # Linux, the User-Agent string and client hints, and the viewport,
+            # and the phone interface 0004 adds: no tab strip, a tab switcher.
+            set -- --use-mobile-user-agent --enable-viewport --uranium-phone-ui "$@"
           ''
         else
           ''
@@ -216,6 +217,8 @@ let
             "chrome/common/chrome_paths_linux.cc"
             "chrome/common/channel_info_posix.cc"
             "chrome/browser/shell_integration_linux.cc"
+            "chrome/browser/ui/views/toolbar/toolbar_view.cc"
+            "chrome/browser/ui/views/frame/browser_view.cc"
           ]}
         for p in ${lib.escapeShellArgs (patchesIn ./patches/chromium)}; do
           echo "applying $p"

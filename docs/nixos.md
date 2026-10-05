@@ -604,7 +604,15 @@ There are two builds of it (`nixos/pkgs/uranium.nix`):
   WebPreferences' Android viewport settings, as DevTools' phone emulation
   does, where upstream turned on only the 980 pixel layout viewport and
   still ignored the page's viewport tag. A third patch keeps the profile in
-  `~/.config/uranium` and names the desktop file and icon. `rebrand.py`
+  `~/.config/uranium` and names the desktop file and icon. The fourth is
+  the phone interface, behind `--uranium-phone-ui`: Chrome for Android's
+  own interface is Java written against Android's views and cannot be built
+  on Linux, so this gives the desktop interface its shape instead. The
+  toolbar is the only row, with no tab strip; a tab switcher button beside
+  the menu opens Tab Search's list of open tabs; the forward, extensions
+  and profile buttons are gone. Nobody has compiled it yet, and Tab
+  Search's bubble still anchors to the hidden tab strip's button, so where
+  it opens is the first thing a real build has to check. `rebrand.py`
   renames Chromium to Uranium in the roughly 600 interface strings that say
   it, in English and in all 81 translations, keeping ChromiumOS and the
   Chromium Authors as they are. It has GRIT, from the same source tree,

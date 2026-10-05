@@ -1,0 +1,108 @@
+From: losos <losos@localhost>
+Date: Mon, 5 Oct 2026 13:00:00 +0000
+Subject: [PATCH] views: Add Uranium's phone interface behind
+ --uranium-phone-ui
+
+Chrome for Android's interface is Java and cannot be built on Linux, so
+this gives the desktop interface its shape on a phone: the toolbar is the
+only row, with no tab strip, a tab switcher button beside the menu that
+opens Tab Search's list of open tabs, and no forward, extensions or
+profile buttons, which a phone's width has no room for.
+---
+ chrome/browser/ui/views/frame/browser_view.cc |  7 +++++
+ .../browser/ui/views/toolbar/toolbar_view.cc  | 29 +++++++++++++++++--
+ 2 files changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
+index 32b047f..852e173 100644
+--- a/chrome/browser/ui/views/frame/browser_view.cc
++++ b/chrome/browser/ui/views/frame/browser_view.cc
+@@ -1404,6 +1404,13 @@ bool BrowserView::ShouldDrawTabStrokes() const {
+ }
+ 
+ bool BrowserView::ShouldDrawTabStrip() const {
++  // Uranium's phone interface has no tab strip, as Chrome for Android has
++  // none: the toolbar's tab switcher lists the tabs instead. Its launcher
++  // passes the switch when every screen is phone-sized.
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch("uranium-phone-ui")) {
++    return false;
++  }
++
+   // Return false if this window does not normally display a tabstrip or if the
+   // tabstrip is currently hidden, e.g. because we're in fullscreen.
+   if (!WindowFeatureController::From(browser_)->SupportsWindowFeature(
+diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+index c824f20..0def70b 100644
+--- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
++++ b/chrome/browser/ui/views/toolbar/toolbar_view.cc
+@@ -22,6 +22,7 @@
+ #include "base/trace_event/trace_event.h"
+ #include "build/build_config.h"
+ #include "chrome/app/chrome_command_ids.h"
++#include "chrome/app/vector_icons/vector_icons.h"
+ #include "chrome/browser/actor/ui/actor_ui_metrics.h"
+ #include "chrome/browser/actor/ui/task_list_bubble/actor_task_list_bubble.h"
+ #include "chrome/browser/actor/ui/task_list_bubble/actor_task_list_bubble_controller.h"
+@@ -181,6 +182,15 @@ DEFINE_UI_CLASS_PROPERTY_KEY(bool, kActionItemUnderlineIndicatorKey, false)
+ 
+ namespace {
+ 
++// Uranium's phone interface, which its launcher turns on when every screen
++// is under 600 logical pixels on its short side. Like Chrome for Android's
++// toolbar, the toolbar is the only row: no tab strip (BrowserView hides
++// it), a tab switcher button beside the menu, and none of the buttons a
++// phone's width has no room for.
++bool IsUraniumPhoneUi() {
++  return base::CommandLine::ForCurrentProcess()->HasSwitch("uranium-phone-ui");
++}
++
+ // Gets the display mode for a given browser.
+ ToolbarView::DisplayMode GetDisplayMode(BrowserWindowInterface* browser) {
+   // Checked in this order because even tabbed PWAs use the CUSTOM_TAB
+@@ -405,7 +415,7 @@ void ToolbarView::Init() {
+   // Do not create the extensions or browser actions container if it is a guest
+   // profile (only regular and incognito profiles host extensions).
+   if (!browser_->GetProfile()->IsGuestSession() &&
+-      !features::IsWebUIExtensionsContainerEnabled()) {
++      !features::IsWebUIExtensionsContainerEnabled() && !IsUraniumPhoneUi()) {
+     extensions_container = std::make_unique<ExtensionsToolbarDesktop>(browser_);
+ 
+     toolbar_divider = std::make_unique<ToolbarDivider>();
+@@ -592,7 +602,7 @@ void ToolbarView::Init() {
+     avatar_ = AddChildView(std::make_unique<AvatarToolbarButton>(browser_));
+     bool show_avatar_toolbar_button =
+         AvatarToolbarButtonInterface::CanShowForProfile(browser_->GetProfile());
+-    avatar_->SetVisible(show_avatar_toolbar_button);
++    avatar_->SetVisible(show_avatar_toolbar_button && !IsUraniumPhoneUi());
+   }
+ 
+   // Only manage the overflow button when there are at least some views
+@@ -603,6 +613,19 @@ void ToolbarView::Init() {
+     overflow_button_->SetVisible(false);
+   }
+ 
++  // With the tab strip hidden, tabs are switched from Tab Search's list of
++  // open tabs, as Chrome for Android's tab switcher button opens its grid.
++  if (IsUraniumPhoneUi()) {
++    auto tab_switcher = std::make_unique<ToolbarButton>(
++        base::BindRepeating(callback, browser_, IDC_TAB_SEARCH));
++    tab_switcher->SetVectorIcon(kTabIcon);
++    tab_switcher->GetViewAccessibility().SetName(
++        l10n_util::GetStringUTF16(IDS_ACCNAME_TAB_SEARCH));
++    tab_switcher->SetTooltipText(
++        l10n_util::GetStringUTF16(IDS_TOOLTIP_TAB_SEARCH));
++    AddChildView(std::move(tab_switcher));
++  }
++
+   // WebUI app menu button handles these internally, so no need to set these
+   // properties here, and the control is added as part of the WebUI toolbar.
+   if (!features::IsWebUIAppMenuButtonEnabled()) {
+@@ -2007,6 +2030,8 @@ void ToolbarView::OnTouchUiChanged() {
+ }
+ 
+ void ToolbarView::SetForwardButtonVisibility(bool visible) {
++  // A phone goes forward with a swipe or the menu, as on Android.
++  visible = visible && !IsUraniumPhoneUi();
+   if (features::IsWebUIBackForwardButtonEnabled()) {
+     toolbar_webview_->SetForwardVisible(visible);
+   } else {
