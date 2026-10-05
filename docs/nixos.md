@@ -515,10 +515,12 @@ HALs need older headers overrides `android-headers`.
   System panel to Blueprint; neither applies. The factory reset is reachable
   through `systemctl start factory-reset.target` and the Varlink API, and the
   security report answers on the bus, but neither has a button in Settings.
-- **derisk runs nested, inside cage.** derisk has no DRM/KMS backend yet, so
-  gdm's derisk session starts `cage -s -- derisk session --execute` and derisk
-  draws in cage's one fullscreen window (`nixos/modules/desktop.nix`). Its
-  lock screen (PAM service `derisk`) locks when asked and on logind's Lock,
+- **derisk drives one display.** `derisk display-manager` starts
+  `derisk greeter`, derisk's lock screen as the login screen, and after a
+  login `derisk session --execute`; each takes the seat from logind and
+  scans out through DRM/KMS on the first connected display, at its preferred
+  mode (`nixos/modules/desktop.nix`). A second display stays dark and
+  hotplug is not handled. Its lock screen (PAM service `derisk`) locks when asked and on logind's Lock,
   but nothing locks before sleep or on idle yet: that needs derisk to hold a
   logind `sleep` delay inhibitor until its lock screen is up. derisk also has no polkit agent, no layer-shell or
   XWayland yet, and no UI for
@@ -533,7 +535,7 @@ HALs need older headers overrides `android-headers`.
   failing, skipped the Android container and reached a login prompt. No
   arm64 build, `boot.img` on a device, or Android container has been run.
   Beyond that:
-  - **The display.** derisk runs inside cage, and cage needs DRM/KMS. A
+  - **The display.** derisk drives the display itself through DRM/KMS. A
     device whose kernel has a DRM driver (msm, mediatek, panfrost) can show
     the desktop with Mesa; one that only has Android's hwcomposer cannot,
     because nothing here drives hwcomposer. That needs a hwcomposer backend
