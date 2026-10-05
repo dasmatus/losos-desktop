@@ -119,6 +119,12 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
         },
       });
     }
+    if (plan.startsWith("flatpak-index ")) {
+      return flatpakIndex(plan, url, fetchImpl, env, namespace, head);
+    }
+    if (plan.startsWith("registry ")) {
+      return registryObject(plan, fetchImpl, env, namespace, head);
+    }
     if (!plan.startsWith("layer ")) {
       return text(404, body(`${plan.slice("missing ".length)}\n`), "public, max-age=3600");
     }
@@ -202,4 +208,130 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
     }
     return text(502, body(`unknown kind ${kind}\n`), "no-store");
   };
+}
+
+// The media types a Flatpak OCI image's manifest can come in: what
+// `flatpak build-bundle --oci` writes, and what a copy to GHCR may turn it
+// into.
+const MANIFESTS = [MANIFEST, "application/vnd.docker.distribution.manifest.v2+json"].join(", ");
+
+async function sha256(bytes: ArrayBuffer): Promise<string> {
+  const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return `sha256:${Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
+// The index of a Flatpak OCI remote, which flatpak asks for as
+// /flatpak/index/static?architecture=amd64&... and reads as a list of
+// images, each with the labels `flatpak build-bundle --oci` put in its
+// config (org.flatpak.ref, the metadata, and so on) and the digest to fetch
+// it by from the registry the index names, which is this proxy again.
+async function flatpakIndex(
+  plan: string,
+  url: URL,
+  fetchImpl: Fetch,
+  env: Env,
+  namespace: string,
+  head: boolean,
+): Promise<Response> {
+  const [, name, ...images] = plan.split(" ");
+  const wanted = url.searchParams.get("architecture");
+  const repository = `${namespace}/flatpak`;
+  let auth: Record<string, string>;
+  try {
+    auth = { authorization: `Bearer ${await token(fetchImpl, repository, env)}` };
+  } catch (error) {
+    return text(502, head ? null : `${(error as Error).message}\n`, "no-store");
+  }
+  const found = [];
+  for (const image of images) {
+    const [tag, architecture] = image.split(":");
+    if (wanted && wanted !== architecture) continue;
+    const manifest = await fetchImpl(`${REGISTRY}/v2/${repository}/manifests/${tag}`, {
+      headers: { ...auth, accept: MANIFESTS },
+    });
+    // An architecture CI has not pushed yet is simply not listed.
+    if (manifest.status === 404) continue;
+    if (!manifest.ok) return text(502, head ? null : `manifest: ${manifest.status}\n`, "no-store");
+    // The digest of the bytes as served, which is what the registry
+    // answers to, rather than any header's word for it.
+    const bytes = await manifest.arrayBuffer();
+    const digest = await sha256(bytes);
+    const stored = JSON.parse(new TextDecoder().decode(bytes)) as {
+      mediaType?: string;
+      config?: { digest?: string };
+    };
+    const configDigest = stored.config?.digest || "";
+    if (!/^sha256:[0-9a-f]{64}$/.test(configDigest)) {
+      return text(502, head ? null : `${tag} has no config\n`, "no-store");
+    }
+    const config = await fetchImpl(`${REGISTRY}/v2/${repository}/blobs/${configDigest}`, {
+      headers: auth,
+    });
+    if (!config.ok) return text(502, head ? null : `config: ${config.status}\n`, "no-store");
+    const labels = ((await config.json()) as { config?: { Labels?: Record<string, string> } })
+      .config?.Labels;
+    if (!labels || !labels["org.flatpak.ref"]) continue;
+    found.push({
+      Tags: ["latest"],
+      Digest: digest,
+      MediaType: stored.mediaType || MANIFEST,
+      OS: "linux",
+      Architecture: architecture,
+      Labels: labels,
+    });
+  }
+  const index = { Registry: `${url.origin}/flatpak/`, Results: [{ Name: name, Images: found }] };
+  return new Response(head ? null : JSON.stringify(index), {
+    headers: { "content-type": "application/json", "cache-control": "public, max-age=60" },
+  });
+}
+
+// A manifest or blob of one of the index's images, by digest: the
+// registry half of the remote. A digest names its bytes, so either is
+// cached for good; a blob is a redirect to GHCR's storage, as a NAR is.
+async function registryObject(
+  plan: string,
+  fetchImpl: Fetch,
+  env: Env,
+  namespace: string,
+  head: boolean,
+): Promise<Response> {
+  const [, suffix, what, digest] = plan.split(" ");
+  const repository = `${namespace}/${suffix}`;
+  let auth: Record<string, string>;
+  try {
+    auth = { authorization: `Bearer ${await token(fetchImpl, repository, env)}` };
+  } catch (error) {
+    return text(502, head ? null : `${(error as Error).message}\n`, "no-store");
+  }
+  const objectUrl = `${REGISTRY}/v2/${repository}/${what}/${digest}`;
+  if (what === "manifests") {
+    const manifest = await fetchImpl(objectUrl, { headers: { ...auth, accept: MANIFESTS } });
+    if (!manifest.ok) {
+      const status = manifest.status === 404 ? 404 : 502;
+      return text(status, head ? null : `manifest: ${manifest.status}\n`, "no-store");
+    }
+    const bytes = await manifest.arrayBuffer();
+    if ((await sha256(bytes)) !== digest) {
+      return text(502, head ? null : "the manifest does not match its digest\n", "no-store");
+    }
+    return new Response(head ? null : bytes, {
+      headers: {
+        "content-type": manifest.headers.get("content-type") || MANIFEST,
+        "docker-content-digest": digest,
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+    });
+  }
+  const blob = await fetchImpl(objectUrl, { headers: auth, redirect: "manual" });
+  const location = blob.headers.get("location");
+  if (blob.status >= 300 && blob.status < 400 && location) {
+    return new Response(null, { status: 302, headers: { location, "cache-control": "no-store" } });
+  }
+  if (blob.ok) {
+    return new Response(head ? null : blob.body, {
+      headers: { "content-type": "application/octet-stream", "cache-control": "no-store" },
+    });
+  }
+  return text(blob.status === 404 ? 404 : 502, head ? null : `blob: ${blob.status}\n`, "no-store");
 }

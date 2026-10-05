@@ -42,6 +42,8 @@ in
     in
     final.callPackage ./uranium.nix {
       chromium-unwrapped = plain.ungoogled-chromium.browser;
+      uranium-tabs-static = plain.pkgsStatic.callPackage ./uranium-tabs.nix { };
+      wayland-utils-static = plain.pkgsStatic.wayland-utils;
       # The ungoogled-chromium patch series that build applies, which is
       # not in its passthru: the same call nixpkgs makes, so the same path.
       ungoogler = plain.callPackage (

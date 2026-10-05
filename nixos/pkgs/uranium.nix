@@ -22,7 +22,6 @@
   ungoogler,
   patched ? false,
   wayland-utils,
-  gawk,
   glib,
   gtk3,
   gtk4,
@@ -37,6 +36,11 @@
   python3,
   patchutils,
   fetchzip,
+  jq,
+  uranium-tabs,
+  # The Flatpak's two helpers, linked statically (flatpakPayload).
+  uranium-tabs-static,
+  wayland-utils-static,
 }:
 
 let
@@ -68,13 +72,28 @@ let
   # malware domains, and each region's own. The Web Store, which would
   # update it, is out of reach of an ungoogled build, so it updates with
   # the OS.
-  ublockOriginLite = fetchzip {
-    pname = "ublock-origin-lite";
-    version = "2026.930.1227";
-    url = "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.930.1227/uBOLite_2026.930.1227.chromium.zip";
-    stripRoot = false;
-    hash = "sha256-RaCPzuREHDZqOGdnd1Ptuqg4oMqA0PNPTVrsZDtlWz4=";
-  };
+  #
+  # Chromium names an extension loaded from a directory after the
+  # directory's path unless its manifest has a key, so a key is added: the
+  # id stays mglkdfjpgkabicfgmggmklcngiopcgpk across updates, and with it
+  # the user's choice of filter lists. Only the public half exists.
+  ublockOriginLite =
+    runCommand "ublock-origin-lite-2026.930.1227"
+      {
+        src = fetchzip {
+          pname = "ublock-origin-lite";
+          version = "2026.930.1227";
+          url = "https://github.com/uBlockOrigin/uBOL-home/releases/download/2026.930.1227/uBOLite_2026.930.1227.chromium.zip";
+          stripRoot = false;
+          hash = "sha256-RaCPzuREHDZqOGdnd1Ptuqg4oMqA0PNPTVrsZDtlWz4=";
+        };
+        nativeBuildInputs = [ jq ];
+      }
+      ''
+        cp -r $src $out
+        chmod -R u+w $out
+        jq --arg key MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA04v0iYZqw8xG8TdCkZVF/yFnasnpoXMCtUFlXwuwP63KpSFA6yCI684AQgpY7ewlSLiBMdrZdFybnS8i9dqKvnXlSfcDpyzA1zqZ58OVTIDA2W1AUKI/B2+zIvXvCLf/oSBP8VE1YROB7er85/IgHcJkpyGzQECnW09/EuhXVHz/XGXm7A50/Aqh3ge/b7YM+j54h7PL7dXso5ffzB8GTGJCtJfqeh+GjTakqfG/TCygm42/fcWTtMBwgDmOOr7olVZKCAbxGyHRF+DSNM1MQK480ABuy+yLjWcmQFiWUHesngOiqauhwG/38cgqfFcostX9M9G6B7khOi3NZYSpzwIDAQAB '. + {key: $key}' $src/manifest.json > $out/manifest.json
+      '';
 
   # Chrome for Android's whole User-Agent string since the reduction, the
   # one the unpatched build can send. The patched one builds the same string
@@ -100,126 +119,182 @@ let
     "${adwaita-icon-theme}/share"
   ];
 
-  launcher = ''
-    #!${runtimeShell}
-    # Uranium's launcher: the environment nixpkgs' Chromium wrapper sets, then
-    # the switches that make it Uranium, and on a phone, Android.
-
-    # Chromium falls back to its namespace sandbox when NixOS has no setuid
-    # helper installed, as nixpkgs' wrapper arranges.
-    if [ -x /run/wrappers/bin/${browser.passthru.sandboxExecutableName} ]; then
-      export CHROME_DEVEL_SANDBOX=/run/wrappers/bin/${browser.passthru.sandboxExecutableName}
-    else
-      export CHROME_DEVEL_SANDBOX=${browser.sandbox}/bin/${browser.passthru.sandboxExecutableName}
-    fi
-    # Desktop shortcuts Chromium writes for web apps run this launcher, and
-    # uranium.desktop names its windows: Chromium takes the Wayland app id
-    # from it, which is how derisk finds the launcher entry and the icon.
-    export CHROME_WRAPPER=uranium
-    export CHROME_DESKTOP=uranium.desktop
-    export LD_LIBRARY_PATH="''${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${libraryPath}"
-    export XDG_DATA_DIRS="${dataDirs}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
-    # xdg-open and friends, last, so the session's own come first.
-    export PATH="''${PATH:+$PATH:}${xdg-utils}/bin"
-
-    # A phone is every screen under 600 logical pixels on its short side, the
-    # line derisk and the GTK and Qt patches draw. It is decided once, at
-    # launch: a phone docked to a monitor gets the desktop browser from the
-    # next launch on. URANIUM_FORM_FACTOR=phone or desktop overrides it.
-    form_factor() {
-      case "''${URANIUM_FORM_FACTOR-}" in
-        phone | desktop)
-          echo "$URANIUM_FORM_FACTOR"
+  # The launcher, for the store and for the Flatpak, which differ in where
+  # things are and in what has to be set up before Chromium runs.
+  mkLauncher =
+    {
+      shell,
+      setup,
+      waylandInfo,
+      ublock,
+      ublockName,
+      tabs,
+      appId,
+      exec,
+      patched,
+    }:
+    ''
+      #!${shell}
+      # Uranium's launcher: the environment Chromium needs, then the switches
+      # that make it Uranium, and on a phone, Android.
+      ${setup}
+      # A phone is every screen under 600 logical pixels on its short side, the
+      # line derisk and the GTK and Qt patches draw. It is decided once, at
+      # launch: a phone docked to a monitor gets the desktop browser from the
+      # next launch on. URANIUM_FORM_FACTOR=phone or desktop overrides it.
+      form_factor() {
+        case "''${URANIUM_FORM_FACTOR-}" in
+          phone | desktop)
+            echo "$URANIUM_FORM_FACTOR"
+            return
+            ;;
+        esac
+        if [ -z "''${WAYLAND_DISPLAY-}" ]; then
+          echo desktop
           return
-          ;;
-      esac
-      if [ -z "''${WAYLAND_DISPLAY-}" ]; then
-        echo desktop
-        return
-      fi
-      # xdg-output's logical size is the size after scaling, the one the
-      # 600 pixel line is in. No output listed means no answer: desktop.
-      ${wayland-utils}/bin/wayland-info -i zxdg_output_manager_v1 2>/dev/null |
-        ${gawk}/bin/awk '
-          /logical_width:/ {
-            gsub(",", "")
-            width = $2; height = $4
-            outputs++
-            if ((width < height ? width : height) >= 600) large = 1
-          }
-          END { print (outputs > 0 && !large) ? "phone" : "desktop" }'
-    }
-
-    # Prepended, so a switch given on the command line, which comes later,
-    # wins over the launcher's.
-    #
-    # Wayland, and text-input-v3 for the input method, the protocol derisk's
-    # compositor serves its on-screen keyboard over; Chromium speaks v1
-    # unless told. --class names the app id outright as well.
-    #
-    # Then nothing the browser sends on its own: no <a ping> requests to the
-    # addresses a page lists when a link is followed (--no-pings), and none
-    # of the requests Chromium makes with no page asking, such as component
-    # and extension update checks and the field trial configuration
-    # (--disable-background-networking). The policies in
-    # nixos/modules/browser.nix switch off the rest by name.
-    #
-    # And two extensions, loaded from the store on every launch, so they
-    # are in every profile and their version is the OS's: uBlock Origin
-    # Lite, and the one that lists the tabs in derisk's command palette
-    # (src/uranium-tabs says how).
-    set -- \
-      --ozone-platform-hint=auto \
-      --enable-wayland-ime \
-      --wayland-text-input-version=3 \
-      --class=uranium \
-      --no-pings \
-      --disable-background-networking \
-      --load-extension=${ublockOriginLite},${./uranium/tabs} \
-      "$@"
-    ${lib.optionalString (!patched) ''
-      # The patched build keeps its profile in ~/.config/uranium itself;
-      # nixpkgs' would use ~/.config/chromium, shared with any stock Chromium.
-      set -- --user-data-dir="''${XDG_CONFIG_HOME:-$HOME/.config}/uranium" "$@"
-    ''}
-    if [ "$(form_factor)" = phone ]; then
-      # The touch layout of the tab strip and toolbar, overlay scrollbars as
-      # on Android, and touch events on for every page, which sites test for
-      # before they serve their touch version.
-      #
-      # The rest is Chrome for Android's power saving, which the desktop
-      # build has but leaves off: a page hidden past its grace period is
-      # frozen and stops running timers (stop-in-background, on by default
-      # only on Android), a frozen page gives back its memory
-      # (MemoryPurgeOnFreeze, likewise), and every background tab but the
-      # last one used can be frozen (InfiniteTabsFreezing), where Android
-      # freezes whatever is not on screen. The desktop freezing policy's
-      # exemptions still hold, such as a tab that is playing audio.
-      set -- \
-        --top-chrome-touch-ui=enabled \
-        --enable-features=OverlayScrollbar,stop-in-background,MemoryPurgeOnFreeze,InfiniteTabsFreezing:num_protected_tabs/1 \
-        --touch-events=enabled \
-        "$@"
-      ${
-        if patched then
-          ''
-            # The two upstream switches patches/chromium make mean Android on
-            # Linux, the User-Agent string and client hints, and the viewport,
-            # and the phone interface 0004 adds: no tab strip, a tab switcher.
-            set -- --use-mobile-user-agent --enable-viewport --uranium-phone-ui "$@"
-          ''
-        else
-          ''
-            # Stock Chromium has no Android mode to turn on: --enable-viewport
-            # alone would ignore every page's viewport tag. The string is what
-            # it can send; its client hints still say Linux.
-            set -- --user-agent=${lib.escapeShellArg androidUserAgent} "$@"
-          ''
+        fi
+        # xdg-output's logical size is the size after scaling, the one the
+        # 600 pixel line is in, as "logical_width: 392, logical_height: 872".
+        # No output listed means no answer: desktop. Read in the shell, not
+        # awk, which the Flatpak's runtime does not promise.
+        ${waylandInfo} -i zxdg_output_manager_v1 2>/dev/null | {
+          outputs=0
+          large=0
+          while read -r key width _ height _; do
+            [ "$key" = logical_width: ] || continue
+            width=''${width%,}
+            outputs=$((outputs + 1))
+            if [ "$width" -ge 600 ] && [ "$height" -ge 600 ]; then
+              large=1
+            fi
+          done
+          if [ "$outputs" -gt 0 ] && [ "$large" = 0 ]; then
+            echo phone
+          else
+            echo desktop
+          fi
+        }
       }
-    fi
 
-    exec -a "$0" ${browser}/libexec/chromium/chromium "$@"
-  '';
+      # Prepended, so a switch given on the command line, which comes later,
+      # wins over the launcher's.
+      #
+      # Wayland, and text-input-v3 for the input method, the protocol derisk's
+      # compositor serves its on-screen keyboard over; Chromium speaks v1
+      # unless told. --class names the app id outright as well.
+      #
+      # Then nothing the browser sends on its own: no <a ping> requests to the
+      # addresses a page lists when a link is followed (--no-pings), and none
+      # of the requests Chromium makes with no page asking, such as component
+      # and extension update checks and the field trial configuration
+      # (--disable-background-networking). The policies below switch off
+      # the rest by name.
+      #
+      # And two extensions, loaded on every launch, so they are in every
+      # profile and their version is the OS's: uBlock Origin Lite, and the
+      # one that lists the tabs in derisk's command palette
+      # (src/uranium-tabs says how). Chromium writes the indexed form of
+      # uBlock's filter lists into the extension's own directory, and fails
+      # to load it from a read-only one such as the store, so it runs from
+      # a copy in the user's data directory, made again when the OS brings
+      # a new one.
+      ublock_dir="''${XDG_DATA_HOME:-$HOME/.local/share}/uranium/extensions"
+      ublock="$ublock_dir/${ublockName}"
+      if [ ! -f "$ublock/manifest.json" ]; then
+        rm -rf "$ublock_dir"/ublock-origin-lite*
+        mkdir -p "$ublock_dir"
+        cp -r ${ublock} "$ublock.new"
+        chmod -R u+w "$ublock.new"
+        mv "$ublock.new" "$ublock"
+      fi
+      set -- \
+        --ozone-platform-hint=auto \
+        --enable-wayland-ime \
+        --wayland-text-input-version=3 \
+        --class=${appId} \
+        --no-pings \
+        --disable-background-networking \
+        --load-extension="$ublock",${tabs} \
+        "$@"
+      ${lib.optionalString patched ''
+        # One page per window, with no tab strip: the tabs are in derisk's
+        # command palette, which uranium-tabs fills (patches/chromium 0004).
+        set -- --uranium-single-view "$@"
+      ''}
+      ${lib.optionalString (!patched) ''
+        # The patched build keeps its profile in ~/.config/uranium itself;
+        # an unpatched one would use ~/.config/chromium, shared with any stock
+        # Chromium.
+        set -- --user-data-dir="''${XDG_CONFIG_HOME:-$HOME/.config}/uranium" "$@"
+      ''}
+      if [ "$(form_factor)" = phone ]; then
+        # The touch layout of the tab strip and toolbar, overlay scrollbars as
+        # on Android, and touch events on for every page, which sites test for
+        # before they serve their touch version.
+        #
+        # The rest is Chrome for Android's power saving, which the desktop
+        # build has but leaves off: a page hidden past its grace period is
+        # frozen and stops running timers (stop-in-background, on by default
+        # only on Android), a frozen page gives back its memory
+        # (MemoryPurgeOnFreeze, likewise), and every background tab but the
+        # last one used can be frozen (InfiniteTabsFreezing), where Android
+        # freezes whatever is not on screen. The desktop freezing policy's
+        # exemptions still hold, such as a tab that is playing audio.
+        set -- \
+          --top-chrome-touch-ui=enabled \
+          --enable-features=OverlayScrollbar,stop-in-background,MemoryPurgeOnFreeze,InfiniteTabsFreezing:num_protected_tabs/1 \
+          --touch-events=enabled \
+          "$@"
+        ${
+          if patched then
+            ''
+              # The two upstream switches patches/chromium make mean Android on
+              # Linux, the User-Agent string and client hints, and the viewport,
+              # and the phone interface 0004 adds: no tab strip, a tab switcher.
+              set -- --use-mobile-user-agent --enable-viewport --uranium-phone-ui "$@"
+            ''
+          else
+            ''
+              # Stock Chromium has no Android mode to turn on: --enable-viewport
+              # alone would ignore every page's viewport tag. The string is what
+              # it can send; its client hints still say Linux.
+              set -- --user-agent=${lib.escapeShellArg androidUserAgent} "$@"
+            ''
+        }
+      fi
+
+      ${exec} "$@"
+    '';
+
+  launcher = mkLauncher {
+    shell = runtimeShell;
+    setup = ''
+      # Chromium falls back to its namespace sandbox when NixOS has no setuid
+      # helper installed, as nixpkgs' wrapper arranges.
+      if [ -x /run/wrappers/bin/${browser.passthru.sandboxExecutableName} ]; then
+        export CHROME_DEVEL_SANDBOX=/run/wrappers/bin/${browser.passthru.sandboxExecutableName}
+      else
+        export CHROME_DEVEL_SANDBOX=${browser.sandbox}/bin/${browser.passthru.sandboxExecutableName}
+      fi
+      # Desktop shortcuts Chromium writes for web apps run this launcher, and
+      # uranium.desktop names its windows: Chromium takes the Wayland app id
+      # from it, which is how derisk finds the launcher entry and the icon.
+      export CHROME_WRAPPER=uranium
+      export CHROME_DESKTOP=uranium.desktop
+      export LD_LIBRARY_PATH="''${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${libraryPath}"
+      export XDG_DATA_DIRS="${dataDirs}''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+      # xdg-open and friends, last, so the session's own come first.
+      export PATH="''${PATH:+$PATH:}${xdg-utils}/bin"
+
+    '';
+    waylandInfo = "${wayland-utils}/bin/wayland-info";
+    ublock = ublockOriginLite;
+    ublockName = ublockOriginLite.name;
+    tabs = ./uranium/tabs;
+    appId = "uranium";
+    exec = "exec -a \"$0\" ${browser}/libexec/chromium/chromium";
+    inherit patched;
+  };
 
   # The files patches/chromium and rebrand.py touch, as the patched build
   # sees them. Its patch phase applies nixpkgs' patches and ours; then
@@ -284,38 +359,104 @@ let
         touch $out
       '';
 
-  desktopItem = makeDesktopItem {
-    name = "uranium";
-    desktopName = "Uranium";
-    genericName = "Web Browser";
-    comment = "Browse the web";
-    exec = "uranium %U";
-    icon = "uranium";
-    startupNotify = true;
-    startupWMClass = "uranium";
-    categories = [
-      "Network"
-      "WebBrowser"
-    ];
-    mimeTypes = [
-      "text/html"
-      "text/xml"
-      "application/xhtml+xml"
-      "application/pdf"
-      "x-scheme-handler/http"
-      "x-scheme-handler/https"
-    ];
-    actions = {
-      new-window = {
-        name = "New Window";
-        exec = "uranium";
-      };
-      new-private-window = {
-        name = "New Incognito Window";
-        exec = "uranium --incognito";
+  # The launcher entry, named after the app id: uranium in the image,
+  # org.losos.Uranium in the Flatpak, as Flatpak requires.
+  mkDesktopItem =
+    id:
+    makeDesktopItem {
+      name = id;
+      desktopName = "Uranium";
+      genericName = "Web Browser";
+      comment = "Browse the web";
+      exec = "uranium %U";
+      icon = id;
+      startupNotify = true;
+      startupWMClass = id;
+      categories = [
+        "Network"
+        "WebBrowser"
+      ];
+      mimeTypes = [
+        "text/html"
+        "text/xml"
+        "application/xhtml+xml"
+        "application/pdf"
+        "x-scheme-handler/http"
+        "x-scheme-handler/https"
+      ];
+      actions = {
+        new-window = {
+          name = "New Window";
+          exec = "uranium";
+        };
+        new-private-window = {
+          name = "New Incognito Window";
+          exec = "uranium --incognito";
+        };
       };
     };
-  };
+  desktopItem = mkDesktopItem "uranium";
+
+  # Everything of the Flatpak's that is not Chromium itself, laid out as it
+  # goes under /app. The Flatpak runs upstream ungoogled-chromium's portable
+  # build of the same version (nixos/pkgs/uranium/flatpak), because a
+  # Chromium from the store finds its libraries in /nix/store, which no
+  # Flatpak has; the rest is built here, the two helper programs statically
+  # so they need nothing from the runtime. Chromium in the Flatpak looks in
+  # /app/chromium for what it looks for in /etc/chromium in the image (the
+  # manifest rewrites the path in the binary), so it gets the same
+  # policies, preferences and tabs host.
+  flatpakPayload =
+    let
+      appId = "org.losos.Uranium";
+      config = import ./uranium/config.nix { tabsHost = "/app/bin/uranium-tabs"; };
+      flatpakLauncher = mkLauncher {
+        shell = "/bin/sh";
+        setup = ''
+          # Chromium sandboxes itself in a Flatpak through cobalt, which the
+          # Chromium base app carries, since a Flatpak can neither run a
+          # setuid helper nor make user namespaces of its own: cobalt starts
+          # the browser cobalt.ini names, with these arguments, and its
+          # sandboxed processes through Flatpak's portal.
+          export CHROME_WRAPPER=/app/bin/uranium
+          export CHROME_DESKTOP=${appId}.desktop
+        '';
+        waylandInfo = "/app/bin/wayland-info";
+        ublock = "/app/share/uranium/ublock-origin-lite";
+        ublockName = ublockOriginLite.name;
+        tabs = "/app/share/uranium/tabs";
+        inherit appId;
+        exec = "exec cobalt";
+        patched = false;
+      };
+    in
+    runCommand "uranium-flatpak-payload-${browser.version}"
+      {
+        launcher = flatpakLauncher;
+        passAsFile = [ "launcher" ];
+        passthru = { inherit appId; };
+      }
+      ''
+        install -Dm755 $launcherPath $out/bin/uranium
+        ${runtimeShell} -n $out/bin/uranium
+        install -Dm644 ${./uranium/flatpak/cobalt.ini} $out/etc/cobalt.ini
+        install -Dm755 ${lib.getExe uranium-tabs-static} $out/bin/uranium-tabs
+        install -Dm755 ${wayland-utils-static}/bin/wayland-info $out/bin/wayland-info
+        mkdir -p $out/share/uranium
+        cp -r ${ublockOriginLite} $out/share/uranium/ublock-origin-lite
+        cp -r ${./uranium/tabs} $out/share/uranium/tabs
+        ${lib.concatStrings (
+          lib.mapAttrsToList (name: value: ''
+            install -Dm644 ${builtins.toFile "uranium-config" (builtins.toJSON value)} $out/chromium/${name}
+          '') config
+        )}
+        install -Dm644 ${mkDesktopItem appId}/share/applications/${appId}.desktop \
+          $out/share/applications/${appId}.desktop
+        install -Dm644 ${./uranium/uranium.svg} $out/share/icons/hicolor/scalable/apps/${appId}.svg
+        install -Dm644 ${./uranium/flatpak/org.losos.Uranium.metainfo.xml} \
+          $out/share/metainfo/${appId}.metainfo.xml
+        chmod -R u+w $out/share/uranium
+      '';
 in
 runCommand "uranium-${browser.version}"
   {
@@ -325,6 +466,8 @@ runCommand "uranium-${browser.version}"
     passthru = {
       unwrapped = browser;
       inherit patched patchCheck ublockOriginLite;
+      chromiumConfig = import ./uranium/config.nix { tabsHost = lib.getExe uranium-tabs; };
+      inherit flatpakPayload;
     };
     meta = {
       description = "Chromium as Uranium, which turns into Chrome for Android on a phone";

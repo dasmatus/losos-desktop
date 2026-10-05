@@ -8,23 +8,32 @@ this gives the desktop interface its shape on a phone: the toolbar is the
 only row, with no tab strip, a tab switcher button beside the menu that
 opens Tab Search's list of open tabs, and no forward, extensions or
 profile buttons, which a phone's width has no room for.
+
+--uranium-single-view hides the tab strip on any screen: each window
+shows one page, and derisk's command palette lists, switches and closes
+its tabs.
 ---
- chrome/browser/ui/views/frame/browser_view.cc |  7 +++++
+ chrome/browser/ui/views/frame/browser_view.cc | 12 ++++++++
  .../browser/ui/views/toolbar/toolbar_view.cc  | 34 +++++++++++++++++++-
- 2 files changed, 40 insertions(+), 1 deletion(-)
+ 2 files changed, 45 insertions(+), 1 deletion(-)
 
 diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
-index 32b047f..852e173 100644
+index 32b047f..084e1fa 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
-@@ -1404,6 +1404,13 @@ bool BrowserView::ShouldDrawTabStrokes() const {
+@@ -1404,6 +1404,18 @@ bool BrowserView::ShouldDrawTabStrokes() const {
  }
  
  bool BrowserView::ShouldDrawTabStrip() const {
-+  // Uranium's phone interface has no tab strip, as Chrome for Android has
-+  // none: the toolbar's tab switcher lists the tabs instead. Its launcher
-+  // passes the switch when every screen is phone-sized.
-+  if (base::CommandLine::ForCurrentProcess()->HasSwitch("uranium-phone-ui")) {
++  // Uranium shows one page per window and no tab strip: derisk's command
++  // palette lists, switches and closes the tabs (uranium-single-view), and
++  // on a phone the toolbar's tab switcher does too, as Chrome for Android
++  // has no tab strip either. Its launcher passes the first always and the
++  // second when every screen is phone-sized.
++  const base::CommandLine& command_line =
++      *base::CommandLine::ForCurrentProcess();
++  if (command_line.HasSwitch("uranium-single-view") ||
++      command_line.HasSwitch("uranium-phone-ui")) {
 +    return false;
 +  }
 +
