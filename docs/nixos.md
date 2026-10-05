@@ -629,7 +629,9 @@ There are two builds of it (`nixos/pkgs/uranium.nix`):
   build: every window is one page, with the address bar but no tab strip,
   and its tabs are reached through derisk's command palette (below). Kiosk
   mode was not used for this because it also takes away the address bar,
-  the menu and the back button. Nobody has compiled it yet, and Tab
+  the menu and the back button. The fifth patch puts the toolbar, with the
+  address bar, at the bottom of the window on a phone, and on every screen
+  when Settings, Appearance, "Show the address bar at the bottom" is on. Nobody has compiled it yet, and Tab
   Search's bubble still anchors to the hidden tab strip's button, so where
   it opens is the first thing a real build has to check. `rebrand.py`
   renames Chromium to Uranium in the roughly 600 interface strings that say

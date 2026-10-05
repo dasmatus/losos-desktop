@@ -398,6 +398,10 @@ let
     "chrome/browser/shell_integration_linux.cc"
     "chrome/browser/ui/views/toolbar/toolbar_view.cc"
     "chrome/browser/ui/views/frame/browser_view.cc"
+    "chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc"
+    "chrome/browser/ui/browser_ui_prefs.cc"
+    "chrome/browser/extensions/api/settings_private/prefs_util.cc"
+    "chrome/browser/resources/settings/appearance_page/appearance_page.html.ts"
   ];
   patchCheck =
     runCommand "uranium-patch-check-${chromium-unwrapped.version}"
