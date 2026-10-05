@@ -7,18 +7,20 @@ Chrome for Android's interface is Java and cannot be built on Linux, so
 this gives the desktop interface its shape on a phone: the toolbar is the
 only row, with no tab strip, a tab switcher button beside the menu that
 opens Tab Search's list of open tabs, and no forward, extensions or
-profile buttons, which a phone's width has no room for.
+profile buttons, which a phone's width has no room for. The window's
+minimum width, the desktop layout's 500 DIP page, is dropped, so the
+window fits a phone's screen.
 
 --uranium-single-view hides the tab strip on any screen: each window
 shows one page, and derisk's command palette lists, switches and closes
 its tabs.
 ---
- chrome/browser/ui/views/frame/browser_view.cc | 12 ++++++++
- .../browser/ui/views/toolbar/toolbar_view.cc  | 34 +++++++++++++++++++-
- 2 files changed, 45 insertions(+), 1 deletion(-)
+ chrome/browser/ui/views/frame/browser_view.cc   |   21 ++++++++++++++
+ chrome/browser/ui/views/toolbar/toolbar_view.cc |   34 ++++++++++++++++++++++-
+ 2 files changed, 53 insertions(+), 2 deletions(-)
 
 diff --git a/chrome/browser/ui/views/frame/browser_view.cc b/chrome/browser/ui/views/frame/browser_view.cc
-index 32b047f..084e1fa 100644
+index 32b047f..116edb6 100644
 --- a/chrome/browser/ui/views/frame/browser_view.cc
 +++ b/chrome/browser/ui/views/frame/browser_view.cc
 @@ -1404,6 +1404,18 @@ bool BrowserView::ShouldDrawTabStrokes() const {
@@ -40,6 +42,22 @@ index 32b047f..084e1fa 100644
    // Return false if this window does not normally display a tabstrip or if the
    // tabstrip is currently hidden, e.g. because we're in fullscreen.
    if (!WindowFeatureController::From(browser_)->SupportsWindowFeature(
+@@ -4803,7 +4815,14 @@ int BrowserView::NonClientHitTest(const gfx::Point& point) {
+ 
+ gfx::Size BrowserView::GetMinimumSize() const {
+   auto* const layout = GetBrowserViewLayout();
+-  return layout ? layout->GetMinimumSize(this) : gfx::Size();
++  gfx::Size size = layout ? layout->GetMinimumSize(this) : gfx::Size();
++  // The desktop layout keeps the page at least 500 DIP wide, which is wider
++  // than a phone: a compositor that holds a window to the screen's size
++  // refuses the window. The phone toolbar fits a phone's width.
++  if (base::CommandLine::ForCurrentProcess()->HasSwitch("uranium-phone-ui")) {
++    size.set_width(0);
++  }
++  return size;
+ }
+ 
+ ///////////////////////////////////////////////////////////////////////////////
 diff --git a/chrome/browser/ui/views/toolbar/toolbar_view.cc b/chrome/browser/ui/views/toolbar/toolbar_view.cc
 index c824f20..1d241ae 100644
 --- a/chrome/browser/ui/views/toolbar/toolbar_view.cc
