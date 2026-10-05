@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Print the derivations CI's `prebuild` job builds for one architecture, one
+# `<drv>^*` installable per line, found from the flake rather than listed.
+#
+# What is wanted is every package the release needs, built before the image
+# that holds them: the patched GTK and Qt, everything that links them, and
+# this repository's own programs, with whatever a later overlay or module
+# adds. The line between a package and the image is drawn by evaluating the
+# release twice, the second time with a different `losos.version`. The
+# version is baked into os-release, the UKI, the image and the ISO, so a
+# derivation whose path changes is assembly (os-release, /etc, the initrd,
+# the toplevel, the image), and one whose path does not is a package, or a
+# config file cheap enough not to matter. The plan is the packages the
+# assembly uses directly; building those builds everything under them, and
+# nothing a substituter already has is built or even downloaded.
+#
+#   tools/nix-prebuild-plan x86_64 > plan.txt
+#   nix build --stdin < plan.txt
+#
+# On aarch64 the Halium images are included the same way, since flake check
+# builds them. Needs LOSOS_PROXY_URL, as building the release does.
+set -euo pipefail
+
+[ $# = 1 ] || { sed -n 's/^#   //p' "$0" >&2; exit 2; }
+arch=$1
+[ -n "${LOSOS_PROXY_URL:-}" ] || { echo "nix-prebuild-plan: set LOSOS_PROXY_URL" >&2; exit 2; }
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+# The targets' derivations, as built, then with the version replaced. Any
+# string sysupdate would never see works; it only has to differ.
+targets() {
+  nix eval --impure --raw --expr "
+    let
+      flake = builtins.getFlake (toString $PWD);
+      at = name: version:
+        let sys = flake.nixosConfigurations.\${name}; in
+        if version == null then sys
+        else sys.extendModules { modules = [ { losos.version = version; } ]; };
+      for = version:
+        [ (at \"losos-desktop-$arch\" version).config.system.build.releaseArtifacts.drvPath ]
+        ++ (if \"$arch\" == \"aarch64\"
+            then [ (at \"losos-desktop-halium-aarch64\" version).config.system.build.haliumImages.drvPath ]
+            else [ ]);
+    in builtins.concatStringsSep \"\n\" (for $1)"
+}
+targets null > "$work/as-built"
+targets '"0-prebuild-plan"' > "$work/other"
+
+closure() { xargs nix-store --query --requisites < "$1" | grep '\.drv$' | sort -u; }
+closure "$work/as-built" > "$work/a"
+closure "$work/other" > "$work/b"
+comm -12 "$work/a" "$work/b" > "$work/packages"
+comm -23 "$work/a" "$work/packages" > "$work/assembly"
+if ! [ -s "$work/assembly" ]; then
+  echo "nix-prebuild-plan: changing losos.version changed no derivation, so nothing marks the image" >&2
+  exit 1
+fi
+
+# The packages the assembly derivations take as inputs.
+xargs nix-store --query --references < "$work/assembly" | grep '\.drv$' | sort -u \
+  | comm -12 - "$work/packages" | sed 's/$/^*/'
