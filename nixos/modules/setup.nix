@@ -108,8 +108,13 @@ in
     wants = [ "systemd-homed.service" ];
     conflicts = [ "getty@tty1.service" ];
 
-    # userdbctl, localectl, timedatectl and homectl.
-    path = [ systemd ];
+    # userdbctl, localectl, timedatectl and homectl; and glibc's `locale`,
+    # which lists the locales in the archive LOCALE_ARCHIVE names, where
+    # localectl only looks under /usr/lib/locale.
+    path = [
+      systemd
+      pkgs.glibc.bin
+    ];
 
     environment = {
       # What pam_systemd records as the session's type.
