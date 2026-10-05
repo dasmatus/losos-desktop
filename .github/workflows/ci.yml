@@ -392,7 +392,13 @@ jobs:
             [ -f "$ref" ] || continue
             oras pull "$(cat "$ref")" --output "pulled/$arch"
             cat "pulled/$arch/SHA256SUMS" >> sums
-            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name .version -exec mv -n -t release {} +
+            # Each architecture's SHA256SUMS.gpg signs only that
+            # architecture's manifest, and the GitHub release carries neither
+            # (sysupdate fetches both from GHCR), so it stays behind. Moving it
+            # made the second architecture's `mv -n` refuse to replace the
+            # first's and fail the job.
+            find "pulled/$arch" -type f ! -name SHA256SUMS ! -name SHA256SUMS.gpg ! -name .version \
+              -exec mv -n -t release {} +
           done
           # Every file name carries its architecture, so the two manifests
           # merge by concatenation. sysupdate reads one SHA256SUMS per channel.
