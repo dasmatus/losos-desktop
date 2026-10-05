@@ -52,8 +52,12 @@ still takes time, so don't start one to check a module edit.
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
   plugins, `losos-installer`, `losos-security`, `losos-swap`, the pm
   payload builder, and Halium's `libhybris` and `android-headers`.
-  `patches/` holds the two gnome-control-center patches. They target 51.0 and
-  nothing applies them (`docs/nixos.md`).
+  It also replaces `gtk3`, `gtk4` and Qt 6's `qtbase` with builds carrying
+  `patches/gtk3`, `patches/gtk4` and `patches/qtbase`, which make their apps
+  fit a phone (`docs/nixos.md`, "GTK and Qt on a phone"); those and their
+  dependents rebuild in CI instead of substituting. `patches/` also holds
+  the two gnome-control-center patches, which target 51.0 and nothing
+  applies.
 - `src/` holds the three programs this repository writes. The overlay builds
   them.
 - `plugins/` holds pm plugins, written in Rust and compiled to WebAssembly
