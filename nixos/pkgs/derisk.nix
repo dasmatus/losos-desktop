@@ -30,9 +30,9 @@ rustPlatform.buildRustPackage {
   # hosts that cannot use its archive endpoint.
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
-    # derisk#22: the xdg-desktop-portal backend, on main's display manager.
-    rev = "4d8ec983f6af6c0c6ec54239b54b8a7fe5ab891f";
-    hash = "sha256-ENwBIdtbL95/GQ1zPjwUWPLIpLpeEOp5crsLPU3rURA=";
+    # derisk main with #22, the xdg-desktop-portal backend.
+    rev = "58b6aaffe0923edd747623e12543607e4ea8c583";
+    hash = "sha256-lQNxNhy2oE+JUo2RLUt38CalBfeP0nBI0tUTH8EuBe0=";
   };
 
   cargoHash = "sha256-zKUuG6gn779Pk28j3F5IQRCKnU9NWyyL1gwAabzfEW8=";
