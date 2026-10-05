@@ -14,7 +14,6 @@ each message before and after, and every .xtb file is moved to the new ids
 with the same rewrite applied to its translations.
 """
 
-import glob
 import os
 import re
 import sys
@@ -33,6 +32,7 @@ PRODUCT_TABLES = {
     "chrome/app/chromium_strings.grd",
     "components/components_chromium_strings.grd",
 }
+PRODUCT_PART = "chrome/app/settings_chromium_strings.grdp"
 
 # Google comes out of every string, as Matus asked: "Google Account" reads
 # "Account", "sent to Google" reads "sent to". Most of these strings belong
@@ -147,7 +147,7 @@ for path in files:
     owner = path if path.endswith(".grd") else None
     if owner is not None and owner not in before:
         continue
-    if rewrite_file(path, path in PRODUCT_TABLES or path == "chrome/app/settings_chromium_strings.grdp"):
+    if rewrite_file(path, path in PRODUCT_TABLES or path == PRODUCT_PART):
         changed += 1
 print(f"rebrand: {changed} string tables rewritten")
 
