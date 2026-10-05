@@ -1,0 +1,68 @@
+From: losos <losos@localhost>
+Date: Mon, 5 Oct 2026 13:53:20 +0000
+Subject: [PATCH] QIconLoader: Keep the system icon theme whatever the
+ application sets
+
+While the system names an icon theme (QT_QPA_SYSTEM_ICON_THEME or the
+platform theme), QIcon::setThemeName() with another name no longer
+replaces it; the requested theme becomes the fallback instead, unless the
+application set one, so icons only it has still resolve. KDE Frameworks'
+KIconTheme asks for Breeze this way on every desktop but Plasma. An empty
+name still clears it.
+
+The theme search path starts with the system's directories, whatever
+QIcon::setThemeSearchPaths() was given, so an application can neither
+shadow the system theme with a directory of the same name nor drop the
+directories it lives in.
+---
+ src/gui/image/qiconloader.cpp | 27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/src/gui/image/qiconloader.cpp b/src/gui/image/qiconloader.cpp
+index 62353ec9..33daefff 100644
+--- a/src/gui/image/qiconloader.cpp
++++ b/src/gui/image/qiconloader.cpp
+@@ -159,6 +159,22 @@ QString QIconLoader::themeName() const
+ 
+ void QIconLoader::setThemeName(const QString &themeName)
+ {
++    // The icon theme is the desktop's choice, not the application's: while
++    // the system names one, an application asking for another (KDE apps ask
++    // for Breeze off Plasma) keeps the system's. Its theme still fills in
++    // icons the system's lacks, as the fallback, unless it chose one itself.
++    // Clearing the name with an empty string works as before.
++    if (!themeName.isEmpty()) {
++        const QString system = systemThemeName();
++        if (!system.isEmpty()) {
++            qCDebug(lcIconLoader) << "Keeping the system icon theme" << system << "over" << themeName;
++            if (m_userFallbackTheme.isEmpty() && themeName != system) {
++                m_userFallbackTheme = themeName;
++                invalidateKey();
++            }
++            return;
++        }
++    }
+     if (m_userTheme == themeName)
+         return;
+ 
+@@ -201,7 +217,16 @@ QStringList QIconLoader::themeSearchPaths() const
+         // Always add resource directory as search path
+         m_iconDirs.append(":/icons"_L1);
+     }
+-    return m_iconDirs;
++    // The system's directories come first, in their own order, whatever the
++    // application set: otherwise it could shadow the system theme with a
++    // directory of the same name, or drop the system's directories and with
++    // them the theme. The application's own directories follow.
++    QStringList dirs = systemIconSearchPaths();
++    for (const QString &dir : std::as_const(m_iconDirs)) {
++        if (!dirs.contains(dir))
++            dirs.append(dir);
++    }
++    return dirs;
+ }
+ 
+ void QIconLoader::setFallbackSearchPaths(const QStringList &searchPaths)
+-- 
+2.43.0
+

@@ -85,6 +85,7 @@
                 losos.update.baseUrl = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/updates/${config.losos.channel}/${archOf system}/";
                 # And the Uranium Flatpak's remote (.github/workflows/uranium.yml).
                 losos.uranium.flatpakRemote = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/flatpak/";
+                losos.ping.url = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/ping";
               }
             )
           ];

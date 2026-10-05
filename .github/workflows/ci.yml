@@ -31,32 +31,35 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # The flake, built and checked on both architectures. From an empty cache
-  # the whole OS is thousands of derivations, far more than one runner's six
-  # hours, so the build has a time budget. Whatever finished goes to the cache
-  # whether or not the rest did, and the next run starts from there. A run
-  # that ran out of time with nothing failed passes with a warning; a failed
-  # derivation turns it red. Once a build completes, the job checks the flake
-  # and hands the release to `push` as an artifact.
-  flake:
-    strategy:
+  # Every package the release needs, built on each architecture before the
+  # image is assembled: the patched GTK and Qt, everything that links them,
+  # and this repository's own programs. Nothing lists them:
+  # tools/nix-prebuild-plan finds them by evaluating the release twice with
+  # different versions and keeping what did not change, so a package a
+  # later overlay or module adds is prebuilt without editing this file.
+  # Whatever a substituter has is skipped. Outside a pull request whatever it builds goes
+  # to the project cache, so later runs, and any build host that reads the
+  # proxy, substitute it instead of compiling it again. In every run it also
+  # hands what it compiled to `flake` as an artifact, because a pull request
+  # writes nothing to the cache and the proxy may not be configured yet.
+  #
+  # It has the same time budget as `flake` and the same rules: what finished
+  # is kept, running out of time passes with a warning, a failed derivation
+  # turns it red. A retry of either job starts from what the cache holds.
+  prebuild:
+    strategy: &arches
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
-          - runner: ubuntu-24.04-arm
+          - { runner: ubuntu-24.04, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 355
-    # packages: write is for the cache push, which has to run here because the
-    # store it reads is on this runner. The token reaches only that step, and
-    # oras logs out at the end of it. Everything the build compiles runs inside
-    # the Nix sandbox as a build user, which sees neither the step environment
-    # nor the runner's home directory. The release itself is pushed by `push`,
-    # which runs no build code at all.
+    # As in `flake`: packages: write reaches only the cache push step.
     permissions:
       contents: read
       packages: write
-    env:
+    env: &nix-env
       # Release images need the public proxy URL; the optional key configures
       # the project's Nix cache alongside cache.nixos.org.
       LOSOS_PROXY_URL: ${{ vars.LOSOS_PROXY_URL }}
@@ -68,7 +71,8 @@ jobs:
       # hash, so checking it pins every byte the install runs as root.
       NIX_INSTALLER_SHA256: "96c10e102c88809dd9ec0bee89200c4a51eae4c9f6d8698c26b16788d131e078"
     steps:
-      - name: Free disk space
+      - &free-disk
+        name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /usr/local/.ghcup /opt/hostedtoolcache /usr/share/swift \
@@ -80,7 +84,8 @@ jobs:
       #
       # The boot test asks for the kvm feature, and only the x86_64 runner has
       # /dev/kvm.
-      - name: Install Nix
+      - &install-nix
+        name: Install Nix
         run: |
           if [ -z "$LOSOS_PROXY_URL" ]; then
             echo "::error::LOSOS_PROXY_URL must be set to publish update images through the proxy."
@@ -109,7 +114,8 @@ jobs:
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
 
       # Fixed-output inputs come from cache.nixos.org where it has them, with
@@ -120,15 +126,19 @@ jobs:
 
       # Record the store after preloading so the cache push excludes both the
       # Nix installer and every path added by the fetch, even if it failed.
-      - name: Note what came prebuilt
+      - &note-prebuilt
+        name: Note what came prebuilt
         if: always()
         run: nix path-info --all > "$RUNNER_TEMP/prebuilt.txt"
 
-      - name: Build the release
+      - name: Find the packages
+        run: tools/nix-prebuild-plan ${{ matrix.arch }} > "$RUNNER_TEMP/plan.txt"
+
+      - name: Build the packages
         id: build
         run: |
           set +e
-          timeout --signal=INT 300m nix build --impure -L --keep-going --out-link release .#release \
+          timeout --signal=INT 300m nix build --impure -L --keep-going --no-link --stdin < "$RUNNER_TEMP/plan.txt" \
             2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           set -e
@@ -148,9 +158,11 @@ jobs:
       # build it again. A pull request reads the cache and writes nothing.
       # Uploading is independent of NIX_CACHE_URL: the GHCR paths can be served
       # by the proxy later, even when CI is not configured to fetch through it.
-      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+      - &setup-oras
+        uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
         if: always() && github.event_name != 'pull_request'
-      - name: Push what was built to the cache
+      - &cache-push
+        name: Push what was built to the cache
         if: always() && github.event_name != 'pull_request'
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -169,6 +181,153 @@ jobs:
             --exclude-from "$RUNNER_TEMP/prebuilt.txt" \
             --repository "ghcr.io/${GITHUB_REPOSITORY,,}/nix-cache" \
             --secret-key-file "$RUNNER_TEMP/cache.sec"
+
+      # What this job compiled, for `flake` to import before it builds: a
+      # `nix-store --export` stream of every path it built itself, which
+      # `ultimate` marks, rather than one it substituted, which `flake` can
+      # substitute as well. Import refuses a path before its references, so
+      # the list is in closure order, and the references it does not carry
+      # are listed for `flake` to substitute first. The plan goes too, and
+      # `complete` says all of it was built, which is what lets `flake`
+      # check that none of it is left to compile.
+      - name: Hand what was built to the release build
+        if: always()
+        env:
+          COMPLETE: ${{ steps.build.outputs.complete }}
+        run: |
+          out="$RUNNER_TEMP/prebuilt" work="$RUNNER_TEMP/handover"
+          mkdir -p "$out" "$work"
+          nix path-info --json --json-format 1 --all \
+            | jq -r 'to_entries[] | select(.value.ultimate) | .key' \
+            | grep -v '\.drv$' \
+            | awk 'NR == FNR { skip[$0] = 1; next } !($0 in skip)' "$RUNNER_TEMP/prebuilt.txt" - \
+            > "$work/built" || true
+          xargs -r nix-store --query --requisites < "$work/built" > "$work/closure"
+          awk 'NR == FNR { built[$0] = 1; next } ($0 in built) && !seen[$0]++' \
+            "$work/built" "$work/closure" > "$out/paths.txt"
+          xargs -r nix-store --query --references < "$out/paths.txt" | sort -u > "$work/references"
+          awk 'NR == FNR { built[$0] = 1; next } !($0 in built)' \
+            "$out/paths.txt" "$work/references" > "$out/references.txt"
+          if [ -s "$out/paths.txt" ]; then
+            # One stream: import stops at the first end marker, so two
+            # exports concatenated would lose the second.
+            # shellcheck disable=SC2046 # one store path per line, no spaces
+            nix-store --export $(cat "$out/paths.txt") | zstd -T0 -3 > "$out/paths.nar.zst"
+          fi
+          cp "$RUNNER_TEMP/plan.txt" "$out/plan.txt" || true
+          if [ "$COMPLETE" = true ]; then touch "$out/complete"; fi
+          echo "Built $(wc -l < "$out/paths.txt") path(s); $(du -sh "$out" | cut -f1) to hand over."
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: prebuilt-${{ matrix.arch }}
+          path: ${{ runner.temp }}/prebuilt/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The flake, built and checked on both architectures. From an empty cache
+  # the whole OS is thousands of derivations, far more than one runner's six
+  # hours, so the build has a time budget. Whatever finished goes to the cache
+  # whether or not the rest did, and the next run starts from there. A run
+  # that ran out of time with nothing failed passes with a warning; a failed
+  # derivation turns it red. Once a build completes, the job checks the flake
+  # and hands the release to `push` as an artifact. It starts after
+  # `prebuild`, from what that compiled, so it is left with assembling the
+  # image. A failed `prebuild` does not stop it: the same derivation fails
+  # here too, and everything else it builds is kept.
+  flake:
+    needs: [prebuild]
+    if: always() && needs.prebuild.result != 'cancelled'
+    strategy: *arches
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 355
+    # packages: write is for the cache push, which has to run here because the
+    # store it reads is on this runner. The token reaches only that step, and
+    # oras logs out at the end of it. Everything the build compiles runs inside
+    # the Nix sandbox as a build user, which sees neither the step environment
+    # nor the runner's home directory. The release itself is pushed by `push`,
+    # which runs no build code at all.
+    permissions:
+      contents: read
+      packages: write
+    env: *nix-env
+    steps:
+      - *free-disk
+      - *install-nix
+      - *checkout
+
+      # What `prebuild` compiled for this architecture. The paths it refers
+      # to and did not build are stock ones, and come from the substituters
+      # first, because an import refuses a path whose references are not in
+      # the store. Importing needs a trusted user, which root is.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: prebuilt-${{ matrix.arch }}
+          path: prebuilt
+      - name: Import what prebuild compiled
+        run: |
+          if [ ! -f prebuilt/paths.txt ]; then
+            echo "::warning::prebuild handed nothing over, so this build compiles whatever the cache lacks."
+            exit 0
+          fi
+          xargs -r nix-store --realise < prebuilt/references.txt > /dev/null
+          if [ -s prebuilt/paths.txt ]; then
+            zstd -dc prebuilt/paths.nar.zst | sudo "$(command -v nix-store)" --import > /dev/null
+          fi
+          echo "Imported $(wc -l < prebuilt/paths.txt) path(s)."
+
+      # The check that the split saves anything. Once `prebuild` built all of
+      # its plan, every package in it is either in this store or in a
+      # substituter, so a plan that still compiles one means this job
+      # evaluated different derivations, or the handover lost them. That is
+      # a bug, and is reported here instead of costing hours below.
+      - name: Check nothing prebuilt is left to compile
+        run: |
+          if [ ! -f prebuilt/complete ]; then
+            echo "::warning::prebuild did not finish, so this build compiles what it left."
+            exit 0
+          fi
+          nix build --dry-run --stdin < prebuilt/plan.txt 2> dry-run.txt
+          if grep -q 'will be built' dry-run.txt; then
+            sed -n '/will be built/,/will be fetched/p' dry-run.txt | head -60
+            echo "::error::prebuild built its whole plan, but this job would compile the derivations above again."
+            exit 1
+          fi
+          echo "Every prebuilt package is in the store or a substituter."
+
+      # Fixed-output inputs come from cache.nixos.org where it has them, with
+      # copied outputs checked against their hashes. This includes pinned
+      # bootstrap and compiler inputs as well as upstream source archives.
+      - name: Fetch fixed-output inputs
+        run: tools/nix-fetch-sources .#release
+
+      # Record the store after preloading and importing, so the cache push
+      # excludes the Nix installer, every path the fetch added, and what
+      # `prebuild` already pushed.
+      - *note-prebuilt
+
+      - name: Build the release
+        id: build
+        run: |
+          set +e
+          timeout --signal=INT 300m nix build --impure -L --keep-going --out-link release .#release \
+            2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" = 0 ]; then
+            echo "complete=true" >> "$GITHUB_OUTPUT"
+          elif [ "$status" = 124 ] && ! grep -q "^error: builder for .* failed" build.log; then
+            echo "::warning::The build ran out of time with nothing failed. What finished goes to the cache, and the next run continues from there."
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          else
+            grep -A20 "^error: builder for .* failed" build.log | head -80 || true
+            exit 1
+          fi
+
+      # As in `prebuild`.
+      - *setup-oras
+      - *cache-push
 
       # Formatting is checked by `format`, not here: run after the build, a
       # misplaced space failed a run only once hours of building had finished.
@@ -343,17 +502,19 @@ jobs:
   # The one check branch protection looks for, so a skipped or cancelled job
   # never reads as green.
   ci:
-    needs: [flake, format, proxy]
+    needs: [prebuild, flake, format, proxy]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Require every job
         env:
+          PREBUILD: ${{ needs.prebuild.result }}
           FLAKE: ${{ needs.flake.result }}
           FORMAT: ${{ needs.format.result }}
           PROXY: ${{ needs.proxy.result }}
         run: |
+          test "$PREBUILD" = success
           test "$FLAKE" = success
           test "$FORMAT" = success
           test "$PROXY" = success
