@@ -41,6 +41,7 @@
   fetchzip,
   jq,
   uranium-tabs,
+  x2mcsapi,
   # The Flatpak's two helpers, linked statically (flatpakPayload).
   uranium-tabs-static,
   wayland-utils-static,
@@ -191,6 +192,7 @@ let
       appId,
       exec,
       patched,
+      x2mcsapi ? null,
     }:
     ''
       #!${shell}
@@ -266,6 +268,28 @@ let
         chmod -R u+w "$ublock.new"
         mv "$ublock.new" "$ublock"
       fi
+      ${lib.optionalString (x2mcsapi != null) ''
+        # The interface in mcsapi's look, like every app derisk shows:
+        # x2mcsapi writes a GTK theme from the mcsapi theme derisk has
+        # published, and Chromium draws its toolbar, tabs, menus and dialogs
+        # from the GTK theme (config.nix starts profiles on it). The theme
+        # is read at launch; one changed later shows from the next launch.
+        # Outside a derisk session x2mcsapi's default, derisk-dark, applies.
+        mcsapi_theme=derisk-dark
+        if [ -r "''${XDG_RUNTIME_DIR:-/nonexistent}/derisk/theme.json" ]; then
+          # theme.json starts {"id":"<id>",; read in the shell.
+          read -r line <"$XDG_RUNTIME_DIR/derisk/theme.json" || true
+          case "$line" in
+            '{"id":"'*)
+              line=''${line#'{"id":"'}
+              mcsapi_theme=''${line%%'"'*}
+              ;;
+          esac
+        fi
+        if ${x2mcsapi} --theme "$mcsapi_theme" install >/dev/null; then
+          export GTK_THEME=x2mcsapi
+        fi
+      ''}
       set -- \
         --ozone-platform-hint=auto \
         --enable-wayland-ime \
@@ -353,6 +377,7 @@ let
     appId = "uranium";
     exec = "exec -a \"$0\" ${browser}/libexec/chromium/chromium";
     inherit patched;
+    x2mcsapi = lib.getExe x2mcsapi;
   };
 
   # The files patches/chromium and rebrand.py touch, as the patched build

@@ -97,7 +97,13 @@
   # complete. It is a preference and not a policy, which would lock it:
   # Settings → Privacy and security → Site settings → JavaScript
   # optimization turns them back on, for every site or for one.
+  #
+  # The browser's own interface is drawn from the GTK theme (1 is GTK; 0,
+  # Chromium's own colours, is the default outside GNOME), which the
+  # launcher points at the one x2mcsapi generates from mcsapi's theme.
+  # Settings → Appearance → Theme picks another.
   initial_preferences = {
     profile.default_content_setting_values.javascript_optimizer = 2;
+    extensions.theme.system_theme = 1;
   };
 }

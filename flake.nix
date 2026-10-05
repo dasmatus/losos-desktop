@@ -146,6 +146,8 @@
             losos-security
             losos-swap
             uranium
+            uranium-tabs
+            x2mcsapi
             ;
           # Uranium compiled with its patches, which the image leaves off
           # (losos.uranium.patched). For a build host big enough to compile

@@ -53,6 +53,7 @@ in
     };
   uranium-patched = final.uranium.override { patched = true; };
   uranium-tabs = final.callPackage ./uranium-tabs.nix { };
+  x2mcsapi = final.callPackage ./x2mcsapi.nix { };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 

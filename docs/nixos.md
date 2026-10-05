@@ -673,6 +673,16 @@ manifest carries a fixed key so the user's choice of lists outlives an
 update. The Web Store is unreachable from an ungoogled build, so the
 extension updates with the OS.
 
+Uranium's interface is drawn in mcsapi's look, as every app derisk shows
+is. On each launch the launcher reads the theme id derisk publishes in
+`$XDG_RUNTIME_DIR/derisk/theme.json` and runs mcsapi's `x2mcsapi`
+(`nixos/pkgs/x2mcsapi.nix`, the mcsapi commit derisk builds against),
+which writes a GTK theme generated from that mcsapi theme; the launcher
+selects it with `GTK_THEME`, and new profiles start on Chromium's GTK
+theme, so the toolbar, tabs, menus and dialogs take its colours. A theme
+changed while Uranium runs shows from its next launch. Web pages are left
+as their authors made them: restyling them breaks sites.
+
 Tabs show up in derisk's command palette and top bar as each window's
 global menus, "Tabs" (switch to one, or open a new one) and "Close Tab".
 Chromium exports no menus on Wayland, so a second built-in extension
