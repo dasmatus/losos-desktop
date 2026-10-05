@@ -575,6 +575,47 @@ that patch. Purism rebases the GTK series for each Debian release;
 refreshing means copying the series from `pureos/latest` again and
 rebasing the two `Treat a display of phone-sized monitors` patches.
 
+## Active users and the choice screens
+
+Large platforms are made to offer a choice of browser and search engine
+once they have enough users; the EU's Digital Markets Act draws the line at
+45 million monthly active users. derisk has both screens and keeps them
+hidden. What turns them on is a count of active users, so the OS has one.
+
+**What is sent.** `nixos/modules/ping.nix` gives every signed-in user a
+systemd user timer, `losos-ping`, that runs a few minutes into each session
+and then daily. It POSTs two lines to `$LOSOS_PROXY_URL/ping`: `id`, the
+SHA-256 of a random secret in `~/.local/state/losos/ping-secret` and the
+current month, and `arch`. The id changes every month, so the proxy can
+count a person once a month and cannot link one month to the next. Nothing
+else is sent: no account, no hardware id, no version. A user turns it off
+in Settings, Privacy ("Count me as an active user"), which writes
+`privacy.usage_ping = false`; `losos.ping.enable = false` turns it off for
+a build, and a build without `LOSOS_PROXY_URL` has no timer.
+
+**What is counted.** `proxy/` adds the id to the month's HyperLogLog in
+Redis (`actives:<YYYY-MM>`, and `actives:<YYYY-MM>:<arch>`), kept for 100
+days. The request's address is never read or stored, and a HyperLogLog
+cannot give an id back. The size is the larger of this month's and last
+month's count, so a new month does not start from zero.
+
+**What comes back.** `{"choice_screens":{"browser":…,"search":…}}`, both on
+once the count reaches the threshold. The script turns it into
+`~/.local/state/derisk/policy.conf`, which derisk reads: with a screen on
+and nothing chosen yet, derisk opens Settings on its Default apps page at
+login, and the page stays in Settings after. Both screens list their
+options in a new random order each time, with none preselected; the browser
+screen offers the installed browsers and installs others from Flathub.
+
+To set it up, add a Redis database to the Vercel project from the
+Marketplace (Upstash), which sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`
+(`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` work too). Without
+one, pings are answered with both screens off and nothing is counted.
+`CHOICE_SCREENS_AT` sets the threshold (default 45000000), and
+`CHOICE_SCREENS=on` or `off` forces both screens either way, for testing or
+by choice. The count itself is read with `PFCOUNT actives:<YYYY-MM>` in the
+database's console.
+
 ## What is not done
 
 - **pm on a NixOS host.** pm's jail mirrors the host's `/bin`, `/lib` and

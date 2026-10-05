@@ -10,11 +10,21 @@ const TITLE = "org.opencontainers.image.title";
 
 // The environment the handler reads: GHCR_REPOSITORY (owner/name, the
 // namespace every artifact lives under) and optionally GHCR_TOKEN and
-// GHCR_USERNAME.
+// GHCR_USERNAME. For /ping, a Redis REST endpoint and its token, under the
+// names Vercel's Upstash integration sets (KV_* for stores made as Vercel
+// KV); without one, pings are answered but not counted. CHOICE_SCREENS
+// (on, off or auto) and CHOICE_SCREENS_AT (monthly actives) are read by
+// src/lib.rs's `policy`.
 export interface Env {
   GHCR_REPOSITORY?: string;
   GHCR_TOKEN?: string;
   GHCR_USERNAME?: string;
+  KV_REST_API_URL?: string;
+  KV_REST_API_TOKEN?: string;
+  UPSTASH_REDIS_REST_URL?: string;
+  UPSTASH_REDIS_REST_TOKEN?: string;
+  CHOICE_SCREENS?: string;
+  CHOICE_SCREENS_AT?: string;
 }
 
 // What src/lib.rs exports. Each decision takes a string and returns one, both
@@ -27,13 +37,19 @@ interface Exports {
   plan(ptr: number, length: number): bigint;
   pick(ptr: number, length: number): bigint;
   narinfo(ptr: number, length: number): bigint;
+  ping(ptr: number, length: number): bigint;
+  policy(ptr: number, length: number): bigint;
 }
 
 export interface Core {
   plan(path: string): string;
   pick(input: string): string;
   narinfo(input: string): string;
+  ping(input: string): string;
+  policy(input: string): string;
 }
+
+type Call = "plan" | "pick" | "narinfo" | "ping" | "policy";
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 export type Handler = (request: Request) => Promise<Response>;
@@ -43,7 +59,7 @@ export function bind(instance: WebAssembly.Instance): Core {
   const wasm = instance.exports as unknown as Exports;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const call = (name: "plan" | "pick" | "narinfo", input: string): string => {
+  const call = (name: Call, input: string): string => {
     const bytes = encoder.encode(input);
     const ptr = wasm.alloc(bytes.length);
     new Uint8Array(wasm.memory.buffer, ptr, bytes.length).set(bytes);
@@ -58,6 +74,8 @@ export function bind(instance: WebAssembly.Instance): Core {
     plan: (path: string) => call("plan", path),
     pick: (input: string) => call("pick", input),
     narinfo: (input: string) => call("narinfo", input),
+    ping: (input: string) => call("ping", input),
+    policy: (input: string) => call("policy", input),
   };
 }
 
@@ -90,11 +108,74 @@ async function token(fetchImpl: Fetch, repository: string, env: Env): Promise<st
   return ((await response.json()) as { token: string }).token;
 }
 
+// A ping body is two short lines; anything much longer is not one.
+const PING_MAX = 512;
+
+// One /ping: count the id, then answer with the policy. Counting is
+// best-effort: a store that is down or missing still gets the client its
+// policy, from whatever count there is. No address, header or timestamp of
+// the request is stored; Redis holds only the month's HyperLogLog, from
+// which no id can be read back.
+async function ping(core: Core, env: Env, fetchImpl: Fetch, request: Request): Promise<Response> {
+  const json = (status: number, body: string) =>
+    new Response(body, {
+      status,
+      headers: { "content-type": "application/json", "cache-control": "no-store" },
+    });
+  const body = await request.text();
+  if (body.length > PING_MAX) return json(413, '{"error":"too long"}');
+  const month = new Date().toISOString().slice(0, 7);
+  const verdict = core.ping(`${month}\n${body}`);
+  if (!verdict.startsWith("count ")) {
+    return json(400, JSON.stringify({ error: verdict.slice("bad ".length) }));
+  }
+  const [, id, monthKey, archKey, previousKey] = verdict.split(" ");
+
+  const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
+  const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
+  let actives = "";
+  if (url && token) {
+    const keep = String(100 * 86400);
+    try {
+      const response = await fetchImpl(`${url.replace(/\/$/, "")}/pipeline`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify([
+          ["PFADD", monthKey, id],
+          ["PFADD", archKey, id],
+          ["EXPIRE", monthKey, keep],
+          ["EXPIRE", archKey, keep],
+          ["PFCOUNT", monthKey],
+          ["PFCOUNT", previousKey],
+        ]),
+      });
+      if (response.ok) {
+        const results = (await response.json()) as { result?: number }[];
+        // The month that just started has barely been counted, so the
+        // larger of it and the last full month is the size.
+        actives = String(Math.max(Number(results[4]?.result) || 0, Number(results[5]?.result) || 0));
+      }
+    } catch {
+      // Counted next time; the policy below still goes out.
+    }
+  }
+  const mode = env.CHOICE_SCREENS || "auto";
+  return json(200, core.policy(`${mode}\n${env.CHOICE_SCREENS_AT || ""}\n${actives}`));
+}
+
 // Build the request handler. `env` is read as described on Env.
 export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler {
   const namespace = (env.GHCR_REPOSITORY || "").toLowerCase();
 
   return async function handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    // vercel.json rewrites every path to this function and passes the
+    // original one as ?path=, without its leading slash.
+    const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
+    if (path === "/ping") {
+      if (request.method !== "POST") return text(405, "POST\n", "no-store");
+      return ping(core, env, fetchImpl, request);
+    }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return text(405, "GET or HEAD\n", "no-store");
     }
@@ -102,10 +183,6 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
       return text(500, "GHCR_REPOSITORY is not set to owner/name\n", "no-store");
     }
 
-    const url = new URL(request.url);
-    // vercel.json rewrites every path to this function and passes the
-    // original one as ?path=, without its leading slash.
-    const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
     const plan = core.plan(path);
     const head = request.method === "HEAD";
     const body = <T>(b: T): T | null => (head ? null : b);

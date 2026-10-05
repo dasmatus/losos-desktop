@@ -14,6 +14,12 @@
 //!   the moving tag `<channel>-<arch>`. `/updates/<channel>/<arch>/<file>`
 //!   serves a file of the newest one, `SHA256SUMS` included, which is all a
 //!   `url-file` transfer asks of its source. That is the install side.
+//! * **The active-user count.** `POST /ping` is what each signed-in user's
+//!   `losos-ping` timer sends once a day (`nixos/modules/ping.nix`): a
+//!   per-user id already hashed with the month, and the architecture. The
+//!   proxy adds the id to that month's HyperLogLog in Redis and answers with
+//!   the policy that turns the browser and search engine choice screens on
+//!   once the count is large enough. [`ping`] and [`policy`] are that half.
 //!
 //! What lives here is every decision the proxy makes: which request is which,
 //! what is a valid name, which layer of a manifest answers it, and how a
@@ -257,6 +263,97 @@ pub fn narinfo(input: &str) -> String {
     if urls == 1 { out } else { String::new() }
 }
 
+/// Months a month's count is kept for: long enough that the previous month
+/// can still be read all through the next one, and no longer.
+pub const KEEP_DAYS: u32 = 100;
+
+/// Monthly active users at which the choice screens turn on by themselves.
+/// 45 million is where the EU's Digital Markets Act starts treating an
+/// operating system as a gatekeeper that must show them.
+pub const DEFAULT_THRESHOLD: u64 = 45_000_000;
+
+/// A `YYYY-MM` month and the one before it, or `None` for anything else.
+fn months(month: &str) -> Option<(String, String)> {
+    let (year, mon) = month.split_once('-')?;
+    if year.len() != 4 || mon.len() != 2 {
+        return None;
+    }
+    let year: u32 = year.parse().ok()?;
+    let mon: u32 = mon.parse().ok()?;
+    if !(1..=12).contains(&mon) {
+        return None;
+    }
+    let previous = if mon == 1 {
+        format!("{:04}-12", year.checked_sub(1)?)
+    } else {
+        format!("{year:04}-{:02}", mon - 1)
+    };
+    Some((format!("{year:04}-{mon:02}"), previous))
+}
+
+/// Check a ping and name the Redis keys it counts under.
+///
+/// Input: the server's current month as `YYYY-MM`, then the request body,
+/// which is `key=value` lines: `id` (64 lowercase hex digits, the client's
+/// SHA-256 of its secret and the month) and `arch`. Unknown keys are
+/// ignored, so a newer client can add one without older proxies refusing it.
+///
+/// Output: `count <id> <month key> <arch key> <previous month key>`, or
+/// `bad <reason>`. The id comes back so that the host adds exactly the
+/// string checked here. Nothing here sees an address; the host never
+/// passes one.
+#[must_use]
+pub fn ping(input: &str) -> String {
+    let Some((month, body)) = input.split_once('\n') else {
+        return "bad no month".into();
+    };
+    let Some((month, previous)) = months(month) else {
+        return "bad month".into();
+    };
+    let (mut id, mut arch) = (None, None);
+    for line in body.lines() {
+        match line.split_once('=') {
+            Some(("id", v)) => id = Some(v.trim()),
+            Some(("arch", v)) => arch = Some(v.trim()),
+            _ => {}
+        }
+    }
+    let is_id = |s: &str| s.len() == 64 && s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'));
+    if !id.is_some_and(is_id) {
+        return "bad id".into();
+    }
+    let Some(arch) = arch.filter(|a| ARCHES.contains(a)) else {
+        return "bad arch".into();
+    };
+    let id = id.unwrap_or_default();
+    format!("count {id} actives:{month} actives:{month}:{arch} actives:{previous}")
+}
+
+/// The policy a client gets back, as JSON.
+///
+/// Input: three lines. The mode, `on`, `off` or `auto` (anything else is
+/// `auto`), so the screens can be forced either way for testing or by
+/// choice; the threshold in monthly active users, the default when empty or
+/// not a number; and the count, empty when there is no store to count in.
+/// `auto` turns both screens on once the count reaches the threshold, and
+/// keeps them off while nothing is being counted.
+#[must_use]
+pub fn policy(input: &str) -> String {
+    let mut lines = input.split('\n');
+    let mode = lines.next().unwrap_or("").trim();
+    let threshold = lines
+        .next()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_THRESHOLD);
+    let actives = lines.next().and_then(|c| c.trim().parse::<u64>().ok());
+    let on = match mode {
+        "on" => true,
+        "off" => false,
+        _ => actives.is_some_and(|n| n >= threshold),
+    };
+    format!(r#"{{"choice_screens":{{"browser":{on},"search":{on}}}}}"#)
+}
+
 // The linear-memory interface. Only compiled for the target the host loads,
 // so `cargo test` exercises the functions above directly.
 
@@ -321,6 +418,22 @@ mod abi {
     #[unsafe(no_mangle)]
     pub unsafe extern "C" fn narinfo(ptr: *mut u8, len: usize) -> u64 {
         unsafe { call(ptr, len, super::narinfo) }
+    }
+
+    /// # Safety
+    ///
+    /// As for [`plan`].
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn ping(ptr: *mut u8, len: usize) -> u64 {
+        unsafe { call(ptr, len, super::ping) }
+    }
+
+    /// # Safety
+    ///
+    /// As for [`plan`].
+    #[unsafe(no_mangle)]
+    pub unsafe extern "C" fn policy(ptr: *mut u8, len: usize) -> u64 {
+        unsafe { call(ptr, len, super::policy) }
     }
 }
 
@@ -423,5 +536,49 @@ mod tests {
             ""
         );
         assert_eq!(narinfo(&format!("bad\nURL: nar/{NAR}\n")), "");
+    }
+
+    const ID: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn a_ping_counts_under_its_month_and_arch() {
+        assert_eq!(
+            ping(&format!("2026-10\nid={ID}\narch=x86_64\nnew=1\n")),
+            format!("count {ID} actives:2026-10 actives:2026-10:x86_64 actives:2026-09")
+        );
+        assert_eq!(
+            ping(&format!("2027-01\narch=aarch64\nid={ID}")),
+            format!("count {ID} actives:2027-01 actives:2027-01:aarch64 actives:2026-12")
+        );
+    }
+
+    #[test]
+    fn a_crafted_ping_is_refused() {
+        for input in [
+            format!("2026-10\nid={}\narch=x86_64", ID.to_uppercase()),
+            format!("2026-10\nid={}\narch=x86_64", &ID[1..]),
+            format!("2026-10\nid={ID} x\narch=x86_64"),
+            format!("2026-10\nid={ID}\narch=riscv64"),
+            format!("2026-10\nid={ID}"),
+            format!("2026-13\nid={ID}\narch=x86_64"),
+            format!("26-10\nid={ID}\narch=x86_64"),
+            format!("id={ID}"),
+        ] {
+            assert!(ping(&input).starts_with("bad "), "{input}");
+        }
+    }
+
+    #[test]
+    fn the_screens_follow_the_count_unless_forced() {
+        let on = r#"{"choice_screens":{"browser":true,"search":true}}"#;
+        let off = r#"{"choice_screens":{"browser":false,"search":false}}"#;
+        assert_eq!(policy("auto\n100\n99"), off);
+        assert_eq!(policy("auto\n100\n100"), on);
+        assert_eq!(policy("\n\n44999999"), off);
+        assert_eq!(policy("\n\n45000000"), on);
+        assert_eq!(policy("auto\n0\n"), off, "nothing counted is not big");
+        assert_eq!(policy("on\n\n"), on);
+        assert_eq!(policy("off\n1\n5"), off);
+        assert_eq!(policy("bogus\nx\n46000000"), on);
     }
 }

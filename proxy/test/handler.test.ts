@@ -143,3 +143,76 @@ test("an unset namespace is a configuration error, not a guess", async () => {
   const response = await get(handler(core, {}, registry()), "nix-cache-info");
   assert.equal(response.status, 500);
 });
+
+const ID = "0123456789abcdef".repeat(4);
+const post = (h: Handler, body: string) =>
+  h(new Request("https://cache.example/api/proxy?path=ping", { method: "POST", body }));
+
+// A Redis REST endpoint that keeps each HyperLogLog as a plain set.
+function redis(sets: Map<string, Set<string>>, log: Logged[] = []): Fetch {
+  return async (url, init = {}) => {
+    log.push({ url, init });
+    assert.equal(url, "https://kv.example/pipeline");
+    assert.equal((init.headers as Record<string, string>).authorization, "Bearer k");
+    const commands = JSON.parse(init.body as string) as string[][];
+    return Response.json(
+      commands.map(([command, key, value]) => {
+        const set = sets.get(key) ?? new Set();
+        sets.set(key, set);
+        if (command === "PFADD") return { result: set.has(value) ? 0 : (set.add(value), 1) };
+        if (command === "PFCOUNT") return { result: set.size };
+        return { result: 1 };
+      }),
+    );
+  };
+}
+const kv = { ...env, KV_REST_API_URL: "https://kv.example/", KV_REST_API_TOKEN: "k" };
+const ON = { choice_screens: { browser: true, search: true } };
+const OFF = { choice_screens: { browser: false, search: false } };
+
+test("a ping with no store is answered, not counted", async () => {
+  const log: Logged[] = [];
+  const response = await post(handler(core, env, registry(log)), `id=${ID}\narch=x86_64\n`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), OFF);
+  assert.equal(log.length, 0);
+});
+
+test("pings are counted once per id and turn the screens on at the threshold", async () => {
+  const sets = new Map<string, Set<string>>();
+  const h = handler(core, { ...kv, CHOICE_SCREENS_AT: "2" }, redis(sets));
+  const month = new Date().toISOString().slice(0, 7);
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`)).json(), OFF);
+  assert.deepEqual(await (await post(h, `id=${ID}\narch=x86_64`)).json(), OFF);
+  assert.deepEqual(await (await post(h, `id=${"f".repeat(64)}\narch=aarch64`)).json(), ON);
+  assert.equal(sets.get(`actives:${month}`)!.size, 2);
+  assert.equal(sets.get(`actives:${month}:aarch64`)!.size, 1);
+});
+
+test("the screens can be forced either way", async () => {
+  const forced = handler(core, { ...env, CHOICE_SCREENS: "on" }, registry());
+  assert.deepEqual(await (await post(forced, `id=${ID}\narch=aarch64`)).json(), ON);
+  const sets = new Map<string, Set<string>>();
+  const off = handler(core, { ...kv, CHOICE_SCREENS: "off", CHOICE_SCREENS_AT: "1" }, redis(sets));
+  assert.deepEqual(await (await post(off, `id=${ID}\narch=aarch64`)).json(), OFF);
+});
+
+test("a malformed ping is refused before anything is stored", async () => {
+  const log: Logged[] = [];
+  const h = handler(core, kv, redis(new Map(), log));
+  for (const body of [`id=${ID}`, `id=${ID.toUpperCase()}\narch=x86_64`, `id=x\narch=x86_64`, "x".repeat(600)]) {
+    assert.ok([400, 413].includes((await post(h, body)).status), body);
+  }
+  assert.equal((await get(h, "ping")).status, 405);
+  assert.equal(log.length, 0);
+});
+
+test("a store that is down still gets the client its policy", async () => {
+  const down: Fetch = async () => {
+    throw new Error("down");
+  };
+  const response = await post(handler(core, kv, down), `id=${ID}\narch=x86_64`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), OFF);
+});

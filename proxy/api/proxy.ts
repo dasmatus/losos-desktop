@@ -15,6 +15,12 @@ export default async function proxy(request: Request): Promise<Response> {
       GHCR_REPOSITORY: process.env.GHCR_REPOSITORY,
       GHCR_TOKEN: process.env.GHCR_TOKEN,
       GHCR_USERNAME: process.env.GHCR_USERNAME,
+      KV_REST_API_URL: process.env.KV_REST_API_URL,
+      KV_REST_API_TOKEN: process.env.KV_REST_API_TOKEN,
+      UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL,
+      UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN,
+      CHOICE_SCREENS: process.env.CHOICE_SCREENS,
+      CHOICE_SCREENS_AT: process.env.CHOICE_SCREENS_AT,
     });
   }
   return handle(request);
