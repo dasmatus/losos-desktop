@@ -34,8 +34,11 @@ rustPlatform.buildRustPackage {
   # hosts that cannot use its archive endpoint.
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
-    # derisk main: #31 and #33, the hardened-malloc feature and the mcsapi
-    # that has mcsapi-hardened-malloc, and #32.
+    # derisk main: #22 (the xdg-desktop-portal backend), #23, #24, #21
+    # (icons from the set icon theme, Papirus by default), #31 and #33
+    # (the hardened-malloc feature, which allocator.nix turns on) and #32
+    # (text fields in GTK and Qt apps open the on-screen keyboard, over
+    # text-input-v3).
     rev = "69722e8928c7936dbd053a37c0727685bb5f750c";
     hash = "sha256-ySsuB+c2UszT+SEitDtY+Bcn0+AZa/b+Spx4cRWlt2Y=";
   };
