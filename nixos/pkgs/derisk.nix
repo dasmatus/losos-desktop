@@ -30,13 +30,15 @@ rustPlatform.buildRustPackage {
   # hosts that cannot use its archive endpoint.
   src = fetchgit {
     url = "https://github.com/dasmatus/derisk";
-    # derisk main: #22 (the xdg-desktop-portal backend), #23, #24 and #21
-    # (icons from the set icon theme, Papirus by default).
-    rev = "dcc4f3076f2817897acfb94dfb5a18e3f9ad6997";
-    hash = "sha256-igDVH709ma8qNLZKOtjzpTDJNMC6/ZGZSxJGohxjHIQ=";
+    # derisk main: #22 (the xdg-desktop-portal backend), #23, #24, #21
+    # (icons from the set icon theme, Papirus by default), #31 and #33
+    # (the hardened-malloc feature, off here) and #32 (text fields in GTK
+    # and Qt apps open the on-screen keyboard, over text-input-v3).
+    rev = "69722e8928c7936dbd053a37c0727685bb5f750c";
+    hash = "sha256-ySsuB+c2UszT+SEitDtY+Bcn0+AZa/b+Spx4cRWlt2Y=";
   };
 
-  cargoHash = "sha256-MSDgW4GNCREgHLOTZbbm9dnvKDSBtoTed3t8OdTTnA8=";
+  cargoHash = "sha256-cPxWZOQV2dMTKMABxiBsdjYySO96iptzvTsdTHFQ6/w=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is
