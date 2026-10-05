@@ -27,6 +27,17 @@ in
   # The Android Translation Layer (nixos/modules/atl.nix), which nixpkgs does
   # not carry either; only in the closure when losos.android.enable is set.
   android-translation-layer = final.callPackage ./android-translation-layer.nix { };
+  # Uranium (uranium.nix), the web browser. The default build wraps
+  # nixpkgs' Chromium as nixpkgs alone builds it: taken from this package
+  # set, Chromium would link the patched GTK below and need compiling, which
+  # takes longer than CI's time budget, while nixpkgs' own build substitutes
+  # from cache.nixos.org. uranium-patched compiles it with
+  # patches/chromium; losos.uranium.patched picks it for the image.
+  uranium = final.callPackage ./uranium.nix {
+    chromium-unwrapped =
+      (import final.path { inherit (final.stdenv.hostPlatform) system; }).chromium.browser;
+  };
+  uranium-patched = final.uranium.override { patched = true; };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 

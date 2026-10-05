@@ -575,6 +575,61 @@ that patch. Purism rebases the GTK series for each Debian release;
 refreshing means copying the series from `pureos/latest` again and
 rebasing the two `Treat a display of phone-sized monitors` patches.
 
+## Uranium
+
+Uranium is the OS's web browser and the default for links and web pages
+(`nixos/modules/browser.nix`). It is Chromium under the OS's own name, and
+on a phone it becomes Chrome for Android as far as the web can tell: it
+sends Chrome for Android's User-Agent string, so sites serve their Android
+version, and lays the page out as Chrome for Android does. A phone is the
+same line as above, every screen under 600 logical pixels on its short
+side; the launcher measures it once, at launch, over xdg-output, and
+`URANIUM_FORM_FACTOR=phone` or `desktop` overrides it. On a phone it also
+turns on Chromium's touch layout for the tab strip and toolbar, overlay
+scrollbars and touch events. Everywhere it uses Wayland and
+`text-input-unstable-v3`, so derisk's on-screen keyboard follows its text
+fields; Chromium speaks v1 unless told.
+
+There are two builds of it (`nixos/pkgs/uranium.nix`):
+
+- **`uranium-patched`** compiles Chromium from nixpkgs' source with
+  `nixos/pkgs/patches/chromium` and `nixos/pkgs/uranium/rebrand.py`. The
+  patches make two upstream switches mean Android on Linux, where
+  upstream reads them only on Android: `--use-mobile-user-agent` sends the
+  Android User-Agent string and client hints (`Sec-CH-UA-Mobile: ?1`,
+  `Sec-CH-UA-Platform: "Android"`), and `--enable-viewport` turns on all of
+  WebPreferences' Android viewport settings, as DevTools' phone emulation
+  does, where upstream turned on only the 980 pixel layout viewport and
+  still ignored the page's viewport tag. A third patch keeps the profile in
+  `~/.config/uranium` and names the desktop file and icon. `rebrand.py`
+  renames Chromium to Uranium in the roughly 600 interface strings that say
+  it, in English and in all 81 translations, keeping ChromiumOS and the
+  Chromium Authors as they are. It has GRIT, from the same source tree,
+  re-hash each renamed message and moves the translations to the new ids;
+  renaming the text alone would leave every locale showing those strings in
+  English.
+- **`uranium`**, the one the image ships, wraps nixpkgs' own Chromium
+  build, which substitutes from cache.nixos.org, in the same launcher,
+  desktop file, icon and profile directory. Without the patches it can send
+  only the Android User-Agent string, not the client hints, it keeps the
+  desktop viewport, and the browser's own windows still say Chromium.
+  Its Chromium comes from nixpkgs without this repository's overlay: from
+  the overlay's package set it would link the patched GTK and need
+  compiling as well.
+
+Chromium takes a large builder many hours to compile, beyond a CI runner's
+time budget, so CI does not build `uranium-patched`. It does check, as
+`checks.<system>.uranium-patches`, that the patches still apply and the
+rename still finds every string, against the Chromium source nixpkgs pins,
+from that one tarball. `losos.uranium.patched = true` puts the patched
+build in the image, for a build host that can compile it or once the
+project cache holds it.
+
+The other reading of "the Android version" is the real Chrome for Android
+APK, run through the Android Translation Layer (`losos.android.enable`).
+That is not done: ATL does not run yet (its package is still marked
+broken), and a browser would be the largest app it had been asked to run.
+
 ## What is not done
 
 - **pm on a NixOS host.** pm's jail mirrors the host's `/bin`, `/lib` and

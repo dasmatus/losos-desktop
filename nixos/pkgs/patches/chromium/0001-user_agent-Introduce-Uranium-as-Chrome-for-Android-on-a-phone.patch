@@ -1,0 +1,92 @@
+From: losos <losos@localhost>
+Date: Mon, 5 Oct 2026 12:30:00 +0000
+Subject: [PATCH] user_agent: Introduce Uranium as Chrome for Android on a
+ phone
+
+With --use-mobile-user-agent, which Uranium's launcher passes when every
+screen is under 600 logical pixels on its short side, send the reduced
+Chrome for Android User-Agent string, Sec-CH-UA-Mobile ?1 and
+Sec-CH-UA-Platform "Android" from Linux, so sites serve their Android
+version. Upstream honours the switch only on Android and iOS.
+---
+ .../embedder_support/user_agent_utils.cc      | 39 +++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/components/embedder_support/user_agent_utils.cc b/components/embedder_support/user_agent_utils.cc
+index 5d96c60..ec0c5e5 100644
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -58,6 +58,19 @@ namespace embedder_support {
+ 
+ namespace {
+ 
++#if BUILDFLAG(IS_LINUX)
++// Uranium on a phone. The launcher passes --use-mobile-user-agent when every
++// screen is phone-sized, and the browser then introduces itself the way
++// Chrome for Android does, in the User-Agent string and in client hints
++// alike, so sites send their Android version instead of their desktop one.
++// Upstream reads the switch only on Android and iOS.
++constexpr char kAndroidUnifiedPlatform[] = "Linux; Android 10; K";
++
++bool IsAndroidUserAgentOnLinux() {
++  return base::CommandLine::ForCurrentProcess()->HasSwitch(kUseMobileUserAgent);
++}
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+ 
+ // The registry key where the UniversalApiContract version value can be read
+@@ -225,6 +238,15 @@ std::string GetUserAgentInternal() {
+   }
+ #endif
+ 
++#if BUILDFLAG(IS_LINUX)
++  // The reduced Chrome for Android string, the only one it has sent since
++  // the User-Agent reduction: no device model, no real Android version.
++  if (IsAndroidUserAgentOnLinux()) {
++    return BuildUserAgentFromOSAndProduct(kAndroidUnifiedPlatform,
++                                          product + " Mobile");
++  }
++#endif
++
+   return ShouldSendUserAgentUnifiedPlatform()
+              ? BuildUnifiedPlatformUserAgentFromProduct(product)
+              : BuildUserAgentFromProduct(product);
+@@ -593,6 +615,9 @@ bool GetMobileBitForUAMetadata() {
+ 
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+   return base::CommandLine::ForCurrentProcess()->HasSwitch(kUseMobileUserAgent);
++#elif BUILDFLAG(IS_LINUX)
++  // Sec-CH-UA-Mobile: ?1, as the User-Agent string says.
++  return IsAndroidUserAgentOnLinux();
+ #else
+   return false;
+ #endif
+@@ -617,6 +642,13 @@ std::string GetPlatformVersion() {
+   }
+ #endif
+ 
++#if BUILDFLAG(IS_LINUX)
++  // The version the User-Agent string's "Android 10" claims.
++  if (IsAndroidUserAgentOnLinux()) {
++    return "10.0.0";
++  }
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+   return GetWindowsPlatformVersion();
+ #elif BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_FUCHSIA)
+@@ -643,6 +675,13 @@ std::string GetPlatformForUAMetadata() {
+   }
+ #endif
+ 
++#if BUILDFLAG(IS_LINUX)
++  // Sec-CH-UA-Platform: "Android", which sites check before the string.
++  if (IsAndroidUserAgentOnLinux()) {
++    return "Android";
++  }
++#endif
++
+ #if BUILDFLAG(IS_MAC)
+   // TODO(crbug.com/40704421): This can be removed/re-refactored once we use
+   // "macOS" by default
