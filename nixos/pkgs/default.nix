@@ -51,6 +51,10 @@ let
           export CCACHE_NOHASHDIR=1
           export CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros
           export CCACHE_MAXSIZE=8G
+          # Each build runs as whichever nixbld user is free, and ccache
+          # makes its subdirectories and temporary files with the build's
+          # umask of 022, so the next build user could not write beside them.
+          export CCACHE_UMASK=000
         else
           export CCACHE_DISABLE=1
         fi
