@@ -40,9 +40,10 @@ Everything the flake builds from, besides this repository:
   prebuilt compilers; it is not source-only. Each copied flat or NAR output is
   checked against its derivation's hash, and outputs using other hash methods
   are rejected.
-- **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
-  (`nixos/pkgs/pm.nix`), and **crates.io**, for its, losos-security's and
-  losos-installer's dependencies, each pinned by `Cargo.lock` and checked by hash.
+- **pm**, the `components/pm` submodule (`github.com/losos-project/pm`) at the
+  commit this tree records (`nixos/pkgs/pm.nix`), and **crates.io**, for its,
+  losos-security's and losos-installer's dependencies, each pinned by
+  `Cargo.lock` and checked by hash.
 - **Purism's adaptive GTK patches**, copied into
   `nixos/pkgs/patches/gtk3` and `gtk4` from PureOS's packaging
   (source.puri.sm, `Librem5/debs/gtk4` and `sebastian.krzyszkowiak/gtk`,
@@ -52,10 +53,29 @@ Everything the flake builds from, besides this repository:
   source. It is prebuilt by the hardware vendors, and nothing can compile it.
   `hardware.nix` ships it because amdgpu and nouveau cannot start current
   GPUs without it.
-- **derisk**, cloned from `github.com/dasmatus/derisk` at a pinned commit and
-  hash (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned
-  by its `Cargo.lock` and `cargoHash`. It is the desktop, the display manager
-  and the portal backend.
+- **derisk**, the `components/derisk` submodule
+  (`github.com/losos-project/derisk`) at the commit this tree records
+  (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned by its
+  `Cargo.lock` and `cargoHash`. It is the desktop, the display manager and the
+  portal backend. The `components/mcsapi` submodule is the same mcsapi commit,
+  and builds `x2mcsapi`.
+
+### The components/ submodules
+
+derisk, mcsapi and pm are git submodules under `components/`, and the flake
+builds them from there (`self.submodules = true` in `flake.nix`, which Nix 2.27
+and later honour). The commit recorded for each submodule is the pin: a clone
+needs `git clone --recurse-submodules` (or `git submodule update --init`), and
+`git -C components/<name> log` shows exactly what the image builds. Moving one
+is `git -C components/<name> checkout <rev>`, a commit here, and a new
+`cargoHash` in its `nixos/pkgs/*.nix` when its `Cargo.lock` changed. There is
+no source hash to update: the submodule commit already names the tree.
+derisk's own `Cargo.lock` still fetches mcsapi by git revision, so move
+`components/mcsapi` to the revision that lock names.
+
+android_translation_layer stays a `fetchgit` pin: it is an upstream fork, off
+by default, and its tree is close to half a gigabyte, which the flake would
+otherwise copy on every evaluation.
 - **Flathub**, for apps installed after the fact. Its repo file, with the
   signing key every install is checked against, is
   `nixos/modules/flathub.flatpakrepo` in this tree; the image adds the remote
@@ -123,7 +143,7 @@ see "What is not done".
 
 `proxy/` is a Vercel edge function whose decisions are a WebAssembly module
 compiled from Rust (`proxy/src/lib.rs`); the JavaScript around it only
-fetches. It serves two things from this project's GHCR namespace:
+fetches. It serves these from this project's GHCR namespace:
 
 - **A Nix binary cache.** `tools/nix-cache-push` pushes each store path as
   one OCI artifact, `nix-cache:<store hash>`, holding its signed narinfo and
@@ -131,6 +151,13 @@ fetches. It serves two things from this project's GHCR namespace:
   at itself) and redirects `/nar/<hash>/<file>` to GHCR's blob storage, so a
   NAR never passes through it. A real `nix copy` pulled and verified a signed
   path through it against a fake registry; the tests are in `proxy/test/`.
+- **Build caches.** `/build-cache/<name>/<arch>/<part>` redirects to one
+  part of a compiler cache CI keeps in GHCR: `losos` for the overlay's
+  patched GTK and Qt (`losos-ccache:<arch>`), `uranium` for Chromium's
+  ccache and ThinLTO cache (`uranium-ccache:<arch>`). Each is a zstd tarball
+  split into 4 GB parts, `ccache.tar.zst.part-00` on, and
+  `tools/build-cache-fetch` fetches and unpacks one, through the proxy
+  first and from GHCR with oras when the proxy has nothing.
 - **Updates.** `/updates/<channel>/<arch>/<file>` serves a file of
   `images:<channel>-<arch>`, which CI's publish job moves to each release
   that passed verification. CI sets `losos.update.baseUrl` to
@@ -155,7 +182,8 @@ What has to be set up once, outside the repository:
    variable `GHCR_REPOSITORY=dasmatus/losos-desktop`. `vercel.json` has the
    rest. Its build installs a pinned Rust with rustup when absent and adds
    the WebAssembly target when Rust is already installed.
-2. **GHCR**: the `losos-desktop/nix-cache` and `losos-desktop/images`
+2. **GHCR**: the `losos-desktop/nix-cache`, `losos-desktop/images`,
+   `losos-desktop/losos-ccache` and `losos-desktop/uranium-ccache`
    packages public, once CI has created them; or a read-only token in
    Vercel as `GHCR_TOKEN`, with its owner's GitHub login as `GHCR_USERNAME`.
 3. **A signing key**: `nix key generate-secret --key-name losos-desktop-1`,
@@ -342,7 +370,7 @@ That buys two things the pm tree wrote down as limits:
 | `tools/configure --version --channel` | `losos.version`, `losos.channel` | the flake derives the version from the commit date |
 | `tools/vm-test` | `nixos/tests/boot.nix` | boots the real image under UEFI |
 | `tools/` gates, `Containerfile`, `./do` | `nix flake check`, `nix fmt` | the gates checked generated recipes against pm's fingerprint table, and neither exists now |
-| pm, the system manager | pm, the system manager (`pm.nix`) | pinned to a commit |
+| pm, the system manager | pm, the system manager (`pm.nix`) | the `components/pm` submodule |
 
 ## Everything systemd, and the exceptions
 
@@ -365,8 +393,31 @@ Replaced by the systemd equivalent where NixOS would otherwise pick something
 else: `run0` instead of sudo (with a `sudo` alias that refuses sudo's flags);
 networkd instead of NetworkManager, which GNOME turns on by default; resolved's
 mDNS instead of avahi; `systemd-sysusers` instead of the perl user script; the
-`/etc` overlay instead of activation scripts writing files; homed's first-boot
-wizard instead of no way to create the first user at all.
+`/etc` overlay instead of activation scripts writing files; first-boot setup
+making the first user with homectl instead of no way to create one at all.
+
+## First-boot setup
+
+A fresh install has no user. `derisk setup` (`nixos/modules/setup.nix`) runs
+on tty1 as a logind session of its own, after homed and before the display
+manager, and draws derisk's pages on the seat: language, keyboard layout,
+time zone, network, then the first account (full name, user name, password).
+It saves them with `localectl set-locale`, `localectl set-x11-keymap`,
+`timedatectl set-timezone` and `homectl create --member-of=wheel`, the
+password passed in `NEWPASSWORD` and never on a command line, and exits; the
+login screen then takes the seat. The keyboard layout switches live as it is
+picked, and the display manager hands localed's saved layout to the login
+screen and the session as xkbcommon's defaults.
+
+It runs on every boot and exits at once when `userdbctl` lists a regular
+user, so a machine switched off halfway through asks again. If derisk cannot
+draw at all, homed's console wizard asks for the user instead. homed's own
+first-boot unit is kept for `home.create.*` credentials, without its prompt.
+The languages offered are the locales built into the archive, the thirty-odd
+derisk has names for, and `i18n.imperativeLocale` lets localed's choices
+stick. On a phone-sized screen the pages fill the screen and the on-screen
+keyboard opens under a focused field; on a PC the card floats and the
+keyboard is a button in the corner.
 
 ## The installer
 
@@ -382,22 +433,28 @@ initrd mounts the ISO by its volume label and the Nix store from a squashfs
 on it. It carries `wpa_supplicant` and no NetworkManager. networkd runs DHCP
 on every physical wired port, built in or USB, as soon as a cable is in, at
 boot or later, and prefers it over Wi-Fi when both are up; a machine with a
-cable in is online with nothing asked. Otherwise `losos-installer`
-(`src/losos-installer`) talks to `wpa_supplicant` over its control socket to
-scan for and join a Wi-Fi network, which networkd then runs DHCP on too. Of the firmware NixOS would add, only
+cable in is online with nothing asked. Otherwise derisk talks to
+`wpa_supplicant` over its control socket to scan for and join a Wi-Fi
+network, which networkd then runs DHCP on too. Of the firmware NixOS would add, only
 `linux-firmware` is on the medium, because most Wi-Fi cards do not start
 without it.
 
-`losos-installer` is a terminal interface on tty1, with a root shell on tty2
-for anything it does not cover. Its Network screen shows each wired port as
-having no cable, getting an address, or online, and it moves on by itself as
-soon as the machine is online, by cable or by Wi-Fi. Then it lists the
-disks, leaving out the one the ISO booted from, and asks for `erase` to be
-typed before it touches the one chosen. Then:
+The installer is `derisk installer` on tty1, a logind session run as root,
+with a root shell on tty2 for anything it does not cover. It draws the same
+pages first-boot setup is made of, so it works with a mouse, a touchscreen or
+a phone-sized screen. It starts `losos-installer serve` (`src/losos-installer`)
+as its backend and talks to it in JSON lines on stdin and stdout: derisk owns
+the screen and the network, the backend owns the disks. The Network page
+shows each wired port as having no cable, getting an address, or online, and
+is skipped when the machine is already online. Then the backend lists the
+disks, leaving out the one the ISO booted from and refusing any disk it did
+not list, and the installer names the disk, its size and the source once more
+behind an "Erase and install" button before anything is touched. Then:
 
 1. `systemd-repart --empty=force` lays out the ESP, with systemd-boot and
-   `loader.conf` copied in, and slot A at full size, labelled `_empty`. These
-   are `disk.nix`'s own definitions, so the disk is laid out the way the
+   `loader.conf` copied in, and both `/usr` slots at full size, labelled
+   `_empty` (sysupdate refuses a disk with only one). These are `disk.nix`'s
+   own definitions, so the disk is laid out the way the
    installed system expects to find it.
 2. `systemd-sysupdate update` fills them with the channel's newest release,
    from the same URL and through the same transfers as `update.nix`, aimed at
@@ -405,7 +462,7 @@ typed before it touches the one chosen. Then:
    `/run/losos-installer`. With `losos.update.pubring` set, the installer
    checks `SHA256SUMS.gpg` against it as an update does.
 3. The machine reboots into the installed system, whose first boot creates
-   slot B, root, `/home` and swap from `disk.nix`, the path an image written
+   root, `/home` and swap from `disk.nix`, the path an image written
    with `dd` takes.
 
 So an install is an update into an empty slot: what lands on the disk is
@@ -415,6 +472,20 @@ UKI that booted it into a tmpfs root and copied its own `/usr` with
 `CopyBlocks=`; that is gone, and so is the `losos.install` condition it
 needed in `disk.nix`. When nixpkgs reaches v261, the installer should be
 measured against `systemd-sysinstall` again.
+
+A machine that cannot reach the channel installs from a release disk
+instead: any filesystem labelled `LOSOS-RELEASE` holding a release's
+`SHA256SUMS`, `SHA256SUMS.gpg` and the `/usr`, verity and UKI files they
+list. udev mounts it at `/run/losos/release` whenever it appears, and the
+installer then turns the transfers' sources into local files. sysupdate
+verifies signatures only on downloads, so the installer checks the release
+first: `SHA256SUMS` against the signing key with `gpg`, as `systemd-pull`
+does, then every file on the disk against its line there, refusing a file
+not listed. The case it exists for is a VM in a network that re-signs TLS
+with its own authority, where the channel's certificate never verifies; with
+the disk attached the installer does not need the network at all: the
+backend's `hello` names the disk as `release`, and derisk then skips its
+Network page.
 
 ## Releases and GHCR
 
@@ -554,6 +625,24 @@ touchscreen rather than a screen size.
   Since Qt 6.10 the Wayland client is part of qtbase, so `qtwayland` is left
   stock. Qt 5, which nothing in the image links, gets no phone patches, only
   the icon theme one (below, "One icon theme").
+
+Each patched toolkit links with [mold](https://github.com/rui314/mold)
+instead of nixpkgs' default `ld.bfd`, and compiles through ccache. The
+overlay applies its patches through one helper, `withPatches`, which also
+builds the package with nixpkgs' `stdenvAdapters.useMoldLinker` and
+`ccacheStdenv`, so a package patched later gets both without being listed
+anywhere. The mold adapter puts `ld.mold` in the compiler wrapper and adds
+`-fuse-ld=mold`, so configure probes and libtool link with mold as well as
+the final link. ccache is used only where the builder binds a cache
+directory to `/var/cache/losos-ccache`, so the derivation is the same with
+or without one. CI's `prebuild` job keeps it in GHCR as
+`losos-ccache:<arch>` and fetches it through the proxy, so a GTK or Qt point
+release, or a changed patch, recompiles only the files it changes: a second
+GTK3 build took 832 of its 835 objects from the cache and finished in 3m44s
+instead of 6m35s, with a bit-for-bit identical output. These packages
+compile in CI anyway, so neither costs a cache hit. What links against them
+keeps nixpkgs' stdenv, since changing it for every package would mean
+nothing substituting from cache.nixos.org at all.
 
 The on-screen keyboard is derisk's. GTK3, GTK4 and Qt 6 all speak Wayland's
 `text-input-unstable-v3` without patches, so the keyboard can follow text
@@ -699,7 +788,9 @@ five hours, saves the cache, pushes what it finished to the project's Nix
 cache, and dispatches the next round for the architectures still going,
 up to eight. The compiler wrapper uses the cache only where the builder
 binds one into the sandbox, so the derivation is the same with or
-without it. The build sets ThinLTO on both architectures and CFI
+without it. Chromium's ThinLTO cache, which keeps each module's optimized
+code across links, goes in the same directory, so the final link of a
+round redoes only the modules that changed since the last one. The build sets ThinLTO on both architectures and CFI
 (`is_cfi`, `use_cfi_icall`) on x86_64, and fails if gn drops any of them;
 an official build turns those on anyway, so this guards them rather than
 adding them. Chromium does not build CFI for arm64 Linux, where PAC and
@@ -913,9 +1004,9 @@ theme in code; KDE runtime apps, which carry Breeze and never read
   - **Telephony, audio, sensors, camera.** No ofono, no PulseAudio/PipeWire
     droid modules, no sensorfw. Android's init starts the HALs, and nothing
     on the Linux side talks to them yet beyond EGL.
-- **Wi-Fi.** As in the pm tree: networkd handles wired links, and nothing in
-  the session configures Wi-Fi. `iwd` would be the smallest
-  non-systemd addition that fixes it.
+- **Wi-Fi after setup.** First-boot setup joins a network through
+  `wpa_supplicant`, which saves it, but nothing in the session lists or
+  joins networks afterwards: derisk's Settings has no Wi-Fi page yet.
 - **systemd-boot updates.** `systemd-boot-update.service` copies a new
   bootloader from `/usr/lib/systemd/boot`, which NixOS does not have. The
   bootloader on the ESP is the one the image shipped.

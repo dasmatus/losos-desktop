@@ -26,6 +26,7 @@ const ARTIFACTS: Record<string, ReturnType<typeof layer>[]> = {
     layer(D4, "SHA256SUMS.gpg"),
     layer(D2, "losos-desktop_1_x86_64.efi"),
   ],
+  "dasmatus/losos-desktop/losos-ccache:aarch64": [layer(D2, "ccache.tar.zst.part-00")],
 };
 const BLOBS: Record<string, string | Uint8Array> = { [D1]: NARINFO, [D3]: "abc  losos-desktop_1_x86_64.efi\n", [D4]: SIGNATURE };
 
@@ -100,6 +101,15 @@ test("SHA256SUMS.gpg comes back byte for byte", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/pgp-signature");
   assert.deepEqual(new Uint8Array(await response.arrayBuffer()), SIGNATURE);
+});
+
+test("a build cache part is redirected, and the part after the last is a 404", async () => {
+  const h = handler(core, env, registry());
+  const part = await get(h, "build-cache/losos/aarch64/ccache.tar.zst.part-00");
+  assert.equal(part.status, 302);
+  assert.equal(part.headers.get("location"), `https://blob.example/${D2}`);
+  const after = await get(h, "build-cache/losos/aarch64/ccache.tar.zst.part-01");
+  assert.equal(after.status, 404);
 });
 
 test("a crafted path never reaches the registry", async () => {

@@ -21,11 +21,10 @@
   services.homed = {
     enable = true;
 
-    # systemd-homed-firstboot: on the first boot, before any login screen is
-    # reachable, ask for the first user on the console. Without it a fresh
-    # install reaches the login screen with nobody to log in as, because
-    # there is no useradd here and no account in the image.
-    promptOnFirstBoot = true;
+    # The first user is made by first-boot setup (setup.nix), on the seat,
+    # before any login screen is reachable. Without one a fresh install would
+    # reach the login screen with nobody to log in as, because there is no
+    # useradd here and no account in the image.
 
     settings.Home = {
       # LUKS, stated rather than inherited: it is the whole design that the
@@ -35,13 +34,11 @@
     };
   };
 
-  # Upstream's wizard skips the group prompt. The first user is the only one
-  # who can then create others or ask for a factory reset, and both are gated
-  # on wheel, so this one is asked.
-  systemd.services.systemd-homed-firstboot.serviceConfig.ExecStart = [
-    ""
-    "${config.systemd.package}/bin/homectl firstboot --prompt-new-user --prompt-shell=no --prompt-groups=yes --mute-console=yes"
-  ];
+  # homed's console wizard used to ask for that user here, with the group
+  # prompt turned on so the first user could be put in wheel. setup.nix
+  # replaced it with derisk's pages, which always make the first user an
+  # administrator, and keeps the wizard only as a fallback for a machine
+  # derisk cannot draw on.
 
   # userdbd serves homed's records over Varlink to NSS and to everything else
   # that asks. The homed module enables it; it is named here because it is
@@ -50,7 +47,7 @@
   # It used to set silenceHighSystemUsers, for gdm's greeter users at 60578
   # and up. derisk's one `derisk-greeter` user takes a UID from the ordinary
   # system range, so nothing is left to silence, and the warning stays on to
-  # catch a system user that could make homed's first-boot wizard think a
+  # catch a system user that could make first-boot setup think a
   # regular user already exists. The VM test's userdbctl step checks the
   # same thing.
   services.userdbd.enable = true;

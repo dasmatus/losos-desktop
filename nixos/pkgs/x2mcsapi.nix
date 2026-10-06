@@ -8,7 +8,6 @@
 {
   lib,
   rustPlatform,
-  fetchgit,
   libxkbcommon,
 }:
 
@@ -16,10 +15,12 @@ rustPlatform.buildRustPackage {
   pname = "x2mcsapi";
   version = "0.1.0-unstable-2026-10-05";
 
-  src = fetchgit {
-    url = "https://github.com/dasmatus/mcsapi";
-    rev = "b027f20964291b9bc0204502fc5a49ee3b361906";
-    hash = "sha256-QfQuuhRwOuP1c5rqxHXyxCstsFPgnJe77AhIbKre/ZQ=";
+  # The components/mcsapi submodule, at the commit this tree records for it
+  # (flake.nix, `self.submodules`). cleanSource drops the submodule's .git
+  # file, so the source hash covers only the tree.
+  src = lib.cleanSourceWith {
+    name = "mcsapi-source";
+    src = lib.cleanSource ../../components/mcsapi;
   };
 
   cargoHash = "sha256-pt+mYQnrTDj9rjslTe7psyGyq8EqpPksoZPxL1X1fFY=";
