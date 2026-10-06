@@ -555,6 +555,17 @@ touchscreen rather than a screen size.
   stock. Qt 5, which nothing in the image links, gets no phone patches, only
   the icon theme one (below, "One icon theme").
 
+Each patched toolkit links with [mold](https://github.com/rui314/mold)
+instead of nixpkgs' default `ld.bfd`. The overlay applies its patches through
+one helper, `patchedWithMold`, which also builds the package with nixpkgs'
+`stdenvAdapters.useMoldLinker`, so a package patched later gets mold without
+being listed anywhere. The adapter puts `ld.mold` in the compiler wrapper and
+adds `-fuse-ld=mold`, so configure probes and libtool link with mold as well
+as the final link. These packages compile in CI anyway, so the linker costs
+no cache hits. What links against them keeps the default linker, since
+mold for every package would mean a different standard environment and
+nothing substituting from cache.nixos.org at all.
+
 The on-screen keyboard is derisk's. GTK3, GTK4 and Qt 6 all speak Wayland's
 `text-input-unstable-v3` without patches, so the keyboard can follow text
 focus once derisk's compositor offers that protocol.

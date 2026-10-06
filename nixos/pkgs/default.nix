@@ -12,6 +12,22 @@ let
     map (name: dir + "/${name}") (
       builtins.sort builtins.lessThan (builtins.attrNames (builtins.readDir dir))
     );
+  # A package with a directory of our patches, linked by mold. Every package
+  # this overlay patches goes through here, so whatever gets patches next
+  # links with mold too, with no list to keep (docs/nixos.md, "GTK and Qt on
+  # a phone"). They no longer substitute from cache.nixos.org and CI compiles
+  # them anyway, so the linker costs no cache hits; their dependents keep
+  # nixpkgs' default linker. useMoldLinker puts ld.mold in the cc wrapper's
+  # bintools and adds -fuse-ld=mold, so configure probes and libtool link
+  # with mold too, not only the final link.
+  patchedWithMold =
+    pkg: dir:
+    (pkg.override (args: {
+      stdenv = final.stdenvAdapters.useMoldLinker args.stdenv;
+    })).overrideAttrs
+      (old: {
+        patches = (old.patches or [ ]) ++ patchesIn dir;
+      });
 in
 {
   pm = final.callPackage ./pm.nix { };
@@ -74,18 +90,14 @@ in
   # is the icon theme patch every toolkit here gets: an application can no
   # longer name its own icon theme, through GtkSettings or its GTK theme, or
   # put its icon directories ahead of the system's.
-  gtk3 = prev.gtk3.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk3;
-  });
+  gtk3 = patchedWithMold prev.gtk3 ./patches/gtk3;
   # GTK4: Purism's three adaptive patches (postmarketOS carried the same two
   # behaviour changes until libadwaita 1.5 made its own dialogs adaptive):
   # resizable dialogs and transient windows open maximized, and get only a
   # close button. Plain GTK4 windows still need them; libadwaita's
   # AdwDialog and breakpoints already adapt and are left alone. 0004 and
   # 0005 are ours, as in GTK3.
-  gtk4 = prev.gtk4.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk4;
-  });
+  gtk4 = patchedWithMold prev.gtk4 ./patches/gtk4;
   # Qt 6: nobody ships Qt phone patches (Plasma Mobile adapts in Kirigami
   # and its own shell), so both are ours. A finger scrolls Qt Widgets'
   # scroll areas kinetically, and resizable dialogs open maximized with
@@ -96,9 +108,7 @@ in
   # exports, and the system's directories lead the search path.
   qt6 = prev.qt6.overrideScope (
     _: qtPrev: {
-      qtbase = qtPrev.qtbase.overrideAttrs (old: {
-        patches = (old.patches or [ ]) ++ patchesIn ./patches/qtbase;
-      });
+      qtbase = patchedWithMold qtPrev.qtbase ./patches/qtbase;
     }
   );
   # Qt 5 gets only the icon theme patch, Qt 6's 0003 ported. Nothing in the
@@ -106,9 +116,7 @@ in
   # through pm brings it in; libsForQt5 takes its qtbase from qt5.
   qt5 = prev.qt5.overrideScope (
     _: qtPrev: {
-      qtbase = qtPrev.qtbase.overrideAttrs (old: {
-        patches = (old.patches or [ ]) ++ patchesIn ./patches/qtbase5;
-      });
+      qtbase = patchedWithMold qtPrev.qtbase ./patches/qtbase5;
     }
   );
 }
