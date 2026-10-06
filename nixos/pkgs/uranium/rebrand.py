@@ -97,6 +97,27 @@ def rewrite_file(path, product):
     return rewritten != text
 
 
+# Two messages can come out of the rewrite as one: "Sign in to Google" and
+# "Sign in" are both "Sign in" afterwards, so both hash to one id and the
+# moved .xtb lists that id twice. GRIT asserts on a second translation of a
+# message into the same language (clique.py, "assert not (language, gender)
+# in self.clique"), which stopped the build at components_strings_af.xtb.
+# The first translation of an id stays; a later one would only repeat it.
+TRANSLATION = re.compile(r'[ \t]*<translation id="(\d+)"[^>]*>.*?</translation>\n?', re.S)
+
+
+def dedupe(text):
+    seen = set()
+
+    def first(m):
+        if m.group(1) in seen:
+            return ""
+        seen.add(m.group(1))
+        return m.group(0)
+
+    return TRANSLATION.sub(first, text)
+
+
 def tables():
     for top in STRING_DIRS:
         for root, dirs, files in os.walk(top):
@@ -175,7 +196,7 @@ for grd, ids in before.items():
             text,
         )
         with open(xtb, "w", encoding="utf-8") as f:
-            f.write(rewrite(text, product))
+            f.write(rewrite(dedupe(text), product))
         moved += 1
     print(f"rebrand: {grd}: {len(new_id)} messages rewritten, {len(xtbs)} translations moved")
 print(f"rebrand: {moved} translation files moved")
