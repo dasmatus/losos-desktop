@@ -95,15 +95,28 @@ jobs:
             "https://releases.nixos.org/nix/nix-$NIX_VERSION/install" -o install-nix
           echo "$NIX_INSTALLER_SHA256  install-nix" | sha256sum -c -
           sh install-nix --daemon --yes --no-channel-add
+          # Ubuntu 24.04's AppArmor stops unprivileged processes making user
+          # namespaces, and a Nix build user is one. Test suites that run
+          # bwrap inside the build, such as xdg-desktop-portal's icon and
+          # sound validators, then fail on this runner and nowhere else.
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
           features="nixos-test benchmark big-parallel"
           if [ -e /dev/kvm ]; then
             sudo chmod 0666 /dev/kvm
             features="$features kvm"
           fi
+          # The compiler cache the overlay's patched packages use when it is
+          # there (nixos/pkgs/default.nix, withCcache). The build users are
+          # not root, so it is writable by all; only `prebuild` fills it.
+          sudo mkdir -p /var/lib/losos-ccache
+          sudo chmod 0777 /var/lib/losos-ccache
           {
             echo "experimental-features = nix-command flakes"
             echo "system-features = $features"
             echo "max-jobs = auto"
+            echo "extra-sandbox-paths = /var/cache/losos-ccache=/var/lib/losos-ccache"
             if [ -n "$NIX_CACHE_URL" ] && [ -n "$NIX_CACHE_PUBLIC_KEY" ]; then
               echo "substituters = https://cache.nixos.org/ $NIX_CACHE_URL"
               echo "trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= $NIX_CACHE_PUBLIC_KEY"
@@ -137,6 +150,23 @@ jobs:
       - name: Find the packages
         run: tools/nix-prebuild-plan ${{ matrix.arch }} > "$RUNNER_TEMP/plan.txt"
 
+      # The compiler cache the last run on main left in GHCR, as uranium.yml
+      # keeps Chromium's, through the proxy where it serves it. It only helps when something has to compile again:
+      # a nixpkgs bump that moves GTK or Qt by a point release, or a changed
+      # patch, recompiles only the files that differ. A pull request reads
+      # it and writes nothing back.
+      - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
+      - name: Restore the compiler cache
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CCACHE_REF: ghcr.io/${{ github.repository }}/losos-ccache:${{ matrix.arch }}
+        run: |
+          trap 'oras logout ghcr.io || true' EXIT
+          printf '%s' "$GHCR_TOKEN" \
+            | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          tools/build-cache-fetch losos ${{ matrix.arch }} /var/lib/losos-ccache "$CCACHE_REF"
+          touch "$RUNNER_TEMP/ccache-restored"
+
       - name: Build the packages
         id: build
         run: |
@@ -154,6 +184,34 @@ jobs:
             grep -A20 "^error: builder for .* failed" build.log | head -80 || true
             exit 1
           fi
+
+      # Saved after a run that ran out of time too, so the next run starts
+      # from every object this one compiled. Split because GHCR refuses a
+      # layer over 10 GB.
+      - name: Save the compiler cache
+        if: always() && github.event_name != 'pull_request' && steps.build.outputs.complete != ''
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CCACHE_REF: ghcr.io/${{ github.repository }}/losos-ccache:${{ matrix.arch }}
+        run: |
+          trap 'oras logout ghcr.io || true' EXIT
+          printf '%s' "$GHCR_TOKEN" \
+            | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          # Everything may have substituted, leaving the cache as restored.
+          newer=()
+          [ -e "$RUNNER_TEMP/ccache-restored" ] && newer=(-newer "$RUNNER_TEMP/ccache-restored")
+          if [ -z "$(sudo find /var/lib/losos-ccache -type f "${newer[@]}" -print -quit)" ]; then
+            echo "Nothing compiled through the cache; keeping the one in GHCR."
+            exit 0
+          fi
+          mkdir -p "$RUNNER_TEMP/ccache-save"
+          cd "$RUNNER_TEMP/ccache-save"
+          sudo tar --zstd -c -C /var/lib/losos-ccache . \
+            | split -b 4G -d -a 2 - ccache.tar.zst.part-
+          oras push "${CCACHE_REF,,}" \
+            --artifact-type application/vnd.losos.ccache.v1 \
+            --annotation "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            ccache.tar.zst.part-*
 
       # Every path the build added goes to the cache, not only the release's
       # closure. After a run that ran out of time the closure is not complete,

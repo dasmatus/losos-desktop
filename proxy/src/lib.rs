@@ -20,6 +20,12 @@
 //!   a registry the index names. The proxy builds the index from the images'
 //!   labels and is that registry too, for exactly those images' manifests
 //!   and blobs, so a Flatpak install never meets GHCR's token exchange.
+//! * **CI's build caches.** CI keeps its compiler caches in GHCR as
+//!   artifacts split into parts, `losos-ccache:<arch>` for the overlay's
+//!   patched GTK and Qt and `uranium-ccache:<arch>` for Uranium's Chromium
+//!   (ccache and the ThinLTO cache). `/build-cache/<name>/<arch>/<part>`
+//!   serves one part, so CI rounds and any other builder fetch them here
+//!   without a GHCR login, and with the same names CI pushes them under.
 //! * **The active-user count.** `POST /ping` is what each signed-in user's
 //!   `losos-ping` timer sends once a day (`nixos/modules/ping.nix`): a
 //!   per-user id already hashed with the month, and the architecture. The
@@ -90,6 +96,16 @@ const FLATPAK_IMAGES: &[(&str, &str)] =
 /// The image name the index gives the registry. One name for every image,
 /// since a request names a digest and the digest picks the image.
 const FLATPAK_NAME: &str = "uranium";
+
+/// The build caches `/build-cache/` serves: the name in the path and the
+/// repository under the namespace CI pushes it to.
+const BUILD_CACHES: &[(&str, &str)] = &[("losos", "losos-ccache"), ("uranium", "uranium-ccache")];
+
+/// One part of a split cache, as CI's `split -d -a 2` names it.
+fn is_cache_part(s: &str) -> bool {
+    s.strip_prefix("ccache.tar.zst.part-")
+        .is_some_and(|n| n.len() == 2 && n.chars().all(|c| c.is_ascii_digit()))
+}
 
 /// A content digest: the only algorithm GHCR serves, and a string that goes
 /// into a URL path next.
@@ -204,6 +220,21 @@ pub fn route(path: &str) -> Route {
                 tag: format!("{channel}-{arch}"),
                 title: (*file).into(),
                 kind,
+            }
+        }
+        ["build-cache", name, arch, file] => {
+            let Some((_, repository)) = BUILD_CACHES.iter().find(|(n, _)| n == name) else {
+                return Route::Missing("not a build cache");
+            };
+            if !ARCHES.contains(arch) || !is_cache_part(file) {
+                return Route::Missing("not a part of a build cache");
+            }
+            // Parts are up to 4 GB, so they never pass through the proxy.
+            Route::Layer {
+                repository,
+                tag: (*arch).into(),
+                title: (*file).into(),
+                kind: Kind::Redirect,
             }
         }
         ["flatpak", "index", "static"] => Route::FlatpakIndex(FLATPAK_IMAGES),
@@ -662,6 +693,18 @@ mod tests {
     }
 
     #[test]
+    fn a_build_cache_part_is_a_layer_of_its_arch_tag() {
+        assert_eq!(
+            plan("/build-cache/losos/x86_64/ccache.tar.zst.part-00"),
+            "layer losos-ccache x86_64 ccache.tar.zst.part-00 redirect"
+        );
+        assert_eq!(
+            plan("/build-cache/uranium/aarch64/ccache.tar.zst.part-07"),
+            "layer uranium-ccache aarch64 ccache.tar.zst.part-07 redirect"
+        );
+    }
+
+    #[test]
     fn the_flatpak_remote_is_an_index_and_its_images() {
         assert_eq!(
             plan("/flatpak/index/static"),
@@ -694,6 +737,13 @@ mod tests {
             "/updates/nightly/x86_64/.hidden",
             "/updates/nightly/x86_64/a%2Fb",
             "/updates/nightly%20x/x86_64/SHA256SUMS",
+            "/build-cache/other/x86_64/ccache.tar.zst.part-00",
+            "/build-cache/losos/riscv64/ccache.tar.zst.part-00",
+            "/build-cache/losos/x86_64/ccache.tar.zst.part-0",
+            "/build-cache/losos/x86_64/ccache.tar.zst.part-000",
+            "/build-cache/losos/x86_64/ccache.tar.zst.part-0a",
+            "/build-cache/losos/x86_64/../x86_64/ccache.tar.zst.part-00",
+            "/build-cache/losos/x86_64",
             "/flatpak/index",
             "/flatpak/v2/uranium/manifests/latest",
             "/flatpak/v2/uranium/tags/list",

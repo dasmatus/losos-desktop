@@ -143,7 +143,7 @@ see "What is not done".
 
 `proxy/` is a Vercel edge function whose decisions are a WebAssembly module
 compiled from Rust (`proxy/src/lib.rs`); the JavaScript around it only
-fetches. It serves two things from this project's GHCR namespace:
+fetches. It serves these from this project's GHCR namespace:
 
 - **A Nix binary cache.** `tools/nix-cache-push` pushes each store path as
   one OCI artifact, `nix-cache:<store hash>`, holding its signed narinfo and
@@ -151,6 +151,13 @@ fetches. It serves two things from this project's GHCR namespace:
   at itself) and redirects `/nar/<hash>/<file>` to GHCR's blob storage, so a
   NAR never passes through it. A real `nix copy` pulled and verified a signed
   path through it against a fake registry; the tests are in `proxy/test/`.
+- **Build caches.** `/build-cache/<name>/<arch>/<part>` redirects to one
+  part of a compiler cache CI keeps in GHCR: `losos` for the overlay's
+  patched GTK and Qt (`losos-ccache:<arch>`), `uranium` for Chromium's
+  ccache and ThinLTO cache (`uranium-ccache:<arch>`). Each is a zstd tarball
+  split into 4 GB parts, `ccache.tar.zst.part-00` on, and
+  `tools/build-cache-fetch` fetches and unpacks one, through the proxy
+  first and from GHCR with oras when the proxy has nothing.
 - **Updates.** `/updates/<channel>/<arch>/<file>` serves a file of
   `images:<channel>-<arch>`, which CI's publish job moves to each release
   that passed verification. CI sets `losos.update.baseUrl` to
@@ -175,7 +182,8 @@ What has to be set up once, outside the repository:
    variable `GHCR_REPOSITORY=dasmatus/losos-desktop`. `vercel.json` has the
    rest. Its build installs a pinned Rust with rustup when absent and adds
    the WebAssembly target when Rust is already installed.
-2. **GHCR**: the `losos-desktop/nix-cache` and `losos-desktop/images`
+2. **GHCR**: the `losos-desktop/nix-cache`, `losos-desktop/images`,
+   `losos-desktop/losos-ccache` and `losos-desktop/uranium-ccache`
    packages public, once CI has created them; or a read-only token in
    Vercel as `GHCR_TOKEN`, with its owner's GitHub login as `GHCR_USERNAME`.
 3. **A signing key**: `nix key generate-secret --key-name losos-desktop-1`,
@@ -618,6 +626,24 @@ touchscreen rather than a screen size.
   stock. Qt 5, which nothing in the image links, gets no phone patches, only
   the icon theme one (below, "One icon theme").
 
+Each patched toolkit links with [mold](https://github.com/rui314/mold)
+instead of nixpkgs' default `ld.bfd`, and compiles through ccache. The
+overlay applies its patches through one helper, `withPatches`, which also
+builds the package with nixpkgs' `stdenvAdapters.useMoldLinker` and
+`ccacheStdenv`, so a package patched later gets both without being listed
+anywhere. The mold adapter puts `ld.mold` in the compiler wrapper and adds
+`-fuse-ld=mold`, so configure probes and libtool link with mold as well as
+the final link. ccache is used only where the builder binds a cache
+directory to `/var/cache/losos-ccache`, so the derivation is the same with
+or without one. CI's `prebuild` job keeps it in GHCR as
+`losos-ccache:<arch>` and fetches it through the proxy, so a GTK or Qt point
+release, or a changed patch, recompiles only the files it changes: a second
+GTK3 build took 832 of its 835 objects from the cache and finished in 3m44s
+instead of 6m35s, with a bit-for-bit identical output. These packages
+compile in CI anyway, so neither costs a cache hit. What links against them
+keeps nixpkgs' stdenv, since changing it for every package would mean
+nothing substituting from cache.nixos.org at all.
+
 The on-screen keyboard is derisk's. GTK3, GTK4 and Qt 6 all speak Wayland's
 `text-input-unstable-v3` without patches, so the keyboard can follow text
 focus once derisk's compositor offers that protocol.
@@ -762,7 +788,9 @@ five hours, saves the cache, pushes what it finished to the project's Nix
 cache, and dispatches the next round for the architectures still going,
 up to eight. The compiler wrapper uses the cache only where the builder
 binds one into the sandbox, so the derivation is the same with or
-without it. The build sets ThinLTO on both architectures and CFI
+without it. Chromium's ThinLTO cache, which keeps each module's optimized
+code across links, goes in the same directory, so the final link of a
+round redoes only the modules that changed since the last one. The build sets ThinLTO on both architectures and CFI
 (`is_cfi`, `use_cfi_icall`) on x86_64, and fails if gn drops any of them;
 an official build turns those on anyway, so this guards them rather than
 adding them. Chromium does not build CFI for arm64 Linux, where PAC and

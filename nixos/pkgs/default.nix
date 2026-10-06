@@ -12,6 +12,50 @@ let
     map (name: dir + "/${name}") (
       builtins.sort builtins.lessThan (builtins.attrNames (builtins.readDir dir))
     );
+  # A package with a directory of our patches, compiled through ccache and
+  # linked by mold. Every package this overlay patches goes through here, so
+  # whatever gets patches next gets both, with no list to keep (docs/nixos.md,
+  # "GTK and Qt on a phone"). They no longer substitute from cache.nixos.org
+  # and CI compiles them anyway, so neither costs a cache hit; their
+  # dependents keep nixpkgs' stdenv. useMoldLinker puts ld.mold in the cc
+  # wrapper's bintools and adds -fuse-ld=mold, so configure probes and
+  # libtool link with mold too, not only the final link. ccache goes on
+  # second: the mold adapter adds its flag only for a compiler it knows to be
+  # clang or GCC 12 or later, and ccache's wrapper does not say which it is.
+  withPatches =
+    pkg: dir:
+    (pkg.override (args: {
+      stdenv = withCcache (final.stdenvAdapters.useMoldLinker args.stdenv);
+    })).overrideAttrs
+      (old: {
+        patches = (old.patches or [ ]) ++ patchesIn dir;
+      });
+  # The compiler behind ccache when the builder offers a cache at
+  # /var/cache/losos-ccache (Nix's extra-sandbox-paths, which CI's prebuild
+  # job sets and fills from GHCR), and directly otherwise, as Uranium's
+  # wrapper does. The derivation is the same either way, so a build that used
+  # the cache is the one the image asks for. ccache returns an object only
+  # for the same preprocessed input and compiler, so a GTK or Qt point
+  # release, or a changed patch, recompiles only the files it touched.
+  # Paths are made relative to the build directory, which differs per build,
+  # and a source file's time is not held against it, because patching leaves
+  # every patched file newer than the cache entry.
+  withCcache =
+    stdenv:
+    final.ccacheStdenv.override {
+      inherit stdenv;
+      extraConfig = ''
+        if [ -d /var/cache/losos-ccache ] && [ -w /var/cache/losos-ccache ]; then
+          export CCACHE_DIR=/var/cache/losos-ccache
+          export CCACHE_BASEDIR="$NIX_BUILD_TOP"
+          export CCACHE_NOHASHDIR=1
+          export CCACHE_SLOPPINESS=include_file_mtime,include_file_ctime,time_macros
+          export CCACHE_MAXSIZE=8G
+        else
+          export CCACHE_DISABLE=1
+        fi
+      '';
+    };
 in
 {
   pm = final.callPackage ./pm.nix { };
@@ -74,18 +118,14 @@ in
   # is the icon theme patch every toolkit here gets: an application can no
   # longer name its own icon theme, through GtkSettings or its GTK theme, or
   # put its icon directories ahead of the system's.
-  gtk3 = prev.gtk3.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk3;
-  });
+  gtk3 = withPatches prev.gtk3 ./patches/gtk3;
   # GTK4: Purism's three adaptive patches (postmarketOS carried the same two
   # behaviour changes until libadwaita 1.5 made its own dialogs adaptive):
   # resizable dialogs and transient windows open maximized, and get only a
   # close button. Plain GTK4 windows still need them; libadwaita's
   # AdwDialog and breakpoints already adapt and are left alone. 0004 and
   # 0005 are ours, as in GTK3.
-  gtk4 = prev.gtk4.overrideAttrs (old: {
-    patches = (old.patches or [ ]) ++ patchesIn ./patches/gtk4;
-  });
+  gtk4 = withPatches prev.gtk4 ./patches/gtk4;
   # Qt 6: nobody ships Qt phone patches (Plasma Mobile adapts in Kirigami
   # and its own shell), so both are ours. A finger scrolls Qt Widgets'
   # scroll areas kinetically, and resizable dialogs open maximized with
@@ -96,9 +136,7 @@ in
   # exports, and the system's directories lead the search path.
   qt6 = prev.qt6.overrideScope (
     _: qtPrev: {
-      qtbase = qtPrev.qtbase.overrideAttrs (old: {
-        patches = (old.patches or [ ]) ++ patchesIn ./patches/qtbase;
-      });
+      qtbase = withPatches qtPrev.qtbase ./patches/qtbase;
     }
   );
   # Qt 5 gets only the icon theme patch, Qt 6's 0003 ported. Nothing in the
@@ -106,9 +144,7 @@ in
   # through pm brings it in; libsForQt5 takes its qtbase from qt5.
   qt5 = prev.qt5.overrideScope (
     _: qtPrev: {
-      qtbase = qtPrev.qtbase.overrideAttrs (old: {
-        patches = (old.patches or [ ]) ++ patchesIn ./patches/qtbase5;
-      });
+      qtbase = withPatches qtPrev.qtbase ./patches/qtbase5;
     }
   );
 }
