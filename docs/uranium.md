@@ -123,7 +123,9 @@ round redoes only the modules that changed since the last one. The build sets Th
 (`is_cfi`, `use_cfi_icall`) on x86_64, and fails if gn drops any of them;
 an official build turns those on anyway, so this guards them rather than
 adding them. Chromium does not build CFI for arm64 Linux, where PAC and
-BTI cover what the CPU supports. ci.yml still checks, as
+BTI cover what the CPU supports. Uranium is the one thing this repository
+builds that does not link with mold ([glibc and stock packages](packages.md)):
+Chromium accepts ThinLTO, and so CFI, only with lld. ci.yml still checks, as
 `checks.<system>.uranium-patches`, that every patch applies, ungoogled's
 included, and the rename still finds every string, against the source
 nixpkgs pins. `losos.uranium.patched = true` puts the patched build in the
