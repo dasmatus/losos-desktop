@@ -68,11 +68,12 @@ in
   losos-installer = final.callPackage ./losos-installer.nix { };
   losos-security = final.callPackage ./losos-security.nix { };
   losos-swap = final.callPackage ./losos-swap.nix { };
-  # Halium (nixos/modules/halium.nix): Android's HAL headers, and libhybris,
-  # which loads the vendor's bionic-linked GPU and HAL libraries into glibc
-  # processes.
+  # Halium (nixos/halium/): Android's HAL headers, libhybris, which loads
+  # the vendor's bionic-linked GPU and HAL libraries into glibc processes,
+  # and the generic Android system image that starts those HALs.
   android-headers = final.callPackage ./android-headers.nix { };
   libhybris = final.callPackage ./libhybris.nix { };
+  halium-gsi = final.callPackage ./halium-gsi.nix { };
   # The Android Translation Layer (nixos/modules/atl.nix), which nixpkgs does
   # not carry either; only in the closure when losos.android.enable is set.
   android-translation-layer = final.callPackage ./android-translation-layer.nix { };
