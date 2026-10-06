@@ -33,6 +33,13 @@
     # tracking unstable buys the newer kernel, Mesa and systemd that the
     # desktop and the Halium target (nixos/halium/) want.
     nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+
+    # derisk, mcsapi and pm are git submodules under components/, so the
+    # commit this tree carries for each of them is the one the image builds.
+    # Moving one is `git -C components/<name> checkout <rev>` and a commit
+    # here, plus a new cargoHash in nixos/pkgs when its Cargo.lock changed.
+    # Nix 2.27 and later read this and fetch the submodules with the flake.
+    self.submodules = true;
   };
 
   outputs =

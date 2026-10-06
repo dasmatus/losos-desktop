@@ -40,9 +40,10 @@ Everything the flake builds from, besides this repository:
   prebuilt compilers; it is not source-only. Each copied flat or NAR output is
   checked against its derivation's hash, and outputs using other hash methods
   are rejected.
-- **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
-  (`nixos/pkgs/pm.nix`), and **crates.io**, for its, losos-security's and
-  losos-installer's dependencies, each pinned by `Cargo.lock` and checked by hash.
+- **pm**, the `components/pm` submodule (`github.com/losos-project/pm`) at the
+  commit this tree records (`nixos/pkgs/pm.nix`), and **crates.io**, for its,
+  losos-security's and losos-installer's dependencies, each pinned by
+  `Cargo.lock` and checked by hash.
 - **Purism's adaptive GTK patches**, copied into
   `nixos/pkgs/patches/gtk3` and `gtk4` from PureOS's packaging
   (source.puri.sm, `Librem5/debs/gtk4` and `sebastian.krzyszkowiak/gtk`,
@@ -52,10 +53,29 @@ Everything the flake builds from, besides this repository:
   source. It is prebuilt by the hardware vendors, and nothing can compile it.
   `hardware.nix` ships it because amdgpu and nouveau cannot start current
   GPUs without it.
-- **derisk**, cloned from `github.com/dasmatus/derisk` at a pinned commit and
-  hash (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned
-  by its `Cargo.lock` and `cargoHash`. It is the desktop, the display manager
-  and the portal backend.
+- **derisk**, the `components/derisk` submodule
+  (`github.com/losos-project/derisk`) at the commit this tree records
+  (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned by its
+  `Cargo.lock` and `cargoHash`. It is the desktop, the display manager and the
+  portal backend. The `components/mcsapi` submodule is the same mcsapi commit,
+  and builds `x2mcsapi`.
+
+### The components/ submodules
+
+derisk, mcsapi and pm are git submodules under `components/`, and the flake
+builds them from there (`self.submodules = true` in `flake.nix`, which Nix 2.27
+and later honour). The commit recorded for each submodule is the pin: a clone
+needs `git clone --recurse-submodules` (or `git submodule update --init`), and
+`git -C components/<name> log` shows exactly what the image builds. Moving one
+is `git -C components/<name> checkout <rev>`, a commit here, and a new
+`cargoHash` in its `nixos/pkgs/*.nix` when its `Cargo.lock` changed. There is
+no source hash to update: the submodule commit already names the tree.
+derisk's own `Cargo.lock` still fetches mcsapi by git revision, so move
+`components/mcsapi` to the revision that lock names.
+
+android_translation_layer stays a `fetchgit` pin: it is an upstream fork, off
+by default, and its tree is close to half a gigabyte, which the flake would
+otherwise copy on every evaluation.
 - **Flathub**, for apps installed after the fact. Its repo file, with the
   signing key every install is checked against, is
   `nixos/modules/flathub.flatpakrepo` in this tree; the image adds the remote
@@ -119,11 +139,20 @@ from another store path. The library has no `DT_SONAME`, so `ld.so` would map
 that copy and derisk's as two allocators. Halium does not import the module:
 see "What is not done".
 
+Uranium is the one exception. Chromium's own allocator, PartitionAlloc, is
+its malloc, and under the preload the two free each other's memory and the
+browser aborts at start ("fatal allocator error: invalid uninitialized
+allocator usage"). glibc has no way to skip the preload file for one program,
+so Uranium's launcher runs Chromium in an unprivileged bubblewrap mount
+namespace where `/etc/ld-nix.so.preload` is empty. Chromium's own sandbox
+still works inside it. PartitionAlloc is hardened in its own right, which is
+why GrapheneOS's own browser keeps it too.
+
 ## Binary cache
 
 `proxy/` is a Vercel edge function whose decisions are a WebAssembly module
 compiled from Rust (`proxy/src/lib.rs`); the JavaScript around it only
-fetches. It serves two things from this project's GHCR namespace:
+fetches. It serves these from this project's GHCR namespace:
 
 - **A Nix binary cache.** `tools/nix-cache-push` pushes each store path as
   one OCI artifact, `nix-cache:<store hash>`, holding its signed narinfo and
@@ -131,6 +160,13 @@ fetches. It serves two things from this project's GHCR namespace:
   at itself) and redirects `/nar/<hash>/<file>` to GHCR's blob storage, so a
   NAR never passes through it. A real `nix copy` pulled and verified a signed
   path through it against a fake registry; the tests are in `proxy/test/`.
+- **Build caches.** `/build-cache/<name>/<arch>/<part>` redirects to one
+  part of a compiler cache CI keeps in GHCR: `losos` for the overlay's
+  patched GTK and Qt (`losos-ccache:<arch>`), `uranium` for Chromium's
+  ccache and ThinLTO cache (`uranium-ccache:<arch>`). Each is a zstd tarball
+  split into 4 GB parts, `ccache.tar.zst.part-00` on, and
+  `tools/build-cache-fetch` fetches and unpacks one, through the proxy
+  first and from GHCR with oras when the proxy has nothing.
 - **Updates.** `/updates/<channel>/<arch>/<file>` serves a file of
   `images:<channel>-<arch>`, which CI's publish job moves to each release
   that passed verification. CI sets `losos.update.baseUrl` to
@@ -155,7 +191,8 @@ What has to be set up once, outside the repository:
    variable `GHCR_REPOSITORY=dasmatus/losos-desktop`. `vercel.json` has the
    rest. Its build installs a pinned Rust with rustup when absent and adds
    the WebAssembly target when Rust is already installed.
-2. **GHCR**: the `losos-desktop/nix-cache` and `losos-desktop/images`
+2. **GHCR**: the `losos-desktop/nix-cache`, `losos-desktop/images`,
+   `losos-desktop/losos-ccache` and `losos-desktop/uranium-ccache`
    packages public, once CI has created them; or a read-only token in
    Vercel as `GHCR_TOKEN`, with its owner's GitHub login as `GHCR_USERNAME`.
 3. **A signing key**: `nix key generate-secret --key-name losos-desktop-1`,
@@ -342,7 +379,7 @@ That buys two things the pm tree wrote down as limits:
 | `tools/configure --version --channel` | `losos.version`, `losos.channel` | the flake derives the version from the commit date |
 | `tools/vm-test` | `nixos/tests/boot.nix` | boots the real image under UEFI |
 | `tools/` gates, `Containerfile`, `./do` | `nix flake check`, `nix fmt` | the gates checked generated recipes against pm's fingerprint table, and neither exists now |
-| pm, the system manager | pm, the system manager (`pm.nix`) | pinned to a commit |
+| pm, the system manager | pm, the system manager (`pm.nix`) | the `components/pm` submodule |
 
 ## Everything systemd, and the exceptions
 
@@ -598,6 +635,24 @@ touchscreen rather than a screen size.
   stock. Qt 5, which nothing in the image links, gets no phone patches, only
   the icon theme one (below, "One icon theme").
 
+Each patched toolkit links with [mold](https://github.com/rui314/mold)
+instead of nixpkgs' default `ld.bfd`, and compiles through ccache. The
+overlay applies its patches through one helper, `withPatches`, which also
+builds the package with nixpkgs' `stdenvAdapters.useMoldLinker` and
+`ccacheStdenv`, so a package patched later gets both without being listed
+anywhere. The mold adapter puts `ld.mold` in the compiler wrapper and adds
+`-fuse-ld=mold`, so configure probes and libtool link with mold as well as
+the final link. ccache is used only where the builder binds a cache
+directory to `/var/cache/losos-ccache`, so the derivation is the same with
+or without one. CI's `prebuild` job keeps it in GHCR as
+`losos-ccache:<arch>` and fetches it through the proxy, so a GTK or Qt point
+release, or a changed patch, recompiles only the files it changes: a second
+GTK3 build took 832 of its 835 objects from the cache and finished in 3m44s
+instead of 6m35s, with a bit-for-bit identical output. These packages
+compile in CI anyway, so neither costs a cache hit. What links against them
+keeps nixpkgs' stdenv, since changing it for every package would mean
+nothing substituting from cache.nixos.org at all.
+
 The on-screen keyboard is derisk's. GTK3, GTK4 and Qt 6 all speak Wayland's
 `text-input-unstable-v3` without patches, so the keyboard can follow text
 focus once derisk's compositor offers that protocol.
@@ -672,7 +727,9 @@ There are two builds of it (`nixos/pkgs/uranium.nix`):
   build: every window is one page, with the address bar but no tab strip,
   and its tabs are reached through derisk's command palette (below). Kiosk
   mode was not used for this because it also takes away the address bar,
-  the menu and the back button. Nobody has compiled it yet, and Tab
+  the menu and the back button. The fifth patch puts the toolbar, with the
+  address bar, at the bottom of the window on a phone, and on every screen
+  when Settings, Appearance, "Show the address bar at the bottom" is on. Nobody has compiled it yet, and Tab
   Search's bubble still anchors to the hidden tab strip's button, so where
   it opens is the first thing a real build has to check. `rebrand.py`
   renames Chromium to Uranium in the roughly 600 interface strings that say
@@ -742,7 +799,9 @@ five hours, saves the cache, pushes what it finished to the project's Nix
 cache, and dispatches the next round for the architectures still going,
 up to eight. The compiler wrapper uses the cache only where the builder
 binds one into the sandbox, so the derivation is the same with or
-without it. The build sets ThinLTO on both architectures and CFI
+without it. Chromium's ThinLTO cache, which keeps each module's optimized
+code across links, goes in the same directory, so the final link of a
+round redoes only the modules that changed since the last one. The build sets ThinLTO on both architectures and CFI
 (`is_cfi`, `use_cfi_icall`) on x86_64, and fails if gn drops any of them;
 an official build turns those on anyway, so this guards them rather than
 adding them. Chromium does not build CFI for arm64 Linux, where PAC and
