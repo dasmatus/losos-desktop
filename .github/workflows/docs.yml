@@ -52,6 +52,10 @@ jobs:
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - run: npm ci
         working-directory: website
+      # The web flasher's sparse splitting, hashing and fastboot exchange,
+      # against a simulated bootloader.
+      - run: npm test
+        working-directory: website
       # Docusaurus fails the build on a link to a page or file that is not
       # there, so a page renamed in docs/ without its links breaks here.
       - run: npm run build
@@ -60,6 +64,9 @@ jobs:
           DOCS_URL: ${{ steps.pages.outputs.origin }}
           DOCS_BASE_PATH: ${{ steps.pages.outputs.base_path }}
           DOCS_EDIT_BRANCH: ${{ github.event.repository.default_branch }}
+          # Where the flasher downloads releases from, the same variable the
+          # image build reads.
+          LOSOS_PROXY_URL: ${{ vars.LOSOS_PROXY_URL }}
       # The wiki pages are generated here too, so a pull request finds a page
       # missing from the sidebar or a link to nothing before main does.
       - run: node website/wiki.js "$RUNNER_TEMP/wiki"

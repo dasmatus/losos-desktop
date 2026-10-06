@@ -49,30 +49,38 @@
   be asked, and installs only for themselves. derisk's portal backend has no
   area or color picker and does not set the lock screen's picture; it asks
   for consent through GTK's access dialog, not one of its own.
-- **Halium has not run on a device.** It evaluates, `libhybris` builds on
-  x86_64, and an x86_64 build of the target (nixpkgs' kernel, no Android
-  partitions) booted under QEMU from a disk whose only partition was
-  `userdata`: the initrd mounted it, grew and loop-mounted `rootfs.img`,
-  switched root, timed out on the missing `vendor` and `system` without
-  failing, skipped the Android container and reached a login prompt. No
-  arm64 build, `boot.img` on a device, or Android container has been run.
-  Beyond that:
+- **The Halium GSI has not run on a device.** It evaluates for aarch64, and
+  an x86_64 build of the same boot path booted under QEMU (see the pull
+  request that made it the one target). No arm64 build has been flashed, no
+  bootloader has loaded its `init_boot`, and the web flasher has only talked
+  to a simulated fastboot device. What only a phone can confirm: that a
+  generic kernel's configuration has everything systemd and the desktop use
+  (`CONFIG_USER_NS` for Flatpak's sandbox above all), that `vendor_boot`'s
+  ramdisk and this one unpack together as intended, and that Halium's
+  Android 14 system image starts each vendor's HALs. Beyond that:
   - **The display.** derisk drives the display itself through DRM/KMS. A
     device whose kernel has a DRM driver (msm, mediatek, panfrost) can show
     the desktop with Mesa; one that only has Android's hwcomposer cannot,
     because nothing here drives hwcomposer. That needs a hwcomposer backend
     in derisk or a compositor in front of it.
-  - **Dynamic partitions.** Devices from Android 10 on keep `system` and
-    `vendor` inside `super`. Nothing maps its logical partitions yet, so such
-    a device has to name device-mapper targets set up by its port.
-  - **Updates.** sysupdate is not wired up; an update is a new `rootfs.img`
-    and `boot.img`, flashed by hand. There is no verity on the root either.
-  - **hardened_malloc.** The PC build preloads it into every process; Halium
+  - **Updates.** sysupdate is not wired up; the flasher writes userdata whole,
+    so installing a newer release erases the phone. There is no verity on the
+    root either, and the bootloader stays unlocked.
+  - **Phones without `init_boot`.** The flasher writes their own boot image
+    back with this ramdisk after theirs. Its repacking matches AOSP's
+    `mkbootimg` byte for byte for header versions 0 to 4, and it was run
+    against a simulated phone in fastbootd, but no real bootloader has
+    booted such an image yet, and a phone whose ramdisk links `/etc` or
+    `/lib` elsewhere would merge badly with this one.
+  - **Kernels older than 5.10.** Phones that launched with Android 11 or
+    earlier run 4.x or 5.4 kernels, which systemd does not support at all.
+    The flasher reads the kernel's version and refuses them; supporting
+    them would mean an older systemd or a kernel built per device.
+  - **hardened_malloc.** The PC build preloads it into every process; the GSI
     does not. Its default configuration reserves 32 GiB per size class per
     arena and needs a 48-bit address space, and Android kernels are usually
-    built with 39-bit virtual addresses. A Halium build needs a
-    hardened_malloc with a smaller `CONFIG_CLASS_REGION_SIZE`, and derisk
-    built against it.
+    built with 39-bit virtual addresses. The GSI needs a hardened_malloc with
+    a smaller `CONFIG_CLASS_REGION_SIZE`, and derisk built against it.
   - **Telephony, audio, sensors, camera.** No ofono, no PulseAudio/PipeWire
     droid modules, no sensorfw. Android's init starts the HALs, and nothing
     on the Linux side talks to them yet beyond EGL.

@@ -34,7 +34,7 @@ module and assertion without building an image:
 ```sh
 nix eval --raw .#nixosConfigurations.losos-desktop-x86_64.config.system.build.toplevel.drvPath
 nix eval --raw .#nixosConfigurations.losos-desktop-aarch64.config.system.build.toplevel.drvPath
-nix eval --raw .#nixosConfigurations.losos-desktop-halium-aarch64.config.system.build.toplevel.drvPath
+nix eval --raw .#nixosConfigurations.losos-desktop-gsi-aarch64.config.system.build.toplevel.drvPath
 ```
 
 `nix fmt` formats the Nix files; CI runs `nix fmt -- --ci`.

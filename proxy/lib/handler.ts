@@ -167,8 +167,46 @@ async function ping(core: Core, env: Env, fetchImpl: Fetch, request: Request): P
   return json(200, core.policy([...settings, monthly, daily].join("\n")));
 }
 
+// Everything the proxy serves to a GET is public, so any page may read it,
+// the web flasher above all, which lives on another origin. No cookie or
+// credential is involved, which is what makes `*` safe; /ping, the one
+// thing that is not a read, does not say this.
+const CORS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-expose-headers": "content-length, content-range, accept-ranges",
+};
+
+function withCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(CORS)) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 // Build the request handler. `env` is read as described on Env.
 export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler {
+  const handle = reads(core, env, fetchImpl);
+  return async function cors(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const path = url.searchParams.has("path") ? `/${url.searchParams.get("path")}` : url.pathname;
+    if (path === "/ping") return handle(request);
+    // A browser asks first before a request with a Range it does not
+    // consider simple.
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          ...CORS,
+          "access-control-allow-methods": "GET, HEAD",
+          "access-control-allow-headers": "range",
+          "access-control-max-age": "86400",
+        },
+      });
+    }
+    return withCors(await handle(request));
+  };
+}
+
+function reads(core: Core, env: Env, fetchImpl: Fetch): Handler {
   const namespace = (env.GHCR_REPOSITORY || "").toLowerCase();
 
   return async function handle(request: Request): Promise<Response> {
@@ -258,6 +296,28 @@ export function handler(core: Core, env: Env, fetchImpl: Fetch = fetch): Handler
         });
       }
       return text(502, body(`blob: ${blob.status}\n`), "no-store");
+    }
+
+    if (kind === "stream") {
+      // The range the flasher asked for, fetched through GHCR's redirect to
+      // its storage (fetch drops the bearer token when it leaves ghcr.io)
+      // and passed on as it arrives. A file name carries its version, so a
+      // range of it never changes.
+      const range = request.headers.get("range");
+      const blob = await fetchImpl(blobUrl, { headers: range ? { ...auth, range } : auth });
+      if (!blob.ok) {
+        return text(blob.status === 416 ? 416 : 502, body(`blob: ${blob.status}\n`), "no-store");
+      }
+      const headers: Record<string, string> = {
+        "content-type": "application/octet-stream",
+        "accept-ranges": "bytes",
+        "cache-control": "public, max-age=31536000, immutable",
+      };
+      for (const name of ["content-length", "content-range"]) {
+        const value = blob.headers.get(name);
+        if (value) headers[name] = value;
+      }
+      return new Response(body(blob.body), { status: blob.status, headers });
     }
 
     const blob = await fetchImpl(blobUrl, { headers: auth });

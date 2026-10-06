@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LosOS Flasher</title>
+    <meta name="description" content="Install LosOS Desktop on an Android phone from the browser, over USB." />
+    <style>
+      /* Every colour and size is a variable, so the page restyles from here. */
+      :root {
+        --bg: #f6f7f9;
+        --fg: #1b1d22;
+        --muted: #5b6270;
+        --card: #ffffff;
+        --border: #d9dde4;
+        --accent: #2f6fde;
+        --accent-fg: #ffffff;
+        --ok: #1f8a4c;
+        --bad: #c23b32;
+        --radius: 10px;
+        --gap: 16px;
+        color-scheme: light dark;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #15171b;
+          --fg: #e8eaee;
+          --muted: #9aa1ad;
+          --card: #1e2127;
+          --border: #343943;
+          --accent: #6b9cf0;
+          --accent-fg: #0d1117;
+          --ok: #4cc27d;
+          --bad: #f0746b;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font: 16px/1.5 system-ui, sans-serif;
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: var(--gap);
+        counter-reset: step;
+      }
+      h1 {
+        font-size: 1.6rem;
+        margin: 8px 0 4px;
+      }
+      .lead,
+      .detail,
+      li {
+        color: var(--muted);
+      }
+      section {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: var(--gap);
+        margin: var(--gap) 0;
+      }
+      section h2 {
+        font-size: 1.1rem;
+        margin: 0 0 8px;
+      }
+      section h2::before {
+        content: counter(step) ". ";
+        counter-increment: step;
+      }
+      section[data-status="done"] h2::after {
+        content: " \2713";
+        color: var(--ok);
+      }
+      section[data-status="failed"] .detail {
+        color: var(--bad);
+      }
+      button {
+        background: var(--accent);
+        color: var(--accent-fg);
+        border: 0;
+        border-radius: var(--radius);
+        padding: 10px 16px;
+        font: inherit;
+        cursor: pointer;
+        margin: 4px 8px 4px 0;
+      }
+      button.secondary {
+        background: transparent;
+        color: var(--accent);
+        border: 1px solid var(--accent);
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      progress {
+        width: 100%;
+        height: 10px;
+      }
+      #log {
+        font: 13px/1.4 ui-monospace, monospace;
+        color: var(--muted);
+        max-height: 180px;
+        overflow: auto;
+        overflow-wrap: anywhere;
+      }
+      .warning {
+        border-color: var(--bad);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Install LosOS on a phone</h1>
+      <p class="lead">
+        This page writes LosOS Desktop to an Android phone over USB, from this browser. It works on Treble
+        phones that take generic system images and run Linux 5.10 or newer, which is every phone that
+        launched with Android 12 or later. It keeps the phone's own kernel and drivers, and erases
+        everything on the phone.
+      </p>
+
+      <section id="unsupported" class="warning" hidden>
+        This browser cannot reach USB devices. Use Chrome, Edge or another Chromium-based browser on a
+        computer.
+      </section>
+
+      <section>
+        <h2>Prepare the phone</h2>
+        <ul>
+          <li>Back up anything you want to keep: installing erases the phone.</li>
+          <li>
+            In Android, open Settings, About phone, and tap Build number seven times. Then turn on
+            Developer options, OEM unlocking.
+          </li>
+          <li>
+            Turn the phone off, hold Volume down and Power until the bootloader's menu appears, and connect it
+            to this computer with a USB cable.
+          </li>
+        </ul>
+      </section>
+
+      <section data-step="connect">
+        <h2>Connect</h2>
+        <p class="detail"></p>
+        <button id="connect" data-needs>Connect the phone</button>
+      </section>
+
+      <section data-step="unlock">
+        <h2>Unlock the bootloader</h2>
+        <p>The phone asks for confirmation on its own screen, then erases itself.</p>
+        <p class="detail"></p>
+        <button id="unlock" data-needs disabled>Unlock</button>
+      </section>
+
+      <section data-step="boot" id="boot-section" hidden>
+        <h2>The phone's boot image</h2>
+        <p>
+          This phone has no init_boot partition, so LosOS goes into its boot partition beside the phone's own
+          kernel. That needs the boot image the phone runs now: read it from the phone, which restarts it into
+          fastbootd first, or choose boot.img from the factory image of the exact Android build installed.
+        </p>
+        <p class="detail"></p>
+        <progress id="boot-progress" hidden></progress>
+        <button id="read-boot" data-needs disabled>Read it from the phone</button>
+        <button id="pick-boot" class="secondary" data-needs disabled>Choose boot.img</button>
+        <input id="pick-boot-file" type="file" accept=".img" hidden />
+      </section>
+
+      <section data-step="download">
+        <h2>Get LosOS</h2>
+        <p>
+          The newest release is downloaded into this browser's own storage and checked against the
+          release's SHA-256 sums before anything is written.
+        </p>
+        <p class="detail"></p>
+        <progress id="download-progress" hidden></progress>
+        <button id="download" data-needs disabled>Download</button>
+        <button id="pick" class="secondary" data-needs disabled>Use files on this computer</button>
+        <input id="pick-files" type="file" multiple hidden />
+      </section>
+
+      <section data-step="flash">
+        <h2>Install</h2>
+        <p>
+          Writes vbmeta, init_boot (or boot) and userdata. Keep the cable connected until it finishes.
+        </p>
+        <p class="detail"></p>
+        <progress id="flash-progress" hidden></progress>
+        <button id="flash" data-needs disabled>Install</button>
+      </section>
+
+      <section data-step="reboot">
+        <h2>Start LosOS</h2>
+        <p>
+          The bootloader warns that it is unlocked on every start. That is expected: LosOS cannot relock it.
+        </p>
+        <p class="detail"></p>
+        <button id="reboot" data-needs disabled>Restart the phone</button>
+      </section>
+
+      <section>
+        <div id="log" aria-live="polite"></div>
+      </section>
+    </main>
+    <script type="module" src="flasher.js"></script>
+  </body>
+</html>

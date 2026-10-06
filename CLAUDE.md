@@ -36,7 +36,7 @@ Evaluate both architectures before trusting a change:
 ```sh
 nix eval --raw .#nixosConfigurations.losos-desktop-x86_64.config.system.build.toplevel.drvPath
 nix eval --raw .#nixosConfigurations.losos-desktop-aarch64.config.system.build.toplevel.drvPath
-nix eval --raw .#nixosConfigurations.losos-desktop-halium-aarch64.config.system.build.toplevel.drvPath
+nix eval --raw .#nixosConfigurations.losos-desktop-gsi-aarch64.config.system.build.toplevel.drvPath
 ```
 
 That runs every module and assertion in a few minutes. A full image build
@@ -48,16 +48,20 @@ still takes time, so don't start one to check a module edit.
   `accounts`, `setup`, `desktop`, `services`, `hardware`, `installer`, `pm` and
   a few more. `base.nix` imports what every target shares; `default.nix`
   adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
-- `nixos/halium/` is the Halium target: `base.nix` plus an Android boot image,
-  a loop-mounted `rootfs.img` on userdata, and the vendor HALs in an LXC
-  container. `docs/halium.md` says what a device port supplies.
+- `nixos/halium/` is the Halium GSI, one image for every Treble phone that
+  takes GSIs and runs Linux 5.10 or newer: `base.nix` plus NixOS's initrd as
+  `init_boot` (or after the phone's own ramdisk in `boot`),
+  userdata as the root, the vendor's partitions mapped out of `super`, and
+  its HALs under Halium's generic system image in an LXC container. No device
+  ports. `docs/halium.md` says how it boots.
 - `nixos/installer/` is the installer ISO's live system: networkd,
   `wpa_supplicant` and `derisk installer` on tty1, with `losos-installer
   serve` as its backend. `modules/installer.nix`
   evaluates it with the OS's own repart definitions and sysupdate transfers.
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
   plugins, `losos-installer`, `losos-security`, `losos-swap`, the pm
-  payload builder, and Halium's `libhybris` and `android-headers`.
+  payload builder, and Halium's `libhybris`, `android-headers` and generic
+  system image (`halium-gsi`).
   It also replaces `gtk3`, `gtk4` and Qt 6's `qtbase` with builds carrying
   `patches/gtk3`, `patches/gtk4` and `patches/qtbase`, which make their apps
   fit a phone (`docs/gtk-qt-phone.md`); those and their
@@ -74,8 +78,10 @@ still takes time, so don't start one to check a module edit.
   fingerprint matched it.
 - `proxy/` is a Vercel edge function with its logic in Rust compiled to
   WebAssembly. It serves the Nix binary cache and sysupdate's files from GHCR,
-  and counts active users (`/ping`, `docs/choice-screens.md`).
-- `website/` is the Docusaurus site that publishes `docs/` on GitHub Pages;
+  streams the GSI's files to the web flasher (`/flasher/`), and counts
+  active users (`/ping`, `docs/choice-screens.md`).
+- `website/` is the Docusaurus site that publishes `docs/` on GitHub Pages,
+  with the web flasher (`website/static/flasher/`, `docs/web-flasher.md`) beside it;
   `website/wiki.js` writes the same pages for the GitHub wiki. A new page in
   `docs/` goes in `website/sidebars.js` too, or both fail. Pages link each
   other as `page.md`, which GitHub, Docusaurus and the wiki all follow.

@@ -1,32 +1,74 @@
-# Halium
+# Halium GSI
 
-`nixos/halium/` is a second target: the same OS on a phone or tablet through
-[Halium](https://halium.org), the Android hardware layer that ports such as
-Ubuntu Touch and Droidian build on. `nixosModules.halium` imports
+`nixos/halium/` is the phone and tablet target: one generic system image
+(GSI) for every Treble device that takes generic system images and runs
+Linux 5.10 or newer, through [Halium](https://halium.org), the Android hardware layer that ports
+such as Ubuntu Touch and Droidian build on. `nixosModules.gsi` imports
 `nixos/modules/base.nix`, which holds everything a PC and a phone share (the
 derisk desktop, homed accounts, networkd, pm, no Nix on the device, the `/etc`
-overlay, sysusers), and adds its own boot and Android layer in place of the
-PC's UEFI, verity `/usr`, sysupdate and installer.
+overlay, sysusers), and adds its own boot (`boot.nix`) and Android layer
+(`android.nix`) in place of the PC's UEFI, verity `/usr`, sysupdate and
+installer. The [web flasher](web-flasher.md) installs it.
 
-How a device boots it:
+There are no device ports. The target used to be a configuration a port would
+fill in with its kernel, device tree, `mkbootimg` offsets, partition labels and
+udev rules; all of that is gone, because two things Android made generic cover
+it:
 
-1. The Android bootloader loads `boot.img` from the boot partition. It holds
-   the device's kernel and NixOS's systemd initrd, with `init=` naming the
-   system as the UKI does on a PC. Halium's own rootfs boots through
-   halium-boot, a busybox ramdisk; this keeps systemd in the initrd instead.
-2. The initrd mounts `userdata` at `/run/halium/userdata`, grows
-   `losos/rootfs.img` on it to `losos.halium.rootfsSize`, and loop-mounts it
-   as `/` with `x-systemd.growfs`.
-3. After switch-root, the Halium system image (system-as-root, `/init` at its
-   top) is mounted read-only at `/android/system`, `vendor` at `/vendor`, and
-   `/android/system/system` at `/system`, where libhybris's linker looks.
-4. `losos-android.service` starts Android's init with `lxc-start`. The
-   container shares the host's `/dev` and network and gets userdata as
-   `/data`, as in Halium's lxc-android. It is LXC rather than
-   `systemd-nspawn` because nspawn always gives a container a private `/dev`,
-   and the HAL device nodes ueventd creates must be the ones the host opens.
-   It starts before the display manager.
-5. libhybris is a GLVND EGL vendor in `hardware.graphics`, beside Mesa.
+- **Treble.** A device's vendor HALs run under any system image of a newer
+  Android, so Halium's generic Android 14 system image starts them on every
+  device. It is pinned in `nixos/pkgs/halium-gsi.nix` and lives in the store,
+  so it updates with the OS.
+- **The ramdisk is unpacked last.** A device that launched with Android 13
+  or later boots its maker's kernel from `boot`, its first drivers from
+  `vendor_boot`, and the generic ramdisk from `init_boot`, and the flasher
+  replaces only that ramdisk. An older device keeps kernel and ramdisk
+  together in `boot`; the flasher reads that boot image and writes it back
+  with this ramdisk after the device's own, which the kernel unpacks in
+  turn. Either way the kernel, its modules and its device tree stay the
+  device's own, and nothing here is built per device.
+
+## How a device boots it
+
+1. The bootloader loads the device's kernel and unpacks the device's own
+   ramdisk (`vendor_boot`'s, or `boot`'s on a device without `init_boot`),
+   then this one, NixOS's systemd initrd, over it.
+2. In the initrd, `losos-gsi-first-stage-modules` loads what the device's
+   ramdisk lists in `/lib/modules/modules.load`: the storage controller and
+   what it hangs off. Without them there is no `userdata`.
+3. `userdata` is the root filesystem, whole, mounted by partition label and
+   grown to the partition by `x-systemd.growfs` on the first boot. The command
+   line comes from the device's own boot images, which keep theirs, so there
+   is no `init=`; the initrd boots
+   `/nix/var/nix/profiles/system`, which the flashed filesystem carries.
+4. After switch-root, `losos-gsi-super` reads `super`'s logical partition
+   metadata for the booted slot with `lpdump` and maps `vendor`, `odm`,
+   `vendor_dlkm` and `system_dlkm` with device-mapper under their names
+   without the slot suffix. They mount read-only at `/vendor`, `/odm`,
+   `/vendor_dlkm` and `/system_dlkm`.
+5. `losos-gsi-modules` points the kernel's firmware loader at
+   `/vendor/firmware` and loads the generic kernel's modules from
+   `system_dlkm`, then the vendor's. None of these partitions carries a
+   `modules.dep.bin`, so the loader (`load-modules.sh`) runs `insmod` in
+   passes until a pass loads nothing new, with `modules.options` and
+   `modules.blocklist` applied; a module that never loads is logged and
+   skipped.
+6. Halium's system image is loop-mounted read-only from the store at
+   `/android/system`, and `/android/system/system` at `/system`, where
+   libhybris's linker looks.
+7. `losos-android.service` starts Android's init with `lxc-start`. The
+   container shares the host's `/dev` and network, gets the vendor partitions
+   bind-mounted, and gets `/var/lib/android/data` as `/data`. It is LXC rather
+   than `systemd-nspawn` because nspawn always gives a container a private
+   `/dev`, and the HAL device nodes ueventd creates must be the ones the host
+   opens. It starts before the display manager.
+8. libhybris is a GLVND EGL vendor in `hardware.graphics`, beside Mesa.
+
+The system carries no kernel (`boot.kernel.enable = false`): the one that
+boots is the device's, so nixpkgs' would be dead weight in `rootfs`. Every
+device in scope runs 5.10 or newer, which is systemd's minimum baseline; the
+flasher reads the kernel's version out of a boot image it repacks and refuses
+an older one.
 
 Every mount on the Android side is `nofail`, so a device whose Android half is
 missing or broken still reaches the login screen.
@@ -37,33 +79,59 @@ so the vendor partition's closed blobs are trusted as much as the kernel, and
 nothing here plays the part of the PC build's verity `/usr`. It drops
 `sys_module`, `sys_rawio`, `sys_time` and the MAC capabilities; a `/dev`
 holding only the HAL nodes would narrow it further, but which nodes those are
-is per device, and it waits for a device bring-up to find out.
+differs per device, so it waits for a device to find out.
 
-`nix build .#packages.aarch64-linux.halium` produces `boot.img` and `rootfs.img.xz` with
-`SHA256SUMS`. Install with `fastboot flash boot boot.img`, unpack
-`rootfs.img.xz`, and copy it in from a recovery with
-`adb push rootfs.img /data/losos/rootfs.img`.
+## What it builds
 
-## What a device port supplies
+`nix build .#packages.aarch64-linux.gsi` produces the three files the
+flasher writes, with `SHA256SUMS`:
 
-`losos-desktop-halium-aarch64` has no device in it: it carries nixpkgs'
-generic kernel, warns that it boots nothing, and exists so CI evaluates and
-builds the target. A port is that configuration plus:
+- `losos-desktop_<version>_gsi-init_boot.img`: the initrd as an Android boot
+  image, header v4 with a ramdisk and nothing else, LZ4 in the legacy format
+  the generic kernel decompresses.
+- `losos-desktop_<version>_gsi-vbmeta.img`: an empty vbmeta with verification
+  turned off, so a bootloader that checks `init_boot` against the stock
+  vbmeta boots this one.
+- `losos-desktop_<version>_gsi-userdata.simg.gz`: the root filesystem as an
+  Android sparse image, gzipped because gzip is what a browser decompresses
+  natively.
 
-- `losos.halium.kernelPackages`: the port's kernel, for example from
-  `pkgs.linuxManualConfig` over the vendor tree and its Halium defconfig. It
-  must be 5.10 or newer, systemd's minimum baseline, and evaluation fails
-  otherwise. That rules out most Android 9 and 10 era ports, which run 4.x
-  kernels.
-- `losos.halium.mkbootimgArgs` and `losos.halium.dtb`: the device's
-  `BOARD_MKBOOTIMG_ARGS` and device tree, copied from its `BoardConfig.mk`.
-- `losos.halium.android.system` and `.vendor` when the partition labels
-  differ (A/B slots), and `losos.halium.userdataFsType` for f2fs.
-- `losos.halium.android.udevRules`: rules generated from the device's
-  `ueventd.rc`.
-- The Halium system image itself, built from the Halium tree for the device
-  and flashed to `system`.
+The aarch64 release carries the same three files under its `SHA256SUMS` and
+signature, which is where the flasher downloads them from.
+
+Without the flasher, the same three go on with fastboot on a device with
+`init_boot`:
+
+```sh
+fastboot flash vbmeta losos-desktop_<version>_gsi-vbmeta.img
+fastboot flash init_boot losos-desktop_<version>_gsi-init_boot.img
+gunzip losos-desktop_<version>_gsi-userdata.simg.gz
+fastboot flash userdata losos-desktop_<version>_gsi-userdata.simg
+fastboot reboot
+```
+
+## Which devices
+
+A device is in scope when its bootloader can be unlocked, it takes GSIs
+(Treble, which every device that launched with Android 9 or later has), and
+its kernel is Linux 5.10 or newer, which in practice means it launched with
+Android 12 or later:
+
+- With `init_boot` (launched with Android 13 or later), only `init_boot` is
+  written.
+- Without it (launched with Android 12), `boot` is written: the device's own
+  boot image, read back from the device in fastbootd or chosen from its
+  factory image, with this ramdisk appended to its own. The kernel's version
+  is checked there, and a kernel older than 5.10, as on devices that launched
+  with Android 11 or earlier, is refused.
+
+Every such device has `super`, since dynamic partitions are required of
+devices that launched with Android 10 or later, so `losos-gsi-super` has no
+fallback for physical vendor partitions. A device without `vendor_dlkm` or
+`system_dlkm`, as on Android 12, simply skips those mounts.
+
+A device this image cannot carry is one with a 4.x or 5.4 kernel: systemd
+does not run on it, and a generic image cannot bring a newer kernel.
 
 `nixos/pkgs/` builds `libhybris` from its upstream master and Halium's
-`android-headers` (one tree serves Halium 11 to 16). A device whose vendor
-HALs need older headers overrides `android-headers`.
+`android-headers` (one tree serves Halium 11 to 16).
