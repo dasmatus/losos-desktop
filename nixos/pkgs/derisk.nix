@@ -39,15 +39,15 @@ rustPlatform.buildRustPackage {
     # (the hardened-malloc feature, which allocator.nix turns on), #32
     # (text fields in GTK and Qt apps open the on-screen keyboard, over
     # text-input-v3), #34 (the browser and search engine choice screens,
-    # which turn on from the policy file losos-ping writes), #35 (a menu
+    # which turn on from the policy file losos-ping writes) and #35 (a menu
     # item picked in the palette reaches the app that registered it, which
-    # Uranium's tabs menus need) and #37 (the icon theme handed to
-    # GSettings, and to Qt as QT_QPA_SYSTEM_ICON_THEME).
-    rev = "0be079bb80676a19f503af73b001ba753f1e9b71";
-    hash = "sha256-CTPcX3URRT6G3U2dOiFatIYvGYUZ4zrxl7/HoCyTb2k=";
+    # Uranium's tabs menus need), #36 and #38 (the graphical installer and
+    # the first-boot setup, `derisk installer` and `derisk setup`).
+    rev = "98b45a8a9ceae8444be4b35dd11aa6a69578ce7c";
+    hash = "sha256-vfSVUnKmuVQjprCKWoe1z+UecO+rFxU39fjfbwKBgFA=";
   };
 
-  cargoHash = "sha256-cPxWZOQV2dMTKMABxiBsdjYySO96iptzvTsdTHFQ6/w=";
+  cargoHash = "sha256-MMsIyUt5512QsJIMJ5pYwtxro08v7JxmGyubOUweG/s=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is
