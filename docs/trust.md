@@ -37,6 +37,10 @@ Everything the flake builds from, besides this repository:
   `Cargo.lock` and `cargoHash`. It is the desktop, the display manager and the
   portal backend. The `components/mcsapi` submodule is the same mcsapi commit,
   and builds `x2mcsapi`.
+- **Home Manager**, `github.com/nix-community/home-manager`, pinned by
+  revision and `narHash` in `flake.lock`. Only `nix flake check` reads it, to
+  build `homeModules.pm` into a Home Manager generation
+  (`nixos/tests/home-manager-pm.nix`); the image and the release never do.
 - **Flathub**, for apps installed after the fact. Its repo file, with the
   signing key every install is checked against, is
   `nixos/modules/flathub.flatpakrepo` in this tree; the image adds the remote
