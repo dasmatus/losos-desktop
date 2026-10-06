@@ -12,6 +12,8 @@ const D1 = `sha256:${"1".repeat(64)}`;
 const D2 = `sha256:${"2".repeat(64)}`;
 const D3 = `sha256:${"3".repeat(64)}`;
 const D4 = `sha256:${"4".repeat(64)}`;
+const D9 = `sha256:${"9".repeat(64)}`;
+const GSI = "0123456789abcdef";
 // Not valid UTF-8 anywhere: the bytes a binary OpenPGP signature starts with.
 const SIGNATURE = new Uint8Array([0x89, 0x02, 0x33, 0x04, 0x00, 0x01, 0x08, 0xff, 0xfe, 0x80]);
 const layer = (digest: string, title: string) => ({
@@ -26,9 +28,19 @@ const ARTIFACTS: Record<string, ReturnType<typeof layer>[]> = {
     layer(D4, "SHA256SUMS.gpg"),
     layer(D2, "losos-desktop_1_x86_64.efi"),
   ],
+  "dasmatus/losos-desktop/images:nightly-aarch64": [
+    layer(D3, "SHA256SUMS"),
+    layer(D2, "losos-desktop_1_aarch64.efi"),
+    layer(D9, "losos-desktop_1_gsi-userdata.simg.gz"),
+  ],
   "dasmatus/losos-desktop/losos-ccache:aarch64": [layer(D2, "ccache.tar.zst.part-00")],
 };
-const BLOBS: Record<string, string | Uint8Array> = { [D1]: NARINFO, [D3]: "abc  losos-desktop_1_x86_64.efi\n", [D4]: SIGNATURE };
+const BLOBS: Record<string, string | Uint8Array> = {
+  [D1]: NARINFO,
+  [D3]: "abc  losos-desktop_1_x86_64.efi\n",
+  [D4]: SIGNATURE,
+  [D9]: GSI,
+};
 
 interface Logged {
   url: string;
@@ -49,7 +61,17 @@ function registry(log: Logged[] = []): Fetch {
     if (init.redirect === "manual") {
       return new Response(null, { status: 307, headers: { location: `https://blob.example/${ref}` } });
     }
-    return new Response(BLOBS[ref] as BodyInit);
+    // Storage answers a range as a 206, which is what the flasher reads.
+    const range = (init.headers as Record<string, string>).range?.match(/^bytes=(\d+)-(\d+)$/);
+    const whole = BLOBS[ref];
+    if (range && typeof whole === "string") {
+      const [start, end] = [Number(range[1]), Number(range[2])];
+      return new Response(whole.slice(start, end + 1), {
+        status: 206,
+        headers: { "content-range": `bytes ${start}-${end}/${whole.length}`, "content-length": String(end - start + 1) },
+      });
+    }
+    return new Response(whole as BodyInit);
   };
 }
 
@@ -58,8 +80,8 @@ const core = bind(
     .instance,
 );
 const env = { GHCR_REPOSITORY: "dasMatus/losos-desktop" };
-const get = (h: Handler, path: string, method = "GET") =>
-  h(new Request(`https://cache.example/api/proxy?path=${encodeURIComponent(path)}`, { method }));
+const get = (h: Handler, path: string, method = "GET", headers: Record<string, string> = {}) =>
+  h(new Request(`https://cache.example/api/proxy?path=${encodeURIComponent(path)}`, { method, headers }));
 
 test("nix-cache-info needs no registry", async () => {
   const log: Logged[] = [];
@@ -101,6 +123,40 @@ test("SHA256SUMS.gpg comes back byte for byte", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/pgp-signature");
   assert.deepEqual(new Uint8Array(await response.arrayBuffer()), SIGNATURE);
+});
+
+test("the flasher gets a GSI file one range at a time, readable from any origin", async () => {
+  const log: Logged[] = [];
+  const h = handler(core, env, registry(log));
+  const part = await get(h, "flasher/nightly/aarch64/losos-desktop_1_gsi-userdata.simg.gz", "GET", {
+    range: "bytes=4-9",
+  });
+  assert.equal(part.status, 206);
+  assert.equal(await part.text(), "456789");
+  assert.equal(part.headers.get("content-range"), "bytes 4-9/16");
+  assert.equal(part.headers.get("access-control-allow-origin"), "*");
+  assert.match(part.headers.get("access-control-expose-headers") || "", /content-range/);
+  // Streamed, so the proxy followed GHCR's redirect itself.
+  assert.notEqual(log.at(-1)?.init.redirect, "manual");
+  const sums = await get(h, "flasher/nightly/aarch64/SHA256SUMS");
+  assert.equal(sums.headers.get("access-control-allow-origin"), "*");
+  // The PC's files are sysupdate's, and stay under /updates/.
+  assert.equal((await get(h, "flasher/nightly/aarch64/losos-desktop_1_aarch64.efi")).status, 404);
+});
+
+test("a browser's preflight is answered without the registry", async () => {
+  const log: Logged[] = [];
+  const response = await get(handler(core, env, registry(log)), "flasher/nightly/aarch64/SHA256SUMS", "OPTIONS");
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get("access-control-allow-headers"), "range");
+  assert.equal(log.length, 0);
+});
+
+test("a ping does not invite other pages to read its answer", async () => {
+  const response = await handler(core, env, registry())(
+    new Request("https://cache.example/api/proxy?path=ping", { method: "POST", body: "x" }),
+  );
+  assert.equal(response.headers.get("access-control-allow-origin"), null);
 });
 
 test("a build cache part is redirected, and the part after the last is a 404", async () => {
