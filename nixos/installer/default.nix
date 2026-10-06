@@ -12,12 +12,16 @@
   lib,
   pkgs,
   modulesPath,
+  utils,
   losos,
   ...
 }:
 
 let
   systemd = config.systemd.package;
+
+  # Where a release disk is mounted, when one is attached.
+  releaseDisk = "/run/losos/release";
 
   # systemd-sysupdate is a libexec program, not one on PATH.
   sysupdateBin = pkgs.linkFarm "systemd-sysupdate-bin" [
@@ -152,6 +156,27 @@ in
     source = losos.pubring;
   };
 
+  # A release disk: any filesystem labelled LOSOS-RELEASE holding a release's
+  # files (SHA256SUMS, SHA256SUMS.gpg and what they list), which the installer
+  # then installs from instead of the channel. It is for a machine that cannot
+  # reach the channel, such as a VM behind a network that re-signs TLS with
+  # its own authority. udev starts the mount when such a disk appears, at boot
+  # or plugged in later, so a boot without one waits for nothing. A boot-time
+  # mount with a device timeout gave up before udev had named a disk that was
+  # there all along, and x-systemd.wanted-by= in fstab is not acted on for a
+  # device unit.
+  systemd.mounts = [
+    {
+      what = "/dev/disk/by-label/LOSOS-RELEASE";
+      where = releaseDisk;
+      type = "auto";
+      options = "ro";
+    }
+  ];
+  services.udev.extraRules = ''
+    SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="LOSOS-RELEASE", ENV{SYSTEMD_WANTS}+="${utils.escapeSystemdPath releaseDisk}.mount"
+  '';
+
   systemd.services.losos-installer = {
     description = "LosOS Desktop installer";
     wantedBy = [ "multi-user.target" ];
@@ -170,7 +195,8 @@ in
       pkgs.dosfstools
       pkgs.mtools
     ]
-    # systemd-pull checks SHA256SUMS.gpg with gpg itself.
+    # systemd-pull checks SHA256SUMS.gpg with gpg itself, and the installer
+    # does the same for a release disk.
     ++ lib.optional (losos.pubring != null) pkgs.gnupg;
 
     environment.TERM = "linux";
@@ -190,6 +216,8 @@ in
         "/run/losos-installer"
         "--source"
         losos.baseUrl
+        "--local-source"
+        releaseDisk
       ];
       StandardInput = "tty";
       StandardOutput = "tty";

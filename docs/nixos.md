@@ -396,8 +396,9 @@ disks, leaving out the one the ISO booted from, and asks for `erase` to be
 typed before it touches the one chosen. Then:
 
 1. `systemd-repart --empty=force` lays out the ESP, with systemd-boot and
-   `loader.conf` copied in, and slot A at full size, labelled `_empty`. These
-   are `disk.nix`'s own definitions, so the disk is laid out the way the
+   `loader.conf` copied in, and both `/usr` slots at full size, labelled
+   `_empty` (sysupdate refuses a disk with only one). These are `disk.nix`'s
+   own definitions, so the disk is laid out the way the
    installed system expects to find it.
 2. `systemd-sysupdate update` fills them with the channel's newest release,
    from the same URL and through the same transfers as `update.nix`, aimed at
@@ -405,7 +406,7 @@ typed before it touches the one chosen. Then:
    `/run/losos-installer`. With `losos.update.pubring` set, the installer
    checks `SHA256SUMS.gpg` against it as an update does.
 3. The machine reboots into the installed system, whose first boot creates
-   slot B, root, `/home` and swap from `disk.nix`, the path an image written
+   root, `/home` and swap from `disk.nix`, the path an image written
    with `dd` takes.
 
 So an install is an update into an empty slot: what lands on the disk is
@@ -415,6 +416,19 @@ UKI that booted it into a tmpfs root and copied its own `/usr` with
 `CopyBlocks=`; that is gone, and so is the `losos.install` condition it
 needed in `disk.nix`. When nixpkgs reaches v261, the installer should be
 measured against `systemd-sysinstall` again.
+
+A machine that cannot reach the channel installs from a release disk
+instead: any filesystem labelled `LOSOS-RELEASE` holding a release's
+`SHA256SUMS`, `SHA256SUMS.gpg` and the `/usr`, verity and UKI files they
+list. udev mounts it at `/run/losos/release` whenever it appears, and the
+installer then turns the transfers' sources into local files. sysupdate
+verifies signatures only on downloads, so the installer checks the release
+first: `SHA256SUMS` against the signing key with `gpg`, as `systemd-pull`
+does, then every file on the disk against its line there, refusing a file
+not listed. The case it exists for is a VM in a network that re-signs TLS
+with its own authority, where the channel's certificate never verifies; with
+the disk attached the installer does not need the network at all, and Tab
+moves on from the Network screen offline.
 
 ## Releases and GHCR
 

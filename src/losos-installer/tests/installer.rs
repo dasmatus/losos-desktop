@@ -375,8 +375,13 @@ fn transfers_name_the_chosen_disk() {
     // A stale file from an earlier attempt must not survive into this one.
     dir.write("out/10-old.transfer", "stale\n");
 
-    install::render_transfers(&dir.0.join("templates"), &dir.0.join("out"), "/dev/nvme0n1")
-        .unwrap();
+    install::render_transfers(
+        &dir.0.join("templates"),
+        &dir.0.join("out"),
+        "/dev/nvme0n1",
+        None,
+    )
+    .unwrap();
     let mut names: Vec<_> = fs::read_dir(dir.0.join("out"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -388,6 +393,69 @@ fn transfers_name_the_chosen_disk() {
         "[Target]\nType=partition\nPath=/dev/nvme0n1\n"
     );
     assert!(
-        install::render_transfers(&dir.0.join("out/none"), &dir.0.join("o2"), "/dev/sda").is_err()
+        install::render_transfers(&dir.0.join("out/none"), &dir.0.join("o2"), "/dev/sda", None)
+            .is_err()
     );
+}
+
+#[test]
+fn a_release_disk_replaces_only_the_source() {
+    let dir = Scratch::new("local");
+    dir.write(
+        "templates/20-usr.transfer",
+        "[Transfer]\nVerify=true\n\n[Source]\nMatchPattern=losos_@v.raw.xz\n\
+         Path=https://proxy.example/updates/nightly/x86_64/\nType=url-file\n\n\
+         [Target]\nPath=@TARGET@\nType=partition\n",
+    );
+    let release = dir.0.join("release");
+    install::render_transfers(
+        &dir.0.join("templates"),
+        &dir.0.join("out"),
+        "/dev/vda",
+        Some(install::Local {
+            url: "https://proxy.example/updates/nightly/x86_64/",
+            dir: &release,
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(dir.0.join("out/20-usr.transfer")).unwrap(),
+        format!(
+            "[Transfer]\nVerify=true\n\n[Source]\nMatchPattern=losos_@v.raw.xz\n\
+             Path={}\nType=regular-file\n\n[Target]\nPath=/dev/vda\nType=partition\n",
+            release.display()
+        )
+    );
+}
+
+#[test]
+fn sums_parse_in_both_forms() {
+    let a = "a".repeat(64);
+    let b = "b".repeat(64);
+    let text = format!("{a}  one.raw.xz\n{b} *two.efi\nnot a line\n");
+    assert_eq!(
+        install::parse_sums(&text),
+        [(a, "one.raw.xz".to_owned()), (b, "two.efi".to_owned())]
+    );
+}
+
+#[test]
+fn a_release_is_checked_file_by_file() {
+    let dir = Scratch::new("verify");
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let pubring = dir.0.join("no-such-pubring.gpg");
+    // sha256("hello\n")
+    let hello = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
+    dir.write("release/one.efi", "hello\n");
+    dir.write("release/SHA256SUMS", &format!("{hello}  one.efi\n"));
+    assert!(install::has_release(&dir.0.join("release")));
+    install::verify_release(&dir.0.join("release"), &pubring, &dir.0, &tx).unwrap();
+
+    dir.write("release/one.efi", "tampered\n");
+    assert!(install::verify_release(&dir.0.join("release"), &pubring, &dir.0, &tx).is_err());
+
+    dir.write("release/one.efi", "hello\n");
+    dir.write("release/extra.efi", "hello\n");
+    assert!(install::verify_release(&dir.0.join("release"), &pubring, &dir.0, &tx).is_err());
+    assert!(!install::has_release(&dir.0.join("templates")));
 }

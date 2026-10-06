@@ -31,7 +31,7 @@ use losos_installer::network;
 use losos_installer::wpa::{self, Control, Network};
 
 const USAGE: &str = "usage: losos-installer --repart-definitions DIR --sysupdate-definitions DIR \
-[--esp DIR] [--medium DIR] [--work DIR] [--source URL]";
+[--esp DIR] [--medium DIR] [--work DIR] [--source URL] [--local-source DIR]";
 
 /// How long a scan is given before its results are final. Results are shown
 /// as they arrive; this only decides when the screen stops saying "scanning".
@@ -50,9 +50,17 @@ struct Args {
     medium: String,
     work: PathBuf,
     source: Option<String>,
+    local_source: Option<PathBuf>,
 }
 
 impl Args {
+    /// Whether a release disk is mounted where `--local-source` says.
+    fn has_release(&self) -> bool {
+        self.local_source
+            .as_deref()
+            .is_some_and(install::has_release)
+    }
+
     fn parse() -> Result<Self, String> {
         let mut args = std::env::args().skip(1);
         let mut repart = None;
@@ -64,6 +72,7 @@ impl Args {
             medium: "/iso".into(),
             work: PathBuf::from("/run/losos-installer"),
             source: None,
+            local_source: None,
         };
         while let Some(flag) = args.next() {
             let value = args
@@ -76,6 +85,7 @@ impl Args {
                 "--medium" => parsed.medium = value,
                 "--work" => parsed.work = PathBuf::from(value),
                 "--source" => parsed.source = Some(value),
+                "--local-source" => parsed.local_source = Some(PathBuf::from(value)),
                 _ => return Err(format!("unknown argument {flag}\n{USAGE}")),
             }
         }
@@ -214,18 +224,27 @@ struct Disks {
     disks: Vec<Disk>,
     list: ListState,
     medium: Option<String>,
+    release: Option<String>,
 }
 
 impl Disks {
     fn load(args: &Args) -> Self {
         let sys = Path::new("/sys");
-        let medium = std::fs::read_to_string("/proc/self/mountinfo")
-            .ok()
-            .and_then(|info| disks::backing_disk(&info, sys, &args.medium));
+        let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+        let medium = disks::backing_disk(&info, sys, &args.medium);
+        // The release disk is being read from, so it is no more a place to
+        // install onto than the installer's own medium is.
+        let release = args
+            .local_source
+            .as_deref()
+            .and_then(|dir| disks::backing_disk(&info, sys, &dir.to_string_lossy()));
+        let mut found = disks::list(sys, medium.as_deref());
+        found.retain(|disk| Some(&disk.name) != release.as_ref());
         Disks {
-            disks: disks::list(sys, medium.as_deref()),
+            disks: found,
             list: ListState::default().with_selected(Some(0)),
             medium,
+            release,
         }
     }
 }
@@ -341,14 +360,25 @@ impl App {
         .areas(frame.area());
 
         let status = if self.online { "online" } else { "offline" };
+        // Looked for on every frame: the disk is mounted whenever it is
+        // plugged in, and one stat of a directory costs nothing.
+        let local = self
+            .args
+            .local_source
+            .as_deref()
+            .filter(|_| self.args.has_release());
         let lines = vec![
             Line::styled(
                 "LosOS Desktop installer",
                 Style::new().add_modifier(Modifier::BOLD),
             ),
-            Line::raw(match &self.args.source {
-                Some(source) => format!("Network: {status}    Installing from: {source}"),
-                None => format!("Network: {status}"),
+            Line::raw(match (&self.args.source, local) {
+                (_, Some(dir)) => format!(
+                    "Network: {status}    Installing from: {} (release disk)",
+                    dir.display()
+                ),
+                (Some(source), None) => format!("Network: {status}    Installing from: {source}"),
+                (None, None) => format!("Network: {status}"),
             }),
         ];
         frame.render_widget(Paragraph::new(lines), header);
@@ -405,7 +435,11 @@ fn network_key(wifi: &mut Wifi, key: KeyEvent, online: bool, args: &Args) -> Opt
             move_selection(&mut wifi.list, wifi.networks.len(), key.code)
         }
         KeyCode::Char('r') => wifi.scan(),
-        KeyCode::Tab if online => return Some(Screen::Disks(Disks::load(args))),
+        // A release disk is everything an install needs, so with one there
+        // is no need to be online first.
+        KeyCode::Tab if online || args.has_release() => {
+            return Some(Screen::Disks(Disks::load(args)));
+        }
         KeyCode::Enter => {
             let network = wifi
                 .list
@@ -483,6 +517,8 @@ fn start(disk: Disk, args: &Args) -> Screen {
         sysupdate_templates: args.sysupdate_templates.clone(),
         esp: args.esp.clone(),
         work: args.work.clone(),
+        source: args.source.clone(),
+        local: args.local_source.clone(),
     };
     let (sender, events) = mpsc::channel();
     thread::spawn(move || install::run(&plan, &sender));
@@ -606,7 +642,7 @@ fn draw_network(
 
 fn draw_disks(frame: &mut Frame, area: Rect, choice: &mut Disks) -> &'static str {
     let [top, list_area] =
-        Layout::vertical([Constraint::Length(4), Constraint::Min(3)]).areas(area);
+        Layout::vertical([Constraint::Length(5), Constraint::Min(3)]).areas(area);
     let mut lines = vec![Line::raw(
         "Pick the disk to install onto. Everything on it will be erased.",
     )];
@@ -616,6 +652,11 @@ fn draw_disks(frame: &mut Frame, area: Rect, choice: &mut Disks) -> &'static str
     if let Some(medium) = &choice.medium {
         lines.push(Line::raw(format!(
             "The installer's own medium, {medium}, is not listed."
+        )));
+    }
+    if let Some(release) = &choice.release {
+        lines.push(Line::raw(format!(
+            "The release disk, {release}, is not listed."
         )));
     }
     frame.render_widget(
