@@ -2,14 +2,13 @@
 # Smithay compositor, with its core apps (Files, Settings, Text Editor, System
 # Monitor, Calculator) built into the same binary.
 #
-# Pinned to a commit and moved by hand, like pm, because both derisk and the
+# Pinned by the components/derisk submodule and moved by hand, like pm, because both derisk and the
 # mcsapi it builds against are moving fast. mcsapi comes in through
 # Cargo.lock's git entries, which the cargo vendor step fetches and cargoHash
 # covers.
 {
   lib,
   rustPlatform,
-  fetchgit,
   pkg-config,
   libxkbcommon,
   wayland,
@@ -30,20 +29,12 @@ rustPlatform.buildRustPackage {
   pname = "derisk";
   version = "0.1.0-unstable-2026-10-05";
 
-  # fetchgit rather than fetchFromGitHub: a git clone reaches github.com from
-  # hosts that cannot use its archive endpoint.
-  src = fetchgit {
-    url = "https://github.com/dasmatus/derisk";
-    # derisk main: #22 (the xdg-desktop-portal backend), #23, #24, #21
-    # (icons from the set icon theme, Papirus by default), #31 and #33
-    # (the hardened-malloc feature, which allocator.nix turns on), #32
-    # (text fields in GTK and Qt apps open the on-screen keyboard, over
-    # text-input-v3), #34 (the browser and search engine choice screens,
-    # which turn on from the policy file losos-ping writes) and #35 (a menu
-    # item picked in the palette reaches the app that registered it, which
-    # Uranium's tabs menus need).
-    rev = "39b2b2c3e76873dfe94b668c4cf61421330b55b8";
-    hash = "sha256-QH3+URPyZsLD4YN07CQD8brdoSi4/TAzxdTj0xSYmm4=";
+  # The components/derisk submodule, at the commit this tree records for it
+  # (flake.nix, `self.submodules`). cleanSource drops the submodule's .git
+  # file, so the source hash covers only the tree.
+  src = lib.cleanSourceWith {
+    name = "derisk-source";
+    src = lib.cleanSource ../../components/derisk;
   };
 
   cargoHash = "sha256-cPxWZOQV2dMTKMABxiBsdjYySO96iptzvTsdTHFQ6/w=";
