@@ -40,9 +40,10 @@ Everything the flake builds from, besides this repository:
   prebuilt compilers; it is not source-only. Each copied flat or NAR output is
   checked against its derivation's hash, and outputs using other hash methods
   are rejected.
-- **pm**, cloned from `github.com/dichhead/pm` at a pinned commit and hash
-  (`nixos/pkgs/pm.nix`), and **crates.io**, for its, losos-security's and
-  losos-installer's dependencies, each pinned by `Cargo.lock` and checked by hash.
+- **pm**, the `components/pm` submodule (`github.com/losos-project/pm`) at the
+  commit this tree records (`nixos/pkgs/pm.nix`), and **crates.io**, for its,
+  losos-security's and losos-installer's dependencies, each pinned by
+  `Cargo.lock` and checked by hash.
 - **Purism's adaptive GTK patches**, copied into
   `nixos/pkgs/patches/gtk3` and `gtk4` from PureOS's packaging
   (source.puri.sm, `Librem5/debs/gtk4` and `sebastian.krzyszkowiak/gtk`,
@@ -52,10 +53,29 @@ Everything the flake builds from, besides this repository:
   source. It is prebuilt by the hardware vendors, and nothing can compile it.
   `hardware.nix` ships it because amdgpu and nouveau cannot start current
   GPUs without it.
-- **derisk**, cloned from `github.com/dasmatus/derisk` at a pinned commit and
-  hash (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned
-  by its `Cargo.lock` and `cargoHash`. It is the desktop, the display manager
-  and the portal backend.
+- **derisk**, the `components/derisk` submodule
+  (`github.com/losos-project/derisk`) at the commit this tree records
+  (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned by its
+  `Cargo.lock` and `cargoHash`. It is the desktop, the display manager and the
+  portal backend. The `components/mcsapi` submodule is the same mcsapi commit,
+  and builds `x2mcsapi`.
+
+### The components/ submodules
+
+derisk, mcsapi and pm are git submodules under `components/`, and the flake
+builds them from there (`self.submodules = true` in `flake.nix`, which Nix 2.27
+and later honour). The commit recorded for each submodule is the pin: a clone
+needs `git clone --recurse-submodules` (or `git submodule update --init`), and
+`git -C components/<name> log` shows exactly what the image builds. Moving one
+is `git -C components/<name> checkout <rev>`, a commit here, and a new
+`cargoHash` in its `nixos/pkgs/*.nix` when its `Cargo.lock` changed. There is
+no source hash to update: the submodule commit already names the tree.
+derisk's own `Cargo.lock` still fetches mcsapi by git revision, so move
+`components/mcsapi` to the revision that lock names.
+
+android_translation_layer stays a `fetchgit` pin: it is an upstream fork, off
+by default, and its tree is close to half a gigabyte, which the flake would
+otherwise copy on every evaluation.
 - **Flathub**, for apps installed after the fact. Its repo file, with the
   signing key every install is checked against, is
   `nixos/modules/flathub.flatpakrepo` in this tree; the image adds the remote
@@ -350,7 +370,7 @@ That buys two things the pm tree wrote down as limits:
 | `tools/configure --version --channel` | `losos.version`, `losos.channel` | the flake derives the version from the commit date |
 | `tools/vm-test` | `nixos/tests/boot.nix` | boots the real image under UEFI |
 | `tools/` gates, `Containerfile`, `./do` | `nix flake check`, `nix fmt` | the gates checked generated recipes against pm's fingerprint table, and neither exists now |
-| pm, the system manager | pm, the system manager (`pm.nix`) | pinned to a commit |
+| pm, the system manager | pm, the system manager (`pm.nix`) | the `components/pm` submodule |
 
 ## Everything systemd, and the exceptions
 

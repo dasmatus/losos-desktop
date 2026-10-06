@@ -136,8 +136,9 @@ jobs:
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
+      # submodules: the flake builds derisk, mcsapi and pm from components/.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: { persist-credentials: false, submodules: true }
       - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
 
       # The previous round's cache, if there is one, through the proxy where
@@ -303,8 +304,9 @@ jobs:
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
+      # submodules: the flake builds derisk, mcsapi and pm from components/.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: { persist-credentials: false, submodules: true }
 
       # The launcher, extensions, policies and static helpers come from the
       # same Nix expressions as the image's Uranium, so the two stay alike.
