@@ -140,10 +140,13 @@ jobs:
         with: { persist-credentials: false }
       - uses: oras-project/setup-oras@005458ad77f1c8facd38a094e4af2e69e5607ff4 # v2.0.2
 
-      # The previous round's cache, if there is one. It is split into
-      # parts because GHCR refuses a layer over 10 GB. ccache keys every
-      # object by its preprocessed input and compiler, so a cache from an
-      # older Chromium only misses; it never returns a wrong object.
+      # The previous round's cache, if there is one, through the proxy where
+      # it serves it (/build-cache/uranium/). It is split into parts because
+      # GHCR refuses a layer over 10 GB, and holds Chromium's ThinLTO cache
+      # as well (uranium.nix). ccache keys every object by its preprocessed
+      # input and compiler, and lld every ThinLTO module by its bitcode and
+      # imports, so a cache from an older Chromium only misses; it never
+      # returns a wrong object.
       - name: Restore the compiler cache
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -151,16 +154,7 @@ jobs:
           trap 'oras logout ghcr.io || true' EXIT
           printf '%s' "$GHCR_TOKEN" \
             | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          if ! oras manifest fetch "${CCACHE_REF,,}" > /dev/null 2>&1; then
-            echo "No compiler cache yet; this round starts cold."
-            exit 0
-          fi
-          oras pull "${CCACHE_REF,,}" --output "$RUNNER_TEMP/ccache"
-          cat "$RUNNER_TEMP"/ccache/ccache.tar.zst.part-* \
-            | sudo tar --zstd -x -C "$CCACHE_HOST_DIR"
-          rm -rf "$RUNNER_TEMP/ccache"
-          sudo chmod -R a+rwX "$CCACHE_HOST_DIR"
-          du -sh "$CCACHE_HOST_DIR"
+          tools/build-cache-fetch uranium ${{ matrix.arch }} "$CCACHE_HOST_DIR" "$CCACHE_REF"
 
       - name: Fetch fixed-output inputs
         run: tools/nix-fetch-sources .#uranium-patched
