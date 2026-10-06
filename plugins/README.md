@@ -101,7 +101,7 @@ building an image outside mkosi's own bookkeeping.
 ## `losos-nix` — classify-command, and symbols
 
 pm is the system manager on the NixOS build of this OS as well
-(`docs/nixos.md`), so pm is also what drives the flake — and `nix` is not in
+(`docs/pm.md`), so pm is also what drives the flake — and `nix` is not in
 its fingerprint table. This names the commands that read or build a flake:
 
 ```
@@ -145,7 +145,7 @@ pm build only through a pin. `nixpkgs#hello`, `flake:nixpkgs`,
 `<nixpkgs>` lookup path all resolve to whatever is newest. A path, a commit,
 and `--file` are classified. This flake's `.#pm-payloads.<name>` is the way in:
 any nixpkgs package at the pinned revision, statically linked from `pkgsStatic`,
-laid out as a pm package's `/dest` (`docs/nixos.md`, "nixpkgs in a pm build").
+laid out as a pm package's `/dest` (`docs/pm.md`, "nixpkgs in a pm build").
 
 Its symbols are the paths NixOS fixes — `store`, `current-system`,
 `booted-system`, `system-bin` — for a package that installs something referring
@@ -221,7 +221,7 @@ seven, unsigned, in `/run/current-system/sw/share/pm/plugins`
 (`nixos/pkgs/pm-plugins.nix`).
 
 pm loads plugins only from `~/.config/pm/plugins`, and only ones signed by a
-key that user trusts; `docs/nixos.md`, "pm's plugins", has the two commands.
+key that user trusts; `docs/pm.md`, "pm's plugins", has the two commands.
 Without that pm loads no plugins at all, and a build file calling `mkosi` is
 refused with "no built-in fingerprint matches", which reads as a problem with
 the build file rather than with a component that was never installed.
