@@ -1,0 +1,118 @@
+# Publish docs/ twice: as the Docusaurus site in website/ on GitHub Pages, and
+# as the repository's GitHub wiki. docs/ is the only copy of the text; both are
+# generated from it on every push to main that changes it, and a pull request
+# builds both to prove they still build, publishing neither.
+#
+# It shares nothing with ci.yml: no Nix, no runner time taken from the image
+# build, and a failure here never holds up a release.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths: [docs/**, website/**, .github/workflows/docs.yml]
+  pull_request:
+    paths: [docs/**, website/**, .github/workflows/docs.yml]
+  workflow_dispatch:
+
+# Read-only by default, because a pull request's run executes branch code. The
+# jobs that publish ask for what they need themselves.
+#
+# Every action is pinned to a commit, with its tag beside it, as in ci.yml.
+permissions:
+  contents: read
+
+# One publish at a time, and a newer one wins: an older site or wiki has
+# nothing a newer one lacks. Pull request runs cancel their predecessors too.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Publishing happens only from the default branch, read from the
+      # repository rather than named here.
+      PUBLISH: ${{ github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The Node version comes from website/package.json's engines field.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: website/package.json
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      # The site's URL and base path, as Pages will serve it: the project path
+      # under the owner's github.io, or a custom domain's root if one is set.
+      # It fails when Pages is not set to deploy from GitHub Actions, which is
+      # the one setting this workflow cannot change for itself.
+      - id: pages
+        if: env.PUBLISH == 'true'
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - run: npm ci
+        working-directory: website
+      # Docusaurus fails the build on a link to a page or file that is not
+      # there, so a page renamed in docs/ without its links breaks here.
+      - run: npm run build
+        working-directory: website
+        env:
+          DOCS_URL: ${{ steps.pages.outputs.origin }}
+          DOCS_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          DOCS_EDIT_BRANCH: ${{ github.event.repository.default_branch }}
+      # The wiki pages are generated here too, so a pull request finds a page
+      # missing from the sidebar or a link to nothing before main does.
+      - run: node website/wiki.js "$RUNNER_TEMP/wiki"
+      - if: env.PUBLISH == 'true'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: website/build
+
+  pages:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+  wiki:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    # The wiki is a git repository of its own beside this one, and the job's
+    # token writes to it with the same permission it would need to push here.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Push docs/ to the wiki
+        env:
+          TOKEN: ${{ github.token }}
+          WIKI_SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}/tree/${{ github.sha }}/docs
+        run: |
+          wiki="$RUNNER_TEMP/wiki"
+          host="${GITHUB_SERVER_URL#https://}"
+          # GitHub creates a wiki's git repository only when its first page is
+          # saved in the web interface; until then there is nothing to clone.
+          if ! git clone --depth 1 "https://x-access-token:$TOKEN@$host/$GITHUB_REPOSITORY.wiki.git" "$wiki"; then
+            echo "::error::No wiki to push to. Turn on Settings > General > Features > Wikis and save any first page in the wiki; the next run replaces it."
+            exit 1
+          fi
+          node website/wiki.js "$wiki"
+          cd "$wiki"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "The wiki already matches docs/."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "Generated from $GITHUB_REPOSITORY@$GITHUB_SHA"
+          git push -q origin HEAD

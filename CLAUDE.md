@@ -11,12 +11,15 @@ stock glibc packages.
 provides stock packages, normally substituted from cache.nixos.org.
 [`pm`](https://github.com/losos-project/pm) ships in the image as the system
 manager. derisk, mcsapi and pm are git submodules under `components/`, and
-their recorded commits are the pins (`docs/nixos.md`, "The components/
+their recorded commits are the pins (`docs/trust.md`, "The components/
 submodules"); clone with `--recurse-submodules`.
 
-`README.md` says what the OS is. `docs/nixos.md` says how each piece is built,
-which outside inputs the build trusts, and what is not done. Read it before
-changing anything in `nixos/`.
+`README.md` points at the documentation. `docs/` is the documentation, one
+page per subject: how each piece is built, which outside inputs the build
+trusts (`docs/trust.md`), and what is not done (`docs/not-done.md`). Read the
+pages a change touches before changing anything in `nixos/`. `docs/nixos.md`
+was once all of it in one file; comments still cite its section names, and
+it now maps each one to its page.
 
 ## Build & develop
 
@@ -47,7 +50,7 @@ still takes time, so don't start one to check a module edit.
   adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
 - `nixos/halium/` is the Halium target: `base.nix` plus an Android boot image,
   a loop-mounted `rootfs.img` on userdata, and the vendor HALs in an LXC
-  container. `docs/nixos.md`, "Halium", says what a device port supplies.
+  container. `docs/halium.md` says what a device port supplies.
 - `nixos/installer/` is the installer ISO's live system: networkd,
   `wpa_supplicant` and `derisk installer` on tty1, with `losos-installer
   serve` as its backend. `modules/installer.nix`
@@ -57,7 +60,7 @@ still takes time, so don't start one to check a module edit.
   payload builder, and Halium's `libhybris` and `android-headers`.
   It also replaces `gtk3`, `gtk4` and Qt 6's `qtbase` with builds carrying
   `patches/gtk3`, `patches/gtk4` and `patches/qtbase`, which make their apps
-  fit a phone (`docs/nixos.md`, "GTK and Qt on a phone"); those and their
+  fit a phone (`docs/gtk-qt-phone.md`); those and their
   dependents rebuild in CI instead of substituting. `patches/` also holds
   the two gnome-control-center patches, which target 51.0 and nothing
   applies.
@@ -71,8 +74,11 @@ still takes time, so don't start one to check a module edit.
   fingerprint matched it.
 - `proxy/` is a Vercel edge function with its logic in Rust compiled to
   WebAssembly. It serves the Nix binary cache and sysupdate's files from GHCR,
-  and counts active users (`/ping`, `docs/nixos.md`, "Active users and the
-  choice screens").
+  and counts active users (`/ping`, `docs/choice-screens.md`).
+- `website/` is the Docusaurus site that publishes `docs/` on GitHub Pages;
+  `website/wiki.js` writes the same pages for the GitHub wiki. A new page in
+  `docs/` goes in `website/sidebars.js` too, or both fail. Pages link each
+  other as `page.md`, which GitHub, Docusaurus and the wiki all follow.
 - `tools/nix-cache-push` pushes built store paths into that cache.
 - `tools/nix-fetch-sources` preloads fixed-output inputs in CI; copied outputs
   are hash-checked and can include bootstrap tools as well as source archives.
@@ -101,15 +107,14 @@ gates that re-implemented pm's fingerprint table. nixpkgs builds every one of
 those packages and the flake already wired them together, so the second build
 was two of everything to maintain. It did one thing nixpkgs doesn't: it
 compiled the whole tree with cross-DSO CFI and ThinLTO. That went with it, and
-`docs/nixos.md` says so. The history before the removal has all of it,
+`docs/index.md` says so. The history before the removal has all of it,
 including `docs/pm-constraints.md` and the C1 to C11 constraints its comments
 cited.
 
 ## CI
 
 `.github/workflows/ci.yml` is the main workflow; `uranium.yml` compiles
-the patched browser in rounds and publishes its Flatpak (`docs/nixos.md`,
-"Uranium"). `prebuild` builds every
+the patched browser in rounds and publishes its Flatpak (`docs/uranium.md`). `prebuild` builds every
 package the release needs (the patched GTK and Qt, what links them, and this
 repository's programs) for each architecture first. Nothing lists them:
 `tools/nix-prebuild-plan` keeps the derivations that do not change when
@@ -127,7 +132,8 @@ it checks out no code. `publish` replaces the `nightly` GitHub release with
 the installer ISOs and moves the `images:nightly-<arch>` tag that `proxy/`
 serves updates from.
 `proxy` tests the proxy and deploys nothing. `ci` is the check branch
-protection reads.
+protection reads. `docs.yml` builds the site and the wiki pages on a pull
+request, and from main deploys the site to Pages and pushes the wiki.
 
 ## Conventions
 
