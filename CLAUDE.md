@@ -42,14 +42,15 @@ still takes time, so don't start one to check a module edit.
 ## Layout
 
 - `nixos/modules/` has one file per concern: `boot`, `disk`, `update`,
-  `accounts`, `desktop`, `services`, `hardware`, `installer`, `pm` and
+  `accounts`, `setup`, `desktop`, `services`, `hardware`, `installer`, `pm` and
   a few more. `base.nix` imports what every target shares; `default.nix`
   adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
 - `nixos/halium/` is the Halium target: `base.nix` plus an Android boot image,
   a loop-mounted `rootfs.img` on userdata, and the vendor HALs in an LXC
   container. `docs/nixos.md`, "Halium", says what a device port supplies.
 - `nixos/installer/` is the installer ISO's live system: networkd,
-  `wpa_supplicant` and `losos-installer` on tty1. `modules/installer.nix`
+  `wpa_supplicant` and `derisk installer` on tty1, with `losos-installer
+  serve` as its backend. `modules/installer.nix`
   evaluates it with the OS's own repart definitions and sysupdate transfers.
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
   plugins, `losos-installer`, `losos-security`, `losos-swap`, the pm
