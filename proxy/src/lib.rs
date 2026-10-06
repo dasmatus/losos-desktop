@@ -20,6 +20,12 @@
 //!   a registry the index names. The proxy builds the index from the images'
 //!   labels and is that registry too, for exactly those images' manifests
 //!   and blobs, so a Flatpak install never meets GHCR's token exchange.
+//! * **The web flasher's downloads.** The flasher (`website/static/flasher/`)
+//!   is a page on another origin, and a browser reads a cross-origin
+//!   response only when it says `Access-Control-Allow-Origin`, which GHCR's
+//!   storage does not. `/flasher/<channel>/<arch>/<file>` serves the GSI's
+//!   files of the same release as `/updates/` does, streamed through the
+//!   proxy one byte range at a time instead of redirected, and only those.
 //! * **CI's build caches.** CI keeps its compiler caches in GHCR as
 //!   artifacts split into parts, `losos-ccache:<arch>` for the overlay's
 //!   patched GTK and Qt and `uranium-ccache:<arch>` for Uranium's Chromium
@@ -123,6 +129,11 @@ pub enum Kind {
     /// Redirected to GHCR's signed blob URL, so a NAR or a disk image is never
     /// streamed through the proxy.
     Redirect,
+    /// Fetched and streamed through, honouring a byte range, for a browser
+    /// that cannot follow a redirect to storage without CORS headers. Each
+    /// request is one range the flasher asks for, so none outlasts the
+    /// function's time limit.
+    Stream,
     /// Fetched and passed through byte for byte, for a small file whose client
     /// may not follow a redirect off the host it was pointed at. Bytes rather
     /// than text because `SHA256SUMS.gpg` is a binary OpenPGP signature, which
@@ -222,6 +233,27 @@ pub fn route(path: &str) -> Route {
                 kind,
             }
         }
+        ["flasher", channel, arch, file] => {
+            // The GSI's files and the manifest that hashes them; the rest of
+            // a release is for sysupdate and stays a redirect under /updates/.
+            if !is_channel(channel)
+                || !ARCHES.contains(arch)
+                || !is_release_file(file)
+                || !(*file == "SHA256SUMS" || file.contains("_gsi-"))
+            {
+                return Route::Missing("not a file the flasher writes");
+            }
+            Route::Layer {
+                repository: "images",
+                tag: format!("{channel}-{arch}"),
+                title: (*file).into(),
+                kind: if *file == "SHA256SUMS" {
+                    Kind::Inline
+                } else {
+                    Kind::Stream
+                },
+            }
+        }
         ["build-cache", name, arch, file] => {
             let Some((_, repository)) = BUILD_CACHES.iter().find(|(n, _)| n == name) else {
                 return Route::Missing("not a build cache");
@@ -280,6 +312,7 @@ pub fn plan(path: &str) -> String {
             let kind = match kind {
                 Kind::Narinfo => "narinfo",
                 Kind::Redirect => "redirect",
+                Kind::Stream => "stream",
                 Kind::Inline => "inline",
             };
             format!("layer {repository} {tag} {title} {kind}")
@@ -690,6 +723,26 @@ mod tests {
             plan("/updates/stable/aarch64/losos-desktop_1.2_aarch64.efi"),
             "layer images stable-aarch64 losos-desktop_1.2_aarch64.efi redirect"
         );
+    }
+
+    #[test]
+    fn the_flasher_streams_only_the_gsi_files() {
+        assert_eq!(
+            plan("/flasher/nightly/aarch64/SHA256SUMS"),
+            "layer images nightly-aarch64 SHA256SUMS inline"
+        );
+        assert_eq!(
+            plan("/flasher/nightly/aarch64/losos-desktop_1.2_gsi-userdata.simg.gz"),
+            "layer images nightly-aarch64 losos-desktop_1.2_gsi-userdata.simg.gz stream"
+        );
+        for path in [
+            "/flasher/nightly/aarch64/losos-desktop_1.2_aarch64.raw.xz",
+            "/flasher/nightly/aarch64/SHA256SUMS.gpg",
+            "/flasher/nightly/riscv64/losos-desktop_1.2_gsi-vbmeta.img",
+            "/flasher/nightly/aarch64/../x_gsi-vbmeta.img",
+        ] {
+            assert!(plan(path).starts_with("missing "), "{path}");
+        }
     }
 
     #[test]

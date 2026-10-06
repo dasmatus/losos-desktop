@@ -23,6 +23,11 @@ fetches. It serves these from this project's GHCR namespace:
   `<proxy>/updates/<channel>/<arch>/`, so sysupdate fetches manifests and
   images through the proxy. The GitHub nightly release is announcement-only:
   GitHub rejects release assets of 2 GiB or larger.
+- **The web flasher's files.** `/flasher/<channel>/<arch>/<file>` serves the
+  same release's `_gsi-` files and `SHA256SUMS`, streamed one byte range at a
+  time rather than redirected, because a page on another origin cannot read
+  GHCR's storage ([Web flasher](web-flasher.md)). Every read the proxy answers
+  says `Access-Control-Allow-Origin: *`.
 
 To use it for a build:
 
