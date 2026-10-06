@@ -4,7 +4,9 @@ A [derisk](https://github.com/losos-project/derisk) desktop operating system
 that uses systemd for everything it can and installs as an image. It is a
 NixOS configuration, `flake.nix` plus the modules in `nixos/`, on nixpkgs'
 stock glibc packages for `x86_64-linux` and `aarch64-linux`, and it also
-builds for [Halium](https://halium.org) phones and tablets.
+builds as one generic system image for Android phones and tablets over
+[Halium](https://halium.org), which the
+[web flasher](https://losos-project.github.io/losos-desktop/flasher/) installs.
 
 The documentation is on the
 [website](https://losos-project.github.io/losos-desktop/) and in the

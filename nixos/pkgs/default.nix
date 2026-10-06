@@ -60,22 +60,43 @@ let
         fi
       '';
     };
+  # What this overlay builds itself links with mold too, Rust and C alike:
+  # callWithMold hands a package nixpkgs' stdenv and a rustPlatform on it,
+  # both through useMoldLinker, so buildRustPackage's cc, which rustc links
+  # with, carries -fuse-ld=mold as GTK's does. Only the arguments a package
+  # asks for are passed, so a new one needs nothing beyond being called
+  # through here. Nothing else in nixpkgs is touched, so it all still
+  # substitutes from cache.nixos.org. Uranium is the exception, called
+  # plainly below: Chromium accepts ThinLTO, and so CFI, only with lld.
+  moldStdenv = final.stdenvAdapters.useMoldLinker final.stdenv;
+  callWithMold = final.lib.callPackageWith (
+    final
+    // {
+      stdenv = moldStdenv;
+      rustPlatform = final.makeRustPlatform {
+        inherit (final) rustc cargo;
+        stdenv = moldStdenv;
+      };
+    }
+  );
 in
 {
-  pm = final.callPackage ./pm.nix { };
-  pm-plugins = final.callPackage ./pm-plugins.nix { };
-  derisk = final.callPackage ./derisk.nix { };
-  losos-installer = final.callPackage ./losos-installer.nix { };
-  losos-security = final.callPackage ./losos-security.nix { };
-  losos-swap = final.callPackage ./losos-swap.nix { };
-  # Halium (nixos/modules/halium.nix): Android's HAL headers, and libhybris,
-  # which loads the vendor's bionic-linked GPU and HAL libraries into glibc
-  # processes.
-  android-headers = final.callPackage ./android-headers.nix { };
-  libhybris = final.callPackage ./libhybris.nix { };
+  pm = callWithMold ./pm.nix { };
+  pm-plugins = callWithMold ./pm-plugins.nix { };
+  derisk = callWithMold ./derisk.nix { };
+  losos-installer = callWithMold ./losos-installer.nix { };
+  losos-security = callWithMold ./losos-security.nix { };
+  losos-swap = callWithMold ./losos-swap.nix { };
+  # Halium (nixos/halium/): Android's HAL headers, libhybris, which loads
+  # the vendor's bionic-linked GPU and HAL libraries into glibc processes,
+  # and the generic Android system image that starts those HALs. That image
+  # is unpacked from Droidian's build, not linked, so it needs no mold.
+  android-headers = callWithMold ./android-headers.nix { };
+  libhybris = callWithMold ./libhybris.nix { };
+  halium-gsi = final.callPackage ./halium-gsi.nix { };
   # The Android Translation Layer (nixos/modules/atl.nix), which nixpkgs does
   # not carry either; only in the closure when losos.android.enable is set.
-  android-translation-layer = final.callPackage ./android-translation-layer.nix { };
+  android-translation-layer = callWithMold ./android-translation-layer.nix { };
   # Uranium (uranium.nix), the web browser. The default build wraps
   # nixpkgs' ungoogled-chromium as nixpkgs alone builds it: taken from this
   # package set, it would link the patched GTK below and need compiling,
@@ -101,7 +122,7 @@ in
     };
   uranium-patched = final.uranium.override { patched = true; };
   uranium-tabs = final.callPackage ./uranium-tabs.nix { };
-  x2mcsapi = final.callPackage ./x2mcsapi.nix { };
+  x2mcsapi = callWithMold ./x2mcsapi.nix { };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };
 

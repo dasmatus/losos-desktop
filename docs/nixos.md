@@ -23,8 +23,8 @@ section.
 | First-boot setup | [First-boot setup](first-boot.md) |
 | The installer | [The installer](installer.md) |
 | Releases and GHCR | [Releases and GHCR](releases.md) |
-| Halium | [Halium](halium.md) |
-| What a device port supplies | [Halium](halium.md#what-a-device-port-supplies) |
+| Halium | [Halium GSI](halium.md) |
+| What a device port supplies | [Halium GSI](halium.md#which-devices): there are no device ports any more |
 | GTK and Qt on a phone | [GTK and Qt on a phone](gtk-qt-phone.md) |
 | Uranium | [Uranium](uranium.md) |
 | Active users and the choice screens | [Active users and the choice screens](choice-screens.md) |
