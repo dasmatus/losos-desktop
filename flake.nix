@@ -40,10 +40,24 @@
     # here, plus a new cargoHash in nixos/pkgs when its Cargo.lock changed.
     # Nix 2.27 and later read this and fetch the submodules with the flake.
     self.submodules = true;
+
+    # Only for the check that builds the Home Manager module (nixos/home/pm.nix)
+    # into a real Home Manager generation. A user's own Home Manager is what
+    # imports the module, so nothing the image or a release builds reads this.
+    # git+https rather than github:, for the same api.github.com reason as
+    # nixpkgs above; shallow, because the history is not needed.
+    home-manager = {
+      url = "git+https://github.com/nix-community/home-manager?ref=master&shallow=1";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      home-manager,
+    }:
     let
       inherit (nixpkgs) lib;
 
@@ -126,6 +140,12 @@
       nixosModules.gsi = ./nixos/halium;
 
       overlays.default = import ./nixos/pkgs;
+
+      # pm with its plugins installed by the user's Home Manager
+      # (docs/pm.md, "pm's plugins"): `programs.pm.enable = true`.
+      # homeManagerModules is the older name Home Manager's docs still use.
+      homeModules.pm = import ./nixos/home/pm.nix { inherit self; };
+      homeManagerModules.pm = self.homeModules.pm;
 
       nixosConfigurations =
         lib.listToAttrs (
@@ -220,6 +240,9 @@
           # pins. Building uranium-patched would prove more, but takes longer
           # than CI's budget; this reads one source tarball.
           uranium-patches = self.packages.${system}.uranium.patchCheck;
+          home-manager-pm = import ./nixos/tests/home-manager-pm.nix {
+            inherit self home-manager pkgs;
+          };
         }
         // lib.optionalAttrs (system == "aarch64-linux") {
           # Every GSI module and assertion, libhybris's build, and the

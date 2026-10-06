@@ -37,6 +37,10 @@ Everything the flake builds from, besides this repository:
   `Cargo.lock` and `cargoHash`. It is the desktop, the display manager and the
   portal backend. The `components/mcsapi` submodule is the same mcsapi commit,
   and builds `x2mcsapi`.
+- **Home Manager**, `github.com/nix-community/home-manager`, pinned by
+  revision and `narHash` in `flake.lock`. Only `nix flake check` reads it, to
+  build `homeModules.pm` into a Home Manager generation
+  (`nixos/tests/home-manager-pm.nix`); the image and the release never do.
 - **Halium's generic system image** (`nixos/pkgs/halium-gsi.nix`), the
   Android 14 system the [Halium GSI](halium.md) runs the vendor's HALs
   under: UBports' build of Halium's AOSP tree, as Droidian publishes it in

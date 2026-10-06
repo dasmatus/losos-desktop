@@ -58,6 +58,8 @@ still takes time, so don't start one to check a module edit.
   `wpa_supplicant` and `derisk installer` on tty1, with `losos-installer
   serve` as its backend. `modules/installer.nix`
   evaluates it with the OS's own repart definitions and sysupdate transfers.
+- `nixos/home/pm.nix` is the flake's `homeModules.pm`: pm and its plugins
+  installed and signed by a user's own Home Manager (`docs/pm.md`).
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
   plugins, `losos-installer`, `losos-security`, `losos-swap`, the pm
   payload builder, and Halium's `libhybris`, `android-headers` and generic

@@ -14,6 +14,35 @@ install -Dm644 -t ~/.config/pm/plugins /run/current-system/sw/share/pm/plugins/*
 for p in ~/.config/pm/plugins/*.wasm; do pm sign "$p"; done
 ```
 
+### With Home Manager
+
+Where Home Manager runs (a build host, or any machine with Nix; the image
+itself has no Nix and its users are systemd-homed records), the flake's
+`homeModules.pm` installs pm and its plugins instead of that copy:
+
+```nix
+{
+  imports = [ losos-desktop.homeModules.pm ];
+  programs.pm.enable = true;
+  # All seven by default; or name the ones you want:
+  # programs.pm.plugins = [ "losos-nix" "systemd" ];
+}
+```
+
+Each plugin is linked into `~/.config/pm/plugins` from the Home Manager
+generation, so a plugin taken off the list is uninstalled at the next switch
+and a rollback restores the previous set. Activation then runs the same
+`pm sign` over each one, with your own key (made and trusted on first use,
+as by hand), so trust is still given by you and not by the module.
+`extraPlugins` installs other components by name, `signatures` takes a
+publisher's `.sig` for one instead of signing it locally, and `trustedKeys`
+adds that publisher's key to pm's trust store, which governs build files too.
+
+`nix flake check` builds the module into a Home Manager generation and runs
+its signing step against it, then checks that `pm plugins` loads every
+plugin with no flags (`nixos/tests/home-manager-pm.nix`). No `home-manager
+switch` on a real account has run it.
+
 ## Driving the flake from pm
 
 pm stays the system manager here too, so a pm build file can build and check

@@ -9,7 +9,9 @@
 #
 # pm's plugins are shipped under /run/current-system/sw/share/pm/plugins and
 # not installed into anyone's config: pm runs a plugin only when it is signed
-# by a key its user trusts, and that trust is the user's to give.
+# by a key its user trusts, and that trust is the user's to give. Where a user
+# runs Home Manager, the flake's homeModules.pm (nixos/home/pm.nix) installs
+# and signs them from their own configuration.
 {
   environment.systemPackages = [
     pkgs.pm

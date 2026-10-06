@@ -6,7 +6,8 @@
 # reads only <config>/pm/plugins and runs a plugin only when it is signed by a
 # key the user trusts, so shipping them in the image offers them without
 # trusting them on anyone's behalf: a user who wants them copies them into
-# their own config and signs them there (docs/nixos.md, "pm's plugins").
+# their own config and signs them there (docs/pm.md, "pm's plugins"), by hand
+# or through the Home Manager module (nixos/home/pm.nix).
 {
   lib,
   stdenv,
@@ -125,6 +126,10 @@ stdenv.mkDerivation {
     done
     runHook postInstall
   '';
+
+  # The names under share/pm/plugins, for the Home Manager module
+  # (nixos/home/pm.nix) to check a user's list against without building this.
+  passthru.plugins = local ++ fromPm;
 
   meta = {
     description = "pm's plugin components for LosOS Desktop, unsigned";
