@@ -1,12 +1,9 @@
 use std::fs;
-use std::os::unix::net::UnixDatagram;
-use std::path::{Path, PathBuf};
-use std::thread;
+use std::path::PathBuf;
 
 use losos_installer::disks::{self, Disk};
 use losos_installer::install;
-use losos_installer::network;
-use losos_installer::wpa::{self, Control, Network, Security};
+use losos_installer::serve::{self, Request};
 
 /// A scratch directory per test, removed when the test ends.
 struct Scratch(PathBuf);
@@ -31,242 +28,6 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
-}
-
-#[test]
-fn scan_results_keep_the_strongest_of_each_ssid() {
-    let reply = "bssid / frequency / signal level / flags / ssid\n\
-        aa:aa:aa:aa:aa:01\t2412\t-70\t[WPA2-PSK-CCMP][ESS]\thome\n\
-        aa:aa:aa:aa:aa:02\t5180\t-48\t[WPA2-PSK-CCMP][ESS]\thome\n\
-        aa:aa:aa:aa:aa:03\t2437\t-60\t[ESS]\tcafe\n\
-        aa:aa:aa:aa:aa:04\t2437\t-30\t[WPA2-PSK-CCMP][ESS]\t\n\
-        aa:aa:aa:aa:aa:05\t2437\t-55\t[WPA2-PSK+SAE-CCMP][ESS]\tmy\\x20net\n\
-        garbage\n";
-    let networks = wpa::parse_scan_results(reply);
-    let names: Vec<_> = networks.iter().map(|n| (n.name(), n.signal)).collect();
-    assert_eq!(
-        names,
-        [
-            ("home".to_string(), -48),
-            ("my net".to_string(), -55),
-            ("cafe".to_string(), -60)
-        ]
-    );
-    assert_eq!(
-        networks[1].security,
-        Security::Passphrase {
-            psk: true,
-            sae: true
-        }
-    );
-    assert_eq!(networks[2].security, Security::Open);
-}
-
-#[test]
-fn ssids_decode_like_printf_encode() {
-    assert_eq!(wpa::decode_ssid(r#"a\"b\\c\x41\xff"#), b"a\"b\\cA\xff");
-    assert_eq!(wpa::decode_ssid(r"tab\there\n"), b"tab\there\n");
-    // A truncated escape is kept as it was rather than dropped.
-    assert_eq!(wpa::decode_ssid(r"end\x4"), b"end\\x4");
-    assert_eq!(wpa::decode_ssid("trailing\\"), b"trailing\\");
-}
-
-#[test]
-fn security_from_flags() {
-    assert_eq!(
-        Security::from_flags("[WPA2-EAP-CCMP][ESS]"),
-        Security::Unsupported("802.1X")
-    );
-    assert_eq!(
-        Security::from_flags("[WEP][ESS]"),
-        Security::Unsupported("WEP")
-    );
-    assert_eq!(
-        Security::from_flags("[RSN-SAE-CCMP][ESS]"),
-        Security::Passphrase {
-            psk: false,
-            sae: true
-        }
-    );
-    assert_eq!(Security::from_flags("[RSN-OWE-CCMP][ESS]"), Security::Owe);
-    assert_eq!(Security::from_flags("[ESS]"), Security::Open);
-}
-
-#[test]
-fn passphrase_settings() {
-    let wpa2 = Security::Passphrase {
-        psk: true,
-        sae: false,
-    };
-    assert_eq!(
-        wpa2.settings("correct horse").unwrap(),
-        [
-            ("key_mgmt", "WPA-PSK WPA-PSK-SHA256".to_string()),
-            ("psk", "\"correct horse\"".to_string()),
-            ("ieee80211w", "1".to_string()),
-        ]
-    );
-    let raw = "0123456789abcdef".repeat(4);
-    assert_eq!(wpa2.settings(&raw).unwrap()[1], ("psk", raw.clone()));
-    assert!(wpa2.settings("short").is_err());
-    assert!(wpa2.settings(&"x".repeat(64)).is_err());
-    assert!(wpa2.settings("pässword").is_err());
-
-    let wpa3 = Security::Passphrase {
-        psk: false,
-        sae: true,
-    };
-    let settings = wpa3.settings("pässwörd \"quoted\"").unwrap();
-    assert_eq!(settings[0], ("key_mgmt", "SAE".to_string()));
-    assert_eq!(
-        settings[1],
-        ("sae_password", "\"pässwörd \"quoted\"\"".to_string())
-    );
-    assert_eq!(settings[2], ("ieee80211w", "2".to_string()));
-    assert!(wpa3.settings("").is_err());
-    assert!(wpa3.settings("line\nbreak").is_err());
-
-    let transition = Security::Passphrase {
-        psk: true,
-        sae: true,
-    };
-    let settings = transition.settings("12345678").unwrap();
-    assert_eq!(
-        settings[0],
-        ("key_mgmt", "WPA-PSK WPA-PSK-SHA256 SAE".to_string())
-    );
-    assert_eq!(settings.last().unwrap(), &("ieee80211w", "1".to_string()));
-
-    assert!(
-        Security::Unsupported("802.1X")
-            .settings("anything")
-            .is_err()
-    );
-}
-
-#[test]
-fn status_and_online_state() {
-    let status = wpa::parse_status("bssid=aa:aa:aa:aa:aa:01\nssid=home\nwpa_state=COMPLETED\n");
-    assert!(status.contains(&("wpa_state".to_string(), "COMPLETED".to_string())));
-    assert!(network::parse_online(
-        "OPER_STATE=routable\nCARRIER_STATE=carrier\n"
-    ));
-    assert!(!network::parse_online("OPER_STATE=degraded\n"));
-    assert!(!network::online(Path::new("/nonexistent/state")));
-}
-
-#[test]
-fn wireless_interfaces_have_a_wireless_directory() {
-    let sys = Scratch::new("net");
-    fs::create_dir_all(sys.0.join("wlp2s0/wireless")).unwrap();
-    fs::create_dir_all(sys.0.join("enp1s0")).unwrap();
-    fs::create_dir_all(sys.0.join("lo")).unwrap();
-    assert_eq!(wpa::interfaces(&sys.0), ["wlp2s0"]);
-}
-
-#[test]
-fn wired_ports_and_their_state() {
-    let root = Scratch::new("wired");
-    let port = |name: &str, kind: &str, index: &str, carrier: Option<&str>| {
-        root.write(&format!("sys/{name}/type"), &format!("{kind}\n"));
-        root.write(&format!("sys/{name}/ifindex"), &format!("{index}\n"));
-        fs::create_dir_all(root.0.join(format!("sys/{name}/device"))).unwrap();
-        if let Some(carrier) = carrier {
-            root.write(&format!("sys/{name}/carrier"), &format!("{carrier}\n"));
-        }
-    };
-    // Online, cable without an address yet, cable out, and a link that is
-    // down (no readable carrier).
-    port("enp1s0", "1", "2", Some("1"));
-    port("enp2s0", "1", "3", Some("1"));
-    port("enp3s0", "1", "4", Some("0"));
-    port("enx001122334455", "1", "5", None);
-    // Not wired ports: Wi-Fi, loopback, and a bridge with no device.
-    port("wlp4s0", "1", "6", Some("1"));
-    fs::create_dir_all(root.0.join("sys/wlp4s0/wireless")).unwrap();
-    port("lo", "772", "1", Some("1"));
-    root.write("sys/br0/type", "1\n");
-    root.write("sys/br0/carrier", "1\n");
-    root.write("links/2", "ADMIN_STATE=configured\nOPER_STATE=routable\n");
-    root.write("links/3", "ADMIN_STATE=configuring\nOPER_STATE=carrier\n");
-    root.write("links/6", "OPER_STATE=routable\n");
-
-    let ports = network::wired(&root.0.join("sys"), &root.0.join("links"));
-    let seen: Vec<(&str, network::WiredState)> =
-        ports.iter().map(|w| (w.name.as_str(), w.state)).collect();
-    assert_eq!(
-        seen,
-        [
-            ("enp1s0", network::WiredState::Online),
-            ("enp2s0", network::WiredState::Configuring),
-            ("enp3s0", network::WiredState::NoCable),
-            ("enx001122334455", network::WiredState::NoCable),
-        ]
-    );
-    assert!(network::wired(Path::new("/nonexistent"), Path::new("/nonexistent")).is_empty());
-}
-
-#[test]
-fn control_socket_round_trip() {
-    let dir = Scratch::new("ctrl");
-    let server_path = dir.0.join("wlan0");
-    let server = UnixDatagram::bind(&server_path).unwrap();
-    let daemon = thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        let mut seen = Vec::new();
-        loop {
-            let (n, from) = server.recv_from(&mut buf).unwrap();
-            let command = String::from_utf8_lossy(&buf[..n]).into_owned();
-            let from = from.as_pathname().unwrap().to_path_buf();
-            let reply = match command.as_str() {
-                "ADD_NETWORK" => "3\n",
-                "SELECT_NETWORK 3" => {
-                    // An unsolicited event first, which the client must skip.
-                    server
-                        .send_to(b"<3>CTRL-EVENT-SCAN-STARTED", &from)
-                        .unwrap();
-                    "OK\n"
-                }
-                c if c.starts_with("SET_NETWORK 3 ") => "OK\n",
-                "QUIT" => break,
-                _ => "FAIL\n",
-            };
-            seen.push(command);
-            server.send_to(reply.as_bytes(), &from).unwrap();
-        }
-        seen
-    });
-
-    let client_dir = dir.0.join("client");
-    fs::create_dir_all(&client_dir).unwrap();
-    let control = Control::open_at(&server_path, &client_dir).unwrap();
-    let network = Network {
-        ssid: b"home".to_vec(),
-        signal: -50,
-        security: Security::Passphrase {
-            psk: true,
-            sae: false,
-        },
-    };
-    assert_eq!(control.connect(&network, "correct horse").unwrap(), 3);
-    assert!(control.forget(3).is_err());
-    // The fake daemon stops answering at QUIT, so this one times out.
-    control.request("QUIT").unwrap_err();
-    let seen = daemon.join().unwrap();
-    assert_eq!(
-        seen,
-        [
-            "ADD_NETWORK",
-            "SET_NETWORK 3 ssid 686f6d65",
-            "SET_NETWORK 3 key_mgmt WPA-PSK WPA-PSK-SHA256",
-            "SET_NETWORK 3 psk \"correct horse\"",
-            "SET_NETWORK 3 ieee80211w 1",
-            "SELECT_NETWORK 3",
-            "REMOVE_NETWORK 3",
-        ]
-    );
-    drop(control);
-    assert_eq!(fs::read_dir(&client_dir).unwrap().count(), 0);
 }
 
 fn fake_disk(sys: &Scratch, name: &str, sectors: u64, model: &str) {
@@ -375,8 +136,13 @@ fn transfers_name_the_chosen_disk() {
     // A stale file from an earlier attempt must not survive into this one.
     dir.write("out/10-old.transfer", "stale\n");
 
-    install::render_transfers(&dir.0.join("templates"), &dir.0.join("out"), "/dev/nvme0n1")
-        .unwrap();
+    install::render_transfers(
+        &dir.0.join("templates"),
+        &dir.0.join("out"),
+        "/dev/nvme0n1",
+        None,
+    )
+    .unwrap();
     let mut names: Vec<_> = fs::read_dir(dir.0.join("out"))
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -388,6 +154,200 @@ fn transfers_name_the_chosen_disk() {
         "[Target]\nType=partition\nPath=/dev/nvme0n1\n"
     );
     assert!(
-        install::render_transfers(&dir.0.join("out/none"), &dir.0.join("o2"), "/dev/sda").is_err()
+        install::render_transfers(&dir.0.join("out/none"), &dir.0.join("o2"), "/dev/sda", None)
+            .is_err()
     );
+}
+
+#[test]
+fn a_release_disk_replaces_only_the_source() {
+    let dir = Scratch::new("local");
+    dir.write(
+        "templates/20-usr.transfer",
+        "[Transfer]\nVerify=true\n\n[Source]\nMatchPattern=losos_@v.raw.xz\n\
+         Path=https://proxy.example/updates/nightly/x86_64/\nType=url-file\n\n\
+         [Target]\nPath=@TARGET@\nType=partition\n",
+    );
+    let release = dir.0.join("release");
+    install::render_transfers(
+        &dir.0.join("templates"),
+        &dir.0.join("out"),
+        "/dev/vda",
+        Some(install::Local {
+            url: "https://proxy.example/updates/nightly/x86_64/",
+            dir: &release,
+        }),
+    )
+    .unwrap();
+    assert_eq!(
+        fs::read_to_string(dir.0.join("out/20-usr.transfer")).unwrap(),
+        format!(
+            "[Transfer]\nVerify=true\n\n[Source]\nMatchPattern=losos_@v.raw.xz\n\
+             Path={}\nType=regular-file\n\n[Target]\nPath=/dev/vda\nType=partition\n",
+            release.display()
+        )
+    );
+}
+
+#[test]
+fn sums_parse_in_both_forms() {
+    let a = "a".repeat(64);
+    let b = "b".repeat(64);
+    let text = format!("{a}  one.raw.xz\n{b} *two.efi\nnot a line\n");
+    assert_eq!(
+        install::parse_sums(&text),
+        [(a, "one.raw.xz".to_owned()), (b, "two.efi".to_owned())]
+    );
+}
+
+#[test]
+fn a_release_is_checked_file_by_file() {
+    let dir = Scratch::new("verify");
+    let (tx, _rx) = std::sync::mpsc::channel();
+    let pubring = dir.0.join("no-such-pubring.gpg");
+    // sha256("hello\n")
+    let hello = "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03";
+    dir.write("release/one.efi", "hello\n");
+    dir.write("release/SHA256SUMS", &format!("{hello}  one.efi\n"));
+    assert!(install::has_release(&dir.0.join("release")));
+    install::verify_release(&dir.0.join("release"), &pubring, &dir.0, &tx).unwrap();
+
+    dir.write("release/one.efi", "tampered\n");
+    assert!(install::verify_release(&dir.0.join("release"), &pubring, &dir.0, &tx).is_err());
+
+    dir.write("release/one.efi", "hello\n");
+    dir.write("release/extra.efi", "hello\n");
+    assert!(install::verify_release(&dir.0.join("release"), &pubring, &dir.0, &tx).is_err());
+    assert!(!install::has_release(&dir.0.join("templates")));
+}
+
+#[test]
+fn download_progress_is_the_last_percentage() {
+    assert_eq!(
+        serve::percent("Got 45% of https://example/usr.raw"),
+        Some(0.45)
+    );
+    assert_eq!(serve::percent("10% then 100%"), Some(1.0));
+    assert_eq!(serve::percent("no number here"), None);
+    assert_eq!(serve::percent("Got % of it"), None);
+    assert_eq!(serve::percent("250%"), None);
+}
+
+#[test]
+fn requests_parse_and_name_a_device() {
+    assert_eq!(
+        serve::parse_request(r#"{"method":"disks"}"#),
+        Ok(Request::Disks)
+    );
+    assert_eq!(
+        serve::parse_request(r#"{"method":"install","disk":"/dev/vda"}"#),
+        Ok(Request::Install("/dev/vda".into()))
+    );
+    assert_eq!(
+        serve::parse_request(r#"{"method":"reboot"}"#),
+        Ok(Request::Reboot)
+    );
+    assert_eq!(
+        serve::parse_request(r#"{"method":"power_off"}"#),
+        Ok(Request::PowerOff)
+    );
+    assert!(serve::parse_request(r#"{"method":"install","disk":"vda"}"#).is_err());
+    assert!(serve::parse_request(r#"{"method":"install"}"#).is_err());
+    assert!(serve::parse_request(r#"{"method":"format"}"#).is_err());
+    assert!(serve::parse_request("not json").is_err());
+}
+
+#[test]
+fn steps_and_disks_as_derisk_reads_them() {
+    let steps = serve::steps_event();
+    assert_eq!(steps["event"], "steps");
+    assert_eq!(
+        steps["labels"].as_array().unwrap().len(),
+        install::Step::ALL.len()
+    );
+    let step = serve::step_event(install::Step::Download, Some(0.5));
+    assert_eq!(step["index"], 2);
+    assert_eq!(step["count"], 4);
+    assert_eq!(step["fraction"], 0.5);
+    assert!(serve::step_event(install::Step::Partition, None)["fraction"].is_null());
+
+    let disk = Disk {
+        path: "/dev/vda".into(),
+        name: "vda".into(),
+        model: "QEMU".into(),
+        size: 21_474_836_480,
+        removable: false,
+    };
+    let event = serve::disks_event(&[disk]);
+    assert_eq!(event["event"], "disks");
+    assert_eq!(event["disks"][0]["path"], "/dev/vda");
+    assert_eq!(event["disks"][0]["size"], 21_474_836_480u64);
+}
+
+#[test]
+fn an_install_is_refused_for_a_disk_not_offered() {
+    let config = serve::Config {
+        name: "LosOS Desktop".into(),
+        repart_definitions: PathBuf::from("/nonexistent"),
+        sysupdate_templates: PathBuf::from("/nonexistent"),
+        esp: PathBuf::from("/nonexistent"),
+        medium: "/nonexistent".into(),
+        work: PathBuf::from("/nonexistent"),
+        source: None,
+        local_source: None,
+    };
+    let input = "{\"method\":\"install\",\"disk\":\"/dev/not-a-disk\"}\nbogus\n";
+    let (tx, rx) = std::sync::mpsc::channel();
+    struct Sink(std::sync::mpsc::Sender<u8>);
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            buf.iter().for_each(|b| {
+                let _ = self.0.send(*b);
+            });
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    serve::run(&config, input.as_bytes(), Sink(tx));
+    let out = String::from_utf8(rx.iter().collect()).unwrap();
+    let events: Vec<serde_json::Value> = out
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(events[0]["event"], "hello");
+    assert_eq!(events[0]["name"], "LosOS Desktop");
+    assert_eq!(events[1]["event"], "failed");
+    assert!(
+        events[1]["message"]
+            .as_str()
+            .unwrap()
+            .contains("/dev/not-a-disk")
+    );
+    assert_eq!(events[2]["event"], "failed");
+    assert_eq!(events.len(), 3);
+}
+
+#[test]
+fn hello_names_a_release_disk_only_when_it_holds_a_release() {
+    let dir = Scratch::new("hello");
+    let mut config = serve::Config {
+        name: "LosOS Desktop".into(),
+        repart_definitions: PathBuf::from("/nonexistent"),
+        sysupdate_templates: PathBuf::from("/nonexistent"),
+        esp: PathBuf::from("/nonexistent"),
+        medium: "/nonexistent".into(),
+        work: PathBuf::from("/nonexistent"),
+        source: Some("https://proxy.example/".into()),
+        local_source: Some(dir.0.join("release")),
+    };
+    assert!(serve::hello(&config).get("release").is_none());
+    dir.write("release/SHA256SUMS", "");
+    assert_eq!(
+        serve::hello(&config)["release"],
+        dir.0.join("release").to_string_lossy().as_ref()
+    );
+    config.local_source = None;
+    assert!(serve::hello(&config).get("release").is_none());
 }

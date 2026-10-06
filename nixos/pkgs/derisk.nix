@@ -43,8 +43,8 @@ rustPlatform.buildRustPackage {
     # item picked in the palette reaches the app that registered it, which
     # Uranium's tabs menus need), #36 and #38 (the graphical installer and
     # the first-boot setup, `derisk installer` and `derisk setup`) and #40
-    # (first-boot accounts without homectl --language, the clock's time
-    # zone from /etc/localtime, and overview widgets).
+    # (setup's account made without --language, which systemd 261's homectl
+    # refuses; clocks in the machine's time zone; overview widgets).
     rev = "87f4c65408fe9a9940c166079d6956ac47ce5958";
     hash = "sha256-YDdepN6mkhBDbUxxUc3QfKF08qesoVpXFxMyN64bs5Q=";
   };
