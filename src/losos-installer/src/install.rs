@@ -67,12 +67,13 @@ pub enum Step {
 impl Step {
     pub const ALL: [Step; 4] = [Step::Partition, Step::Mount, Step::Download, Step::Finish];
 
-    pub fn label(self) -> &'static str {
+    /// What the installer's page says while this step runs.
+    pub fn title(self) -> &'static str {
         match self {
-            Step::Partition => "Partition the disk (systemd-repart)",
-            Step::Mount => "Mount the new ESP",
-            Step::Download => "Download and write /usr (systemd-sysupdate)",
-            Step::Finish => "Unmount and flush",
+            Step::Partition => "Partitioning the disk",
+            Step::Mount => "Mounting the new boot partition",
+            Step::Download => "Downloading and writing the system",
+            Step::Finish => "Finishing",
         }
     }
 }
@@ -342,7 +343,7 @@ fn wait_for(path: &Path, timeout: Duration) -> Result<(), String> {
     Ok(())
 }
 
-/// Runs `program`, sending each line it logs to the screen. With `capture`,
+/// Runs `program`, sending each line it logs to the installer. With `capture`,
 /// standard output is returned rather than shown.
 fn command(
     program: &str,
@@ -353,7 +354,8 @@ fn command(
     let _ = events.send(Event::Line(format!("$ {program} {}", args.join(" "))));
     let mut child = Command::new(program)
         .args(args)
-        // Plain text: the log pane is not a terminal and shows escapes as-is.
+        // Plain text: the installer's details are not a terminal and show
+        // escapes as-is.
         .env("SYSTEMD_COLORS", "0")
         .env("SYSTEMD_PAGER", "")
         .stdin(Stdio::null())

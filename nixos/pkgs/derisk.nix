@@ -41,12 +41,15 @@ rustPlatform.buildRustPackage {
     # text-input-v3), #34 (the browser and search engine choice screens,
     # which turn on from the policy file losos-ping writes) and #35 (a menu
     # item picked in the palette reaches the app that registered it, which
-    # Uranium's tabs menus need).
-    rev = "39b2b2c3e76873dfe94b668c4cf61421330b55b8";
-    hash = "sha256-QH3+URPyZsLD4YN07CQD8brdoSi4/TAzxdTj0xSYmm4=";
+    # Uranium's tabs menus need), #36 and #38 (the graphical installer and
+    # the first-boot setup, `derisk installer` and `derisk setup`) and #40
+    # (setup's account made without --language, which systemd 261's homectl
+    # refuses; clocks in the machine's time zone; overview widgets).
+    rev = "87f4c65408fe9a9940c166079d6956ac47ce5958";
+    hash = "sha256-YDdepN6mkhBDbUxxUc3QfKF08qesoVpXFxMyN64bs5Q=";
   };
 
-  cargoHash = "sha256-cPxWZOQV2dMTKMABxiBsdjYySO96iptzvTsdTHFQ6/w=";
+  cargoHash = "sha256-MMsIyUt5512QsJIMJ5pYwtxro08v7JxmGyubOUweG/s=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is
