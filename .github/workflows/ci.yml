@@ -114,9 +114,12 @@ jobs:
           sudo systemctl restart nix-daemon
           echo "/nix/var/nix/profiles/default/bin" >> "$GITHUB_PATH"
 
+      # submodules: derisk, mcsapi and pm are components/ submodules the flake
+      # builds from (flake.nix, `self.submodules`). All three are public, so
+      # the checkout needs no token for them.
       - &checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        with: { persist-credentials: false, submodules: true }
 
       # Fixed-output inputs come from cache.nixos.org where it has them, with
       # copied outputs checked against their hashes. This includes pinned

@@ -9,8 +9,10 @@ installs as an image, uses systemd for everything it can, and uses nixpkgs'
 stock glibc packages.
 `flake.nix` and `nixos/` are the OS. nixpkgs `nixos-unstable`, pinned in `flake.lock`,
 provides stock packages, normally substituted from cache.nixos.org.
-[`pm`](https://github.com/dichhead/pm) ships in the image as the system
-manager.
+[`pm`](https://github.com/losos-project/pm) ships in the image as the system
+manager. derisk, mcsapi and pm are git submodules under `components/`, and
+their recorded commits are the pins (`docs/nixos.md`, "The components/
+submodules"); clone with `--recurse-submodules`.
 
 `README.md` says what the OS is. `docs/nixos.md` says how each piece is built,
 which outside inputs the build trusts, and what is not done. Read it before
@@ -59,6 +61,9 @@ still takes time, so don't start one to check a module edit.
   dependents rebuild in CI instead of substituting. `patches/` also holds
   the two gnome-control-center patches, which target 51.0 and nothing
   applies.
+- `components/` holds derisk, mcsapi and pm as git submodules. The flake
+  builds them from there; `nixos/pkgs/{derisk,x2mcsapi,pm}.nix` keep only
+  their `cargoHash` and build flags.
 - `src/` holds the three programs this repository writes. The overlay builds
   them.
 - `plugins/` holds pm plugins, written in Rust and compiled to WebAssembly
