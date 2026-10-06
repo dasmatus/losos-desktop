@@ -42,9 +42,11 @@ rustPlatform.buildRustPackage {
     # which turn on from the policy file losos-ping writes) and #35 (a menu
     # item picked in the palette reaches the app that registered it, which
     # Uranium's tabs menus need), #36 and #38 (the graphical installer and
-    # the first-boot setup, `derisk installer` and `derisk setup`).
-    rev = "98b45a8a9ceae8444be4b35dd11aa6a69578ce7c";
-    hash = "sha256-vfSVUnKmuVQjprCKWoe1z+UecO+rFxU39fjfbwKBgFA=";
+    # the first-boot setup, `derisk installer` and `derisk setup`) and #40
+    # (first-boot accounts without homectl --language, the clock's time
+    # zone from /etc/localtime, and overview widgets).
+    rev = "87f4c65408fe9a9940c166079d6956ac47ce5958";
+    hash = "sha256-YDdepN6mkhBDbUxxUc3QfKF08qesoVpXFxMyN64bs5Q=";
   };
 
   cargoHash = "sha256-MMsIyUt5512QsJIMJ5pYwtxro08v7JxmGyubOUweG/s=";
