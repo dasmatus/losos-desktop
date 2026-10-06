@@ -23,9 +23,10 @@
 
       losos.version = "1";
 
-      # The first-boot wizard waits on the console for a person, which a test
-      # has none of. The user is created by the test script instead.
+      # First-boot setup waits on the seat for a person, which a test has
+      # none of. The user is created by the test script instead.
       services.homed.promptOnFirstBoot = lib.mkForce false;
+      systemd.services.derisk-setup.enable = false;
 
       # Boot the image as firmware would, from its own disk, instead of the
       # test driver's kernel with the host's store mounted in.
