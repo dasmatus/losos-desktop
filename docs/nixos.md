@@ -374,8 +374,31 @@ Replaced by the systemd equivalent where NixOS would otherwise pick something
 else: `run0` instead of sudo (with a `sudo` alias that refuses sudo's flags);
 networkd instead of NetworkManager, which GNOME turns on by default; resolved's
 mDNS instead of avahi; `systemd-sysusers` instead of the perl user script; the
-`/etc` overlay instead of activation scripts writing files; homed's first-boot
-wizard instead of no way to create the first user at all.
+`/etc` overlay instead of activation scripts writing files; first-boot setup
+making the first user with homectl instead of no way to create one at all.
+
+## First-boot setup
+
+A fresh install has no user. `derisk setup` (`nixos/modules/setup.nix`) runs
+on tty1 as a logind session of its own, after homed and before the display
+manager, and draws derisk's pages on the seat: language, keyboard layout,
+time zone, network, then the first account (full name, user name, password).
+It saves them with `localectl set-locale`, `localectl set-x11-keymap`,
+`timedatectl set-timezone` and `homectl create --member-of=wheel`, the
+password passed in `NEWPASSWORD` and never on a command line, and exits; the
+login screen then takes the seat. The keyboard layout switches live as it is
+picked, and the display manager hands localed's saved layout to the login
+screen and the session as xkbcommon's defaults.
+
+It runs on every boot and exits at once when `userdbctl` lists a regular
+user, so a machine switched off halfway through asks again. If derisk cannot
+draw at all, homed's console wizard asks for the user instead. homed's own
+first-boot unit is kept for `home.create.*` credentials, without its prompt.
+The languages offered are the locales built into the archive, the thirty-odd
+derisk has names for, and `i18n.imperativeLocale` lets localed's choices
+stick. On a phone-sized screen the pages fill the screen and the on-screen
+keyboard opens under a focused field; on a PC the card floats and the
+keyboard is a button in the corner.
 
 ## The installer
 
@@ -391,22 +414,28 @@ initrd mounts the ISO by its volume label and the Nix store from a squashfs
 on it. It carries `wpa_supplicant` and no NetworkManager. networkd runs DHCP
 on every physical wired port, built in or USB, as soon as a cable is in, at
 boot or later, and prefers it over Wi-Fi when both are up; a machine with a
-cable in is online with nothing asked. Otherwise `losos-installer`
-(`src/losos-installer`) talks to `wpa_supplicant` over its control socket to
-scan for and join a Wi-Fi network, which networkd then runs DHCP on too. Of the firmware NixOS would add, only
+cable in is online with nothing asked. Otherwise derisk talks to
+`wpa_supplicant` over its control socket to scan for and join a Wi-Fi
+network, which networkd then runs DHCP on too. Of the firmware NixOS would add, only
 `linux-firmware` is on the medium, because most Wi-Fi cards do not start
 without it.
 
-`losos-installer` is a terminal interface on tty1, with a root shell on tty2
-for anything it does not cover. Its Network screen shows each wired port as
-having no cable, getting an address, or online, and it moves on by itself as
-soon as the machine is online, by cable or by Wi-Fi. Then it lists the
-disks, leaving out the one the ISO booted from, and asks for `erase` to be
-typed before it touches the one chosen. Then:
+The installer is `derisk installer` on tty1, a logind session run as root,
+with a root shell on tty2 for anything it does not cover. It draws the same
+pages first-boot setup is made of, so it works with a mouse, a touchscreen or
+a phone-sized screen. It starts `losos-installer serve` (`src/losos-installer`)
+as its backend and talks to it in JSON lines on stdin and stdout: derisk owns
+the screen and the network, the backend owns the disks. The Network page
+shows each wired port as having no cable, getting an address, or online, and
+is skipped when the machine is already online. Then the backend lists the
+disks, leaving out the one the ISO booted from and refusing any disk it did
+not list, and the installer names the disk, its size and the source once more
+behind an "Erase and install" button before anything is touched. Then:
 
 1. `systemd-repart --empty=force` lays out the ESP, with systemd-boot and
-   `loader.conf` copied in, and slot A at full size, labelled `_empty`. These
-   are `disk.nix`'s own definitions, so the disk is laid out the way the
+   `loader.conf` copied in, and both `/usr` slots at full size, labelled
+   `_empty` (sysupdate refuses a disk with only one). These are `disk.nix`'s
+   own definitions, so the disk is laid out the way the
    installed system expects to find it.
 2. `systemd-sysupdate update` fills them with the channel's newest release,
    from the same URL and through the same transfers as `update.nix`, aimed at
@@ -414,7 +443,7 @@ typed before it touches the one chosen. Then:
    `/run/losos-installer`. With `losos.update.pubring` set, the installer
    checks `SHA256SUMS.gpg` against it as an update does.
 3. The machine reboots into the installed system, whose first boot creates
-   slot B, root, `/home` and swap from `disk.nix`, the path an image written
+   root, `/home` and swap from `disk.nix`, the path an image written
    with `dd` takes.
 
 So an install is an update into an empty slot: what lands on the disk is
@@ -424,6 +453,20 @@ UKI that booted it into a tmpfs root and copied its own `/usr` with
 `CopyBlocks=`; that is gone, and so is the `losos.install` condition it
 needed in `disk.nix`. When nixpkgs reaches v261, the installer should be
 measured against `systemd-sysinstall` again.
+
+A machine that cannot reach the channel installs from a release disk
+instead: any filesystem labelled `LOSOS-RELEASE` holding a release's
+`SHA256SUMS`, `SHA256SUMS.gpg` and the `/usr`, verity and UKI files they
+list. udev mounts it at `/run/losos/release` whenever it appears, and the
+installer then turns the transfers' sources into local files. sysupdate
+verifies signatures only on downloads, so the installer checks the release
+first: `SHA256SUMS` against the signing key with `gpg`, as `systemd-pull`
+does, then every file on the disk against its line there, refusing a file
+not listed. The case it exists for is a VM in a network that re-signs TLS
+with its own authority, where the channel's certificate never verifies; with
+the disk attached the installer does not need the network at all: the
+backend's `hello` names the disk as `release`, and derisk then skips its
+Network page.
 
 ## Releases and GHCR
 
@@ -924,9 +967,9 @@ theme in code; KDE runtime apps, which carry Breeze and never read
   - **Telephony, audio, sensors, camera.** No ofono, no PulseAudio/PipeWire
     droid modules, no sensorfw. Android's init starts the HALs, and nothing
     on the Linux side talks to them yet beyond EGL.
-- **Wi-Fi.** As in the pm tree: networkd handles wired links, and nothing in
-  the session configures Wi-Fi. `iwd` would be the smallest
-  non-systemd addition that fixes it.
+- **Wi-Fi after setup.** First-boot setup joins a network through
+  `wpa_supplicant`, which saves it, but nothing in the session lists or
+  joins networks afterwards: derisk's Settings has no Wi-Fi page yet.
 - **systemd-boot updates.** `systemd-boot-update.service` copies a new
   bootloader from `/usr/lib/systemd/boot`, which NixOS does not have. The
   bootloader on the ESP is the one the image shipped.

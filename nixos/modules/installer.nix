@@ -10,7 +10,7 @@
 # could go stale.
 #
 # This module is the OS's half, the half that decides what is written. The
-# repart definitions are disk.nix's own ESP and slot A, and the transfers are
+# repart definitions are disk.nix's own ESP and /usr slots, and the transfers are
 # update.nix's own, aimed at a disk that is not the one running. So the
 # installer cannot lay out a disk differently from how first boot expects to
 # find it, nor fetch anything the OS's own updates would not. The live system
@@ -43,11 +43,15 @@ let
     target: file: "${file.source}:${target}"
   ) config.image.repart.partitions.${partitionIds.esp}.contents;
 
-  # The ESP and slot A, and nothing else. Slot B, root, /home and swap are made
-  # by the installed system's first boot, from disk.nix, as they are for an
-  # image written with dd. Slot A is created at its full size and labelled
-  # `_empty`, the label sysupdate looks for when it needs a partition to write
-  # a version into.
+  # The ESP and both /usr slots, and nothing else. Root, /home and swap are
+  # made by the installed system's first boot, from disk.nix, as they are for
+  # an image written with dd. Both slots are created at their full size and
+  # labelled `_empty`, the label sysupdate looks for when it needs a partition
+  # to write a version into. Slot B has to be here too, though nothing is
+  # written to it yet: sysupdate refuses a disk with fewer than two partitions
+  # of a type it updates ("less than two partition slots"), and its own
+  # definitions are the ones first boot would make it from, so first boot finds
+  # it already there.
   repartPartitions =
     let
       inherit (config.systemd.repart) partitions;
@@ -62,6 +66,7 @@ let
       "21-usr-a" = partitions."21-usr-a" // {
         Label = "_empty";
       };
+      inherit (partitions) "22-usr-verity-b" "23-usr-b";
     };
 
   repartDefinitions = pkgs.linkFarm "losos-installer-repart.d" (

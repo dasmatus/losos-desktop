@@ -31,8 +31,8 @@ decisions.
 | Job | Component |
 |---|---|
 | Boot | `systemd-boot`, `systemd-stub` (UKI), `bless-boot`, `boot-check-no-failures` |
-| Installation | a live ISO with `wpa_supplicant` and a terminal installer runs `systemd-repart` for the ESP and slot A, and `systemd-sysupdate` to fill them from the channel |
-| First boot | `systemd-repart` in the initrd creates slot B, root, `/home` and swap |
+| Installation | a live ISO runs `derisk installer` as its session, with `wpa_supplicant` for Wi-Fi; its backend runs `systemd-repart` for the ESP and slot A, and `systemd-sysupdate` to fill them from the channel |
+| First boot | `systemd-repart` in the initrd creates slot B, root, `/home` and swap; `derisk setup` asks for a language, keyboard, time zone, network and the first user, saved through localed, timedated and homed |
 | Read-only `/usr` | the Nix store on a dm-verity partition, with its root hash on the UKI's command line; `systemd-sysext` and `systemd-confext` add layers on top |
 | Updates | `systemd-sysupdate` with A/B slots, and `fwupd` for firmware |
 | Factory reset | `FactoryReset=` on root and `/home`, and systemd's reset Varlink API |
@@ -76,10 +76,9 @@ nixpkgs provides the packages. This repository provides the rest:
   the system bus (`docs/security-report.md`).
 - `src/losos-swap`, which writes a swap partition definition sized to the
   machine's RAM for `systemd-repart`.
-- `src/losos-installer`, the installer ISO's terminal interface: it joins a
-  Wi-Fi network through `wpa_supplicant`, then partitions the chosen disk with
-  `systemd-repart` and installs the channel's newest release with
-  `systemd-sysupdate`.
+- `src/losos-installer`, the backend `derisk installer` runs on the installer
+  ISO: it lists the disks, partitions the chosen one with `systemd-repart`
+  and installs the channel's newest release with `systemd-sysupdate`.
 - `plugins/`, pm plugins that let pm build files call `nix` and the image
   tools.
 - `proxy/`, the GHCR binary cache and update proxy.
