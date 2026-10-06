@@ -14,23 +14,27 @@
 #   - Treble: a device's vendor HALs run under any system image of a newer
 #     Android, so Halium's generic system image (pkgs.halium-gsi) starts
 #     them on every device.
-#   - GKI with init_boot: a device that launched with Android 13 or later
-#     boots its maker's kernel from `boot`, its drivers' first modules from
-#     `vendor_boot`, and the generic ramdisk from a partition of its own,
-#     `init_boot`. Replacing only that ramdisk leaves the kernel, its
-#     modules and its device tree as they were, so nothing here is built
-#     per device.
+#   - The ramdisk is the device's last unpacked: a device that launched
+#     with Android 13 or later boots its maker's kernel from `boot`, its
+#     drivers' first modules from `vendor_boot`, and the generic ramdisk
+#     from a partition of its own, `init_boot`, which this image replaces.
+#     An older device keeps kernel and ramdisk together in `boot`; the
+#     flasher writes its own boot image back with this ramdisk after the
+#     device's (docs/web-flasher.md). Either way the kernel, its modules and
+#     its device tree stay as they were, so nothing here is built per
+#     device.
 #
-#   bootloader -> the device's kernel + vendor_boot's ramdisk + this
-#     init_boot's ramdisk (NixOS's systemd initrd), concatenated
+#   bootloader -> the device's kernel + vendor_boot's or boot's own ramdisk
+#     + this ramdisk (NixOS's systemd initrd), concatenated
 #     -> the initrd loads vendor_boot's storage modules and mounts userdata,
 #        which is this OS's root filesystem
 #     -> switch-root -> systemd maps `super`, mounts the vendor partitions,
 #        loads their modules and starts Android's init in an LXC container
 #        (android.nix) beside the desktop
 #
-# Those devices all run kernel 5.10 or later, systemd's minimum baseline,
-# so the kernel nixpkgs would build is never booted and is left out.
+# A device in scope runs kernel 5.10 or later, systemd's minimum baseline
+# (the flasher refuses an older one), and the kernel nixpkgs would build is
+# never booted, so it is left out.
 #
 # There is no UEFI, no verity /usr and no sysupdate: the bootloader loads
 # what the flasher (docs/web-flasher.md) wrote and nothing else. docs/halium.md

@@ -48,8 +48,9 @@ still takes time, so don't start one to check a module edit.
   `accounts`, `setup`, `desktop`, `services`, `hardware`, `installer`, `pm` and
   a few more. `base.nix` imports what every target shares; `default.nix`
   adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
-- `nixos/halium/` is the Halium GSI, one image for every phone that launched
-  with Android 13 or later: `base.nix` plus NixOS's initrd as `init_boot`,
+- `nixos/halium/` is the Halium GSI, one image for every Treble phone that
+  takes GSIs and runs Linux 5.10 or newer: `base.nix` plus NixOS's initrd as
+  `init_boot` (or after the phone's own ramdisk in `boot`),
   userdata as the root, the vendor's partitions mapped out of `super`, and
   its HALs under Halium's generic system image in an LXC container. No device
   ports. `docs/halium.md` says how it boots.

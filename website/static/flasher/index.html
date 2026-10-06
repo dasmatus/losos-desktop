@@ -119,8 +119,9 @@
     <main>
       <h1>Install LosOS on a phone</h1>
       <p class="lead">
-        This page writes LosOS Desktop to an Android phone over USB, from this browser. It works on phones
-        that launched with Android 13 or later, keeps the phone's own kernel and drivers, and erases
+        This page writes LosOS Desktop to an Android phone over USB, from this browser. It works on Treble
+        phones that take generic system images and run Linux 5.10 or newer, which is every phone that
+        launched with Android 12 or later. It keeps the phone's own kernel and drivers, and erases
         everything on the phone.
       </p>
 
@@ -157,6 +158,20 @@
         <button id="unlock" data-needs disabled>Unlock</button>
       </section>
 
+      <section data-step="boot" id="boot-section" hidden>
+        <h2>The phone's boot image</h2>
+        <p>
+          This phone has no init_boot partition, so LosOS goes into its boot partition beside the phone's own
+          kernel. That needs the boot image the phone runs now: read it from the phone, which restarts it into
+          fastbootd first, or choose boot.img from the factory image of the exact Android build installed.
+        </p>
+        <p class="detail"></p>
+        <progress id="boot-progress" hidden></progress>
+        <button id="read-boot" data-needs disabled>Read it from the phone</button>
+        <button id="pick-boot" class="secondary" data-needs disabled>Choose boot.img</button>
+        <input id="pick-boot-file" type="file" accept=".img" hidden />
+      </section>
+
       <section data-step="download">
         <h2>Get LosOS</h2>
         <p>
@@ -172,7 +187,9 @@
 
       <section data-step="flash">
         <h2>Install</h2>
-        <p>Writes vbmeta, init_boot and userdata. Keep the cable connected until it finishes.</p>
+        <p>
+          Writes vbmeta, init_boot (or boot) and userdata. Keep the cable connected until it finishes.
+        </p>
         <p class="detail"></p>
         <progress id="flash-progress" hidden></progress>
         <button id="flash" data-needs disabled>Install</button>

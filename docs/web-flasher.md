@@ -7,37 +7,55 @@ Flasher link in the docs site's navigation bar: plain HTML and JavaScript in
 with no build step and no third-party code.
 
 It needs a Chromium-based browser on a computer (Chrome, Edge, Brave), since
-only those implement WebUSB, and a phone whose bootloader can be unlocked and
-that launched with Android 13 or later.
+only those implement WebUSB, and a phone whose bootloader can be unlocked,
+that takes GSIs, and that runs Linux 5.10 or newer (launched with Android 12
+or later).
 
 ## What it does
 
 1. **Connect.** The person puts the phone in its bootloader (Volume down and
    Power) and picks it from the browser's USB prompt, which lists only
    devices with a fastboot interface. The flasher reads `product`,
-   `unlocked`, `current-slot` and whether `init_boot` exists, and stops
-   there for a phone without `init_boot`.
+   `unlocked`, `current-slot`, whether it is in fastbootd (`is-userspace`),
+   and whether `init_boot` and `vbmeta` exist.
 2. **Unlock.** For a locked bootloader it sends `flashing unlock`; the phone
    asks on its own screen and erases itself. OEM unlocking has to be turned
    on in Android's developer options first, which only the phone can do.
-3. **Get LosOS.** It reads the newest release's `SHA256SUMS` from the proxy,
+3. **The phone's boot image**, only on a phone without `init_boot`. The
+   flasher needs the boot image the phone runs. "Read it from the phone"
+   restarts the phone into fastbootd (`reboot-fastboot`), the fastboot
+   inside recovery, which unlike the bootloader can read a boot partition
+   back (`fetch`, in `max-fetch-size` pieces); the person connects again
+   and it reads `boot_<slot>`. Alternatively the person chooses `boot.img`
+   from the factory image of the exact build the phone runs. Either way the
+   flasher (`bootimg.js`) parses the header, reads `Linux version x.y.z`
+   from the kernel (raw, gzip with device trees after it, or LZ4), and
+   refuses a kernel older than 5.10.
+4. **Get LosOS.** It reads the newest release's `SHA256SUMS` from the proxy,
    finds the three `_gsi-` files in it by name, and downloads them into the
    browser's private file storage (the origin private file system), hashing
    as they arrive. A file whose SHA-256 differs from `SHA256SUMS` stops the
    install. Files the person already has (a local `nix build .#gsi`, say)
    can be chosen instead, and are checked when `SHA256SUMS` is among them.
-4. **Install.** It writes `vbmeta` and `init_boot` to the current slot, then
-   `userdata`. userdata's image is gigabytes, and a bootloader takes at most
+5. **Install.** It writes `vbmeta` (when the phone has one) and `init_boot`
+   to the current slot, then `userdata`. On a phone without `init_boot` it
+   writes `boot` instead: the phone's boot image with the GSI's ramdisk,
+   taken out of the release's `init_boot.img`, appended to its own at a
+   4-byte boundary (recompressed with gzip when the phone's is gzip), and
+   the header's ramdisk size, `recovery_dtbo` offset and SHA-1 id written
+   as `mkbootimg` would; a v4 header's boot signature is dropped, since
+   vbmeta turns verification off. A result larger than the partition stops
+   the install. userdata's own image is gigabytes, and a bootloader takes at most
    `max-download-size` at a time, so the flasher decompresses it as a stream
    and cuts it into sparse images of at most that size (256 MiB at most),
    each covering the whole partition with "skip" chunks around its own share,
    as fastboot's own resparsing does. They are written one after another.
-5. **Start.** `reboot`. The first boot grows the root filesystem to the whole
+6. **Start.** `reboot`. The first boot grows the root filesystem to the whole
    of userdata.
 
-It writes nothing else. The phone's `boot` (its kernel), `vendor_boot`,
-`super` and every other partition are left as they were, which is what makes
-one image fit every phone.
+It writes nothing else. The phone's kernel, `vendor_boot`, `super` and every
+other partition are left as they were, which is what makes one image fit
+every phone.
 
 The bootloader cannot be relocked over this: no bootloader outside Pixels takes
 another signing key, and a Pixel's would have to sign `init_boot` and vbmeta

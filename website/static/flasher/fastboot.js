@@ -122,6 +122,34 @@ export class Fastboot {
     await this.response();
   }
 
+  // Read a partition back, as `fastboot fetch` does. Only fastbootd, the
+  // fastboot inside Android's recovery, takes this, only for boot images,
+  // and only when unlocked; it sends at most max-fetch-size at a time.
+  async fetch(partition, onBytes = () => {}) {
+    const size = parseInt(await this.getvar(`partition-size:${partition}`), 16);
+    if (!Number.isFinite(size)) throw new FastbootError(`the phone has no ${partition} partition`);
+    const limit = parseInt(await this.getvar("max-fetch-size"), 16) || size;
+    const out = new Uint8Array(size);
+    for (let offset = 0; offset < size; ) {
+      const length = Math.min(limit, size - offset);
+      const hex = (n) => `0x${n.toString(16).padStart(8, "0")}`;
+      const accepted = await this.command(`fetch:${partition}:${hex(offset)}:${hex(length)}`);
+      if (accepted !== length) {
+        throw new FastbootError(`the phone offered ${accepted} bytes of ${partition} where ${length} were asked for`);
+      }
+      for (let got = 0; got < length; ) {
+        const result = await this.device.transferIn(this.in, Math.min(TRANSFER, length - got));
+        const chunk = new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength);
+        out.set(chunk, offset + got);
+        got += chunk.length;
+        onBytes(offset + got, size);
+      }
+      await this.response();
+      offset += length;
+    }
+    return out;
+  }
+
   async flash(partition, bytes, onBytes) {
     await this.download(bytes, onBytes);
     await this.command(`flash:${partition}`);

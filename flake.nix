@@ -103,8 +103,9 @@
           ];
         };
 
-      # The GSI: the same OS as one image for every Android phone and tablet
-      # that launched with Android 13 or later, over Halium (nixos/halium/).
+      # The GSI: the same OS as one image for every Treble phone and tablet
+      # that takes generic system images and runs Linux 5.10 or newer, over
+      # Halium (nixos/halium/).
       # arm64 only, since that is what those devices are.
       gsiSystem = lib.nixosSystem {
         modules = [

@@ -8,8 +8,10 @@
 # extents in 512-byte sectors, which is exactly a device-mapper linear
 # table: `<start> .. <end> linear super <offset>` becomes
 # `<start> <length> linear /dev/...super <offset>`. Only extents on super
-# itself are mapped; a retrofit device, whose logical partitions span old
-# physical ones, launched before Android 13 and so is not a GSI device.
+# itself are mapped. A retrofit device, whose logical partitions span old
+# physical ones, or one without super at all, launched before Android 10
+# with a kernel older than 5.10, below systemd's floor, and so is not a
+# GSI device either way.
 #
 #   map-super <super block device>
 

@@ -171,6 +171,7 @@ function bootloader(partitions) {
       const command = new TextDecoder().decode(data);
       const [name, arg] = command.split(/:(.*)/s);
       if (name === "getvar" && arg === "max-download-size") say("OKAY0x00100000");
+      else if (name === "getvar" && arg === "max-fetch-size") say("OKAY0x00010000");
       else if (name === "getvar" && arg.startsWith("partition-size:")) {
         const p = arg.slice("partition-size:".length);
         say(partitions[p] ? `OKAY0x${partitions[p].length.toString(16)}` : "FAILunknown partition");
@@ -179,6 +180,13 @@ function bootloader(partitions) {
         expecting = parseInt(arg, 16);
         buffer = [];
         say(`DATA${arg}`);
+      } else if (name === "fetch") {
+        // fastbootd's upload: DATA with the size, the bytes, then OKAY.
+        const [p, offset, size] = arg.split(":");
+        const data = partitions[p].subarray(parseInt(offset, 16), parseInt(offset, 16) + parseInt(size, 16));
+        say(`DATA${data.length.toString(16).padStart(8, "0")}`);
+        for (let at = 0; at < data.length; at += 5000) answers.push(new Uint8Array(data.subarray(at, at + 5000)));
+        say("OKAY");
       } else if (name === "flash") {
         const data = Buffer.concat(buffer);
         say("INFOwriting");
@@ -190,7 +198,7 @@ function bootloader(partitions) {
     },
     async transferIn() {
       const next = answers.shift();
-      return { data: new DataView(next.buffer) };
+      return { data: new DataView(next.buffer, next.byteOffset, next.byteLength) };
     },
   };
 }
@@ -212,4 +220,12 @@ test("a flash over the simulated bootloader writes every piece", async () => {
     await fastboot.flash("userdata", piece);
   }
   assert.ok(partitions.userdata.equals(expected()));
+});
+
+test("fetch reads a partition back in max-fetch-size pieces", async () => {
+  const boot = randomBytes(150_000);
+  const fastboot = new Fastboot(bootloader({ boot_b: boot }));
+  await fastboot.open();
+  const read = await fastboot.fetch("boot_b");
+  assert.ok(Buffer.from(read).equals(boot));
 });

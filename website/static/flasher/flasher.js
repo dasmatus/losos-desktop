@@ -7,15 +7,18 @@
 //   init_boot  the generic ramdisk: NixOS's systemd initrd
 //   userdata   the OS's root filesystem, as sparse pieces
 //
-// The phone keeps its own kernel, vendor_boot and vendor partitions, which
-// is why one image fits every phone that launched with Android 13 or later
-// (docs/web-flasher.md). The files come from the newest release through the
-// proxy's /flasher/ path, checked against that release's SHA256SUMS, or
-// from files the person already has.
+// A phone without init_boot, which launched before Android 13, gets its own
+// boot image back in place of init_boot, with the same ramdisk added after
+// its own (bootimg.js). Either way the phone keeps its own kernel and vendor
+// partitions, which is why one image fits every Treble phone with a kernel
+// systemd runs on (docs/web-flasher.md). The files come from the newest
+// release through the proxy's /flasher/ path, checked against that
+// release's SHA256SUMS, or from files the person already has.
 
 import { Fastboot, FastbootError } from "./fastboot.js";
 import { splitSparse } from "./sparse.js";
 import { Sha256 } from "./sha256.js";
+import { parseBootImage, withRamdisk, kernelVersion, stackRamdisks } from "./bootimg.js";
 
 const ARCH = "aarch64";
 // What each partition is written from, by the end of its file name in a
@@ -31,8 +34,14 @@ const RANGE = 32 << 20;
 // piece is held in memory while it goes over USB.
 const PIECE = 256 << 20;
 
+// systemd's hard floor (its README, "REQUIREMENTS"): below it, the initrd
+// does not start.
+const KERNEL = [5, 10];
+
 const $ = (id) => document.getElementById(id);
-const state = { fastboot: null, device: null, files: null, version: null };
+// stockBoot is the phone's own boot image, parsed, on a phone without
+// init_boot; flashed says the install finished.
+const state = { fastboot: null, device: null, files: null, version: null, stockBoot: null, flashed: false };
 
 function log(message) {
   const line = document.createElement("div");
@@ -61,6 +70,21 @@ function enable(...ids) {
   }
 }
 
+// The buttons that make sense now, from what is known about the phone and
+// the files.
+function refresh() {
+  const { device, files } = state;
+  const ids = ["connect"];
+  if (device && device.unlocked !== "yes") ids.push("unlock");
+  if (device && device.unlocked === "yes") {
+    ids.push("download", "pick");
+    if (device.mode === "boot") ids.push("read-boot", "pick-boot");
+    if (files && (device.mode === "init_boot" || state.stockBoot)) ids.push("flash");
+  }
+  if (state.flashed) ids.push("reboot");
+  enable(...ids);
+}
+
 function megabytes(bytes) {
   return bytes < 1e6 ? `${Math.ceil(bytes / 1e3)} KB` : `${(bytes / 1e6).toFixed(0)} MB`;
 }
@@ -72,6 +96,8 @@ async function guard(name, action) {
     step(name, "failed", error.message);
     log(`${name}: ${error.message}`);
     if (!(error instanceof FastbootError)) console.error(error);
+    // Whatever failed, what can be tried again stays clickable.
+    refresh();
   }
 }
 
@@ -96,28 +122,35 @@ async function connect() {
   }
   // A/B devices name the slot; the partition is init_boot_a or _b then.
   const slot = vars["current-slot"] ? `_${vars["current-slot"].replace(/^_/, "")}` : "";
-  const initBoot = await fastboot.getvar(`partition-size:init_boot${slot}`);
-  state.fastboot = fastboot;
-  state.device = { ...vars, slot, initBoot: initBoot !== null, maxDownload: await fastboot.maxDownload() };
-  log(`Connected to ${vars.product || "a device"}, slot ${slot || "none"}, unlocked: ${vars.unlocked}`);
-
-  if (!state.device.initBoot) {
-    step(
-      "connect",
-      "failed",
-      `${vars.product || "This phone"} has no init_boot partition, so it launched before Android 13 and this image cannot boot on it.`,
-    );
-    enable("connect");
+  const has = async (partition) => (await fastboot.getvar(`partition-size:${partition}${slot}`)) !== null;
+  const initBoot = await has("init_boot");
+  if (!initBoot && !(await has("boot"))) {
+    step("connect", "failed", `${vars.product || "This phone"} reports neither init_boot nor boot.`);
     return;
   }
+  state.fastboot = fastboot;
+  state.device = {
+    ...vars,
+    slot,
+    // Where the GSI's ramdisk goes: init_boot on its own, or boot with
+    // the phone's kernel.
+    mode: initBoot ? "init_boot" : "boot",
+    vbmeta: await has("vbmeta"),
+    maxDownload: await fastboot.maxDownload(),
+  };
+  state.flashed = false;
+  log(`Connected to ${vars.product || "a device"}, slot ${slot || "none"}, unlocked: ${vars.unlocked}`);
+  // The boot image read or chosen before belongs to that phone only.
+  if (state.stockBoot && state.stockBoot.product !== vars.product) state.stockBoot = null;
+
   step("connect", "done", `${vars.product || "Phone"} in fastboot mode, slot ${slot.slice(1) || "-"}.`);
+  $("boot-section").hidden = state.device.mode !== "boot";
   if (vars.unlocked === "yes") {
     step("unlock", "done", "The bootloader is unlocked.");
-    enable("connect", "download", "pick");
   } else {
     step("unlock", "ready", "");
-    enable("connect", "unlock");
   }
+  refresh();
 }
 
 async function unlock() {
@@ -127,6 +160,49 @@ async function unlock() {
   await state.fastboot.command("flashing unlock");
   step("unlock", "working", "Unlocked. If the phone restarted, connect it again.");
   enable("connect");
+}
+
+// --- The phone's own boot image, on a phone without init_boot -------------
+
+// Keep `bytes` as the phone's boot image once its kernel is one the OS
+// runs on.
+async function useStockBoot(bytes, source) {
+  const image = parseBootImage(bytes);
+  const version = await kernelVersion(image.parts.kernel);
+  if (version && (version[0] < KERNEL[0] || (version[0] === KERNEL[0] && version[1] < KERNEL[1]))) {
+    throw new Error(
+      `The phone's kernel is Linux ${version.join(".")}. LosOS needs ${KERNEL.join(".")} or newer, ` +
+        "which phones that launched with Android 12 or later have.",
+    );
+  }
+  state.stockBoot = { image, product: state.device.product };
+  const kernel = version ? `Linux ${version.join(".")}` : "a kernel whose version could not be read";
+  if (!version) log("The kernel's version could not be read; if it is older than 5.10, LosOS will not start.");
+  step("boot", "done", `${source}: boot image v${image.version} with ${kernel}.`);
+  refresh();
+}
+
+// fastbootd reads boot back; the bootloader does not, so from there the
+// phone restarts into fastbootd first.
+async function readBoot() {
+  const { fastboot, device } = state;
+  if (device["is-userspace"] !== "yes") {
+    step("boot", "working", "Restarting into fastbootd, which can read boot. Connect the phone again when it shows fastbootd.");
+    await fastboot.command("reboot-fastboot").catch(() => {});
+    await fastboot.close();
+    state.fastboot = null;
+    enable("connect");
+    return;
+  }
+  step("boot", "working", `Reading boot${device.slot} from the phone`);
+  const bytes = await fastboot.fetch(`boot${device.slot}`, (done, total) => progress("boot-progress", done, total));
+  await useStockBoot(bytes, `Read from boot${device.slot}`);
+}
+
+async function pickBoot(event) {
+  const [file] = event.target.files;
+  if (!file) return;
+  await useStockBoot(new Uint8Array(await file.arrayBuffer()), file.name);
 }
 
 // --- The files -------------------------------------------------------------
@@ -229,7 +305,7 @@ async function download() {
   }
   state.files = files;
   step("download", "done", `LosOS ${state.version}, checked against the release's SHA256SUMS.`);
-  enable("connect", "flash");
+  refresh();
 }
 
 // Files the person built or downloaded themselves: matched by name, and
@@ -253,7 +329,7 @@ async function pick(event) {
   state.files = files;
   state.version = files.userdata.name.split("_")[1];
   step("download", "done", sumsFile ? "Checked against SHA256SUMS." : "Not checked: no SHA256SUMS was chosen.");
-  enable("connect", "flash");
+  refresh();
 }
 
 // --- Writing ---------------------------------------------------------------
@@ -261,9 +337,24 @@ async function pick(event) {
 async function flash() {
   const { fastboot, device, files } = state;
   enable();
-  for (const partition of ["vbmeta", "init_boot"]) {
+  const writes = [];
+  // A phone with no vbmeta partition verifies nothing to turn off.
+  if (device.vbmeta) writes.push(["vbmeta", new Uint8Array(await files.vbmeta.arrayBuffer())]);
+  const initBoot = new Uint8Array(await files.init_boot.arrayBuffer());
+  if (device.mode === "init_boot") {
+    writes.push(["init_boot", initBoot]);
+  } else {
+    const stock = state.stockBoot.image;
+    const ramdisk = await stackRamdisks(stock.parts.ramdisk, parseBootImage(initBoot).parts.ramdisk);
+    const boot = await withRamdisk(stock, ramdisk);
+    const size = parseInt(await fastboot.getvar(`partition-size:boot${device.slot}`), 16);
+    if (boot.length > size) {
+      throw new Error(`The new boot image is ${megabytes(boot.length)}, larger than the phone's boot partition.`);
+    }
+    writes.push(["boot", boot]);
+  }
+  for (const [partition, bytes] of writes) {
     step("flash", "working", `Writing ${partition}`);
-    const bytes = new Uint8Array(await files[partition].arrayBuffer());
     await fastboot.flash(`${partition}${device.slot}`, bytes, (done) =>
       progress("flash-progress", done, bytes.length),
     );
@@ -282,12 +373,14 @@ async function flash() {
   }
   log(`userdata written in ${n} pieces`);
   step("flash", "done", `LosOS ${state.version} is on the phone.`);
+  state.flashed = true;
   enable("reboot");
 }
 
 async function reboot() {
   await state.fastboot.reboot();
   state.fastboot = null;
+  state.flashed = false;
   step("reboot", "done", "The phone is starting LosOS. The first boot grows the system to fill userdata.");
   enable("connect");
 }
@@ -305,6 +398,9 @@ function init() {
   $("download").onclick = () => guard("download", download);
   $("pick").onclick = () => $("pick-files").click();
   $("pick-files").onchange = (event) => guard("download", () => pick(event));
+  $("read-boot").onclick = () => guard("boot", readBoot);
+  $("pick-boot").onclick = () => $("pick-boot-file").click();
+  $("pick-boot-file").onchange = (event) => guard("boot", () => pickBoot(event));
   $("flash").onclick = () => guard("flash", flash);
   $("reboot").onclick = () => guard("reboot", reboot);
   // A phone that restarts into fastboot after unlocking comes back here.

@@ -21,10 +21,10 @@ derisk's own portal backend gives them its theme, screenshots and the
 wallpaper; GTK's covers the file chooser and the rest. The web browser is
 [Uranium](uranium.md), Chromium under the OS's own name.
 
-The same OS also builds as one generic system image for Android phones and
-tablets that launched with Android 13 or later, over [Halium](https://halium.org)
-(`nixos/halium/`): NixOS's systemd initrd as the phone's `init_boot`, the
-phone's own kernel, and its vendor HALs running in an LXC container. The
+The same OS also builds as one generic system image for Treble phones and
+tablets that take GSIs and run Linux 5.10 or newer, over
+[Halium](https://halium.org) (`nixos/halium/`): NixOS's systemd initrd as the
+phone's `init_boot` or beside its own ramdisk in `boot`, the phone's own kernel, and its vendor HALs running in an LXC container. The
 [web flasher](web-flasher.md) installs it from a browser. It has not run on a
 device yet; [Halium GSI](halium.md) says how it boots.
 

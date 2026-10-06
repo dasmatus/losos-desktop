@@ -66,9 +66,16 @@
   - **Updates.** sysupdate is not wired up; the flasher writes userdata whole,
     so installing a newer release erases the phone. There is no verity on the
     root either, and the bootloader stays unlocked.
-  - **Older devices.** A phone that launched before Android 13 has no
-    `init_boot` and boots kernel and ramdisk together; it would need a build
-    with its own kernel, which is what this target gave up.
+  - **Phones without `init_boot`.** The flasher writes their own boot image
+    back with this ramdisk after theirs. Its repacking matches AOSP's
+    `mkbootimg` byte for byte for header versions 0 to 4, and it was run
+    against a simulated phone in fastbootd, but no real bootloader has
+    booted such an image yet, and a phone whose ramdisk links `/etc` or
+    `/lib` elsewhere would merge badly with this one.
+  - **Kernels older than 5.10.** Phones that launched with Android 11 or
+    earlier run 4.x or 5.4 kernels, which systemd does not support at all.
+    The flasher reads the kernel's version and refuses them; supporting
+    them would mean an older systemd or a kernel built per device.
   - **hardened_malloc.** The PC build preloads it into every process; the GSI
     does not. Its default configuration reserves 32 GiB per size class per
     arena and needs a 48-bit address space, and Android kernels are usually

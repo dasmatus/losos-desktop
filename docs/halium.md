@@ -1,8 +1,8 @@
 # Halium GSI
 
 `nixos/halium/` is the phone and tablet target: one generic system image
-(GSI) for every Android device that launched with Android 13 or later,
-through [Halium](https://halium.org), the Android hardware layer that ports
+(GSI) for every Treble device that takes generic system images and runs
+Linux 5.10 or newer, through [Halium](https://halium.org), the Android hardware layer that ports
 such as Ubuntu Touch and Droidian build on. `nixosModules.gsi` imports
 `nixos/modules/base.nix`, which holds everything a PC and a phone share (the
 derisk desktop, homed accounts, networkd, pm, no Nix on the device, the `/etc`
@@ -19,23 +19,27 @@ it:
   Android, so Halium's generic Android 14 system image starts them on every
   device. It is pinned in `nixos/pkgs/halium-gsi.nix` and lives in the store,
   so it updates with the OS.
-- **GKI with `init_boot`.** A device that launched with Android 13 or later
-  boots its maker's kernel from `boot`, its first drivers from `vendor_boot`,
-  and the generic ramdisk from `init_boot`. The flasher replaces only that
-  ramdisk, so the kernel, its modules and its device tree stay the device's
-  own, and nothing here is built per device.
+- **The ramdisk is unpacked last.** A device that launched with Android 13
+  or later boots its maker's kernel from `boot`, its first drivers from
+  `vendor_boot`, and the generic ramdisk from `init_boot`, and the flasher
+  replaces only that ramdisk. An older device keeps kernel and ramdisk
+  together in `boot`; the flasher reads that boot image and writes it back
+  with this ramdisk after the device's own, which the kernel unpacks in
+  turn. Either way the kernel, its modules and its device tree stay the
+  device's own, and nothing here is built per device.
 
 ## How a device boots it
 
-1. The bootloader loads the device's kernel, unpacks `vendor_boot`'s ramdisk
-   and then `init_boot`'s, which is NixOS's systemd initrd, over it.
-2. In the initrd, `losos-gsi-first-stage-modules` loads what `vendor_boot`
-   lists in `/lib/modules/modules.load`: the storage controller and what it
-   hangs off. Without them there is no `userdata`.
+1. The bootloader loads the device's kernel and unpacks the device's own
+   ramdisk (`vendor_boot`'s, or `boot`'s on a device without `init_boot`),
+   then this one, NixOS's systemd initrd, over it.
+2. In the initrd, `losos-gsi-first-stage-modules` loads what the device's
+   ramdisk lists in `/lib/modules/modules.load`: the storage controller and
+   what it hangs off. Without them there is no `userdata`.
 3. `userdata` is the root filesystem, whole, mounted by partition label and
    grown to the partition by `x-systemd.growfs` on the first boot. The command
-   line comes from `boot` and `vendor_boot`, which this image does not write,
-   so there is no `init=`; the initrd boots
+   line comes from the device's own boot images, which keep theirs, so there
+   is no `init=`; the initrd boots
    `/nix/var/nix/profiles/system`, which the flashed filesystem carries.
 4. After switch-root, `losos-gsi-super` reads `super`'s logical partition
    metadata for the booted slot with `lpdump` and maps `vendor`, `odm`,
@@ -62,7 +66,9 @@ it:
 
 The system carries no kernel (`boot.kernel.enable = false`): the one that
 boots is the device's, so nixpkgs' would be dead weight in `rootfs`. Every
-device in scope runs 5.10 or newer, which is systemd's minimum baseline.
+device in scope runs 5.10 or newer, which is systemd's minimum baseline; the
+flasher reads the kernel's version out of a boot image it repacks and refuses
+an older one.
 
 Every mount on the Android side is `nofail`, so a device whose Android half is
 missing or broken still reaches the login screen.
@@ -93,7 +99,8 @@ flasher writes, with `SHA256SUMS`:
 The aarch64 release carries the same three files under its `SHA256SUMS` and
 signature, which is where the flasher downloads them from.
 
-Without the flasher, the same three go on with fastboot:
+Without the flasher, the same three go on with fastboot on a device with
+`init_boot`:
 
 ```sh
 fastboot flash vbmeta losos-desktop_<version>_gsi-vbmeta.img
@@ -105,14 +112,26 @@ fastboot reboot
 
 ## Which devices
 
-A device is in scope when its bootloader can be unlocked and it has an
-`init_boot` partition, which every device that launched with Android 13 or
-later has. The flasher checks the second with `getvar
-partition-size:init_boot_<slot>` and refuses a device without one.
+A device is in scope when its bootloader can be unlocked, it takes GSIs
+(Treble, which every device that launched with Android 9 or later has), and
+its kernel is Linux 5.10 or newer, which in practice means it launched with
+Android 12 or later:
 
-Older devices, which launched before `init_boot` existed, boot a kernel and
-ramdisk together from `boot`. A generic image cannot carry their kernel, so
-each would need its own build, and they are not a target.
+- With `init_boot` (launched with Android 13 or later), only `init_boot` is
+  written.
+- Without it (launched with Android 12), `boot` is written: the device's own
+  boot image, read back from the device in fastbootd or chosen from its
+  factory image, with this ramdisk appended to its own. The kernel's version
+  is checked there, and a kernel older than 5.10, as on devices that launched
+  with Android 11 or earlier, is refused.
+
+Every such device has `super`, since dynamic partitions are required of
+devices that launched with Android 10 or later, so `losos-gsi-super` has no
+fallback for physical vendor partitions. A device without `vendor_dlkm` or
+`system_dlkm`, as on Android 12, simply skips those mounts.
+
+A device this image cannot carry is one with a 4.x or 5.4 kernel: systemd
+does not run on it, and a generic image cannot bring a newer kernel.
 
 `nixos/pkgs/` builds `libhybris` from its upstream master and Halium's
 `android-headers` (one tree serves Halium 11 to 16).
