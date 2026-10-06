@@ -18,6 +18,7 @@
   writeShellScript,
   makeDesktopItem,
   ccache,
+  bubblewrap,
   runtimeShell,
   # nixpkgs' ungoogled-chromium build, without its wrapper, and the
   # ungoogled-chromium patch series it applies.
@@ -387,7 +388,24 @@ let
     ublockName = ublockOriginLite.name;
     tabs = ./uranium/tabs;
     appId = "uranium";
-    exec = "exec -a \"$0\" ${browser}/libexec/chromium/chromium";
+    # On a PC, /etc/ld-nix.so.preload puts hardened_malloc into every
+    # process (modules/allocator.nix), and Chromium aborts under it ("fatal
+    # allocator error: invalid uninitialized allocator usage"): its own
+    # allocator, PartitionAlloc, is malloc in Chromium, and the two end up
+    # freeing each other's memory. glibc reads that file for every program
+    # and has no switch to skip it, so the browser runs in a mount namespace
+    # where the file is empty. PartitionAlloc is hardened in its own right,
+    # which is why GrapheneOS keeps it in its own Chromium. The namespace
+    # is bubblewrap's unprivileged one, inside which Chromium's own sandbox
+    # still makes its namespaces. Halium has no preload and runs Chromium
+    # directly.
+    exec = ''
+      if [ -s /etc/ld-nix.so.preload ]; then
+        exec ${lib.getExe bubblewrap} --dev-bind / / \
+          --ro-bind /dev/null /etc/ld-nix.so.preload \
+          --argv0 "$0" -- ${browser}/libexec/chromium/chromium "$@"
+      fi
+      exec -a "$0" ${browser}/libexec/chromium/chromium'';
     inherit patched;
     x2mcsapi = lib.getExe x2mcsapi;
   };
@@ -410,6 +428,10 @@ let
     "chrome/browser/shell_integration_linux.cc"
     "chrome/browser/ui/views/toolbar/toolbar_view.cc"
     "chrome/browser/ui/views/frame/browser_view.cc"
+    "chrome/browser/ui/views/frame/layout/browser_view_tabbed_layout_impl.cc"
+    "chrome/browser/ui/browser_ui_prefs.cc"
+    "chrome/browser/extensions/api/settings_private/prefs_util.cc"
+    "chrome/browser/resources/settings/appearance_page/appearance_page.html.ts"
   ];
   patchCheck =
     runCommand "uranium-patch-check-${chromium-unwrapped.version}"
@@ -422,13 +444,10 @@ let
       }
       ''
         mkdir src && cd src
+        # Every string table and translation, which rebrand.py rewrites.
         tar --zstd -xf ${chromium-unwrapped.passthru.chromiumDeps.src} --wildcards \
           './chrome/app/theme/chromium/BRANDING' \
-          './chrome/app/chromium_strings.grd' \
-          './chrome/app/settings_chromium_strings.grdp' \
-          './chrome/app/resources/chromium_strings_*.xtb' \
-          './components/components_chromium_strings.grd' \
-          './components/strings/components_chromium_strings_*.xtb' \
+          './*.grd' './*.grdp' './*.xtb' \
           './tools/grit/*' \
           ${lib.concatMapStringsSep " " (file: "'./${file}'") sourceFiles}
         for p in ${lib.escapeShellArgs (patchesIn ./patches/chromium)}; do
@@ -439,7 +458,14 @@ let
           [ -n "$p" ] || continue
           filterdiff -p1 ${
             lib.concatMapStringsSep " " (file: "-i '${file}'") (
-              sourceFiles ++ [ "chrome/app/settings_chromium_strings.grdp" ]
+              sourceFiles
+              ++ [
+                "*.grd"
+                "*.grdp"
+                "*.xtb"
+                "chrome/browser/ungoogled_flag_entries.h"
+                "chrome/browser/bromite_flag_entries.h"
+              ]
             )
           } ${ungoogler}/patches/"$p" > hunks
           if [ -s hunks ]; then
@@ -452,6 +478,18 @@ let
         # The product name GRIT builds into every locale's strings.
         grep -A1 'name="IDS_PRODUCT_NAME" desc="The Chrome application name"' \
           chrome/app/chromium_strings.grd | grep -q Uranium
+        # No Google left in a string the browser shows, and none of
+        # ungoogled-chromium's name in its flags.
+        # (set -e ignores a negated command, hence the ifs.)
+        if grep -A2 'name="IDS_MANAGE_GOOGLE_ACCOUNT"' chrome/app/generated_resources.grd \
+          | grep -q Google; then
+          echo "rebrand.py left Google in a string" >&2
+          exit 1
+        fi
+        if grep -v '^ *//' chrome/browser/ungoogled_flag_entries.h | grep -q ungoogled-chromium; then
+          echo "rebrand.py left ungoogled-chromium in a flag" >&2
+          exit 1
+        fi
         touch $out
       '';
 

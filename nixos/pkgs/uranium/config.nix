@@ -102,8 +102,15 @@
   # Chromium's own colours, is the default outside GNOME), which the
   # launcher points at the one x2mcsapi generates from mcsapi's theme.
   # Settings → Appearance → Theme picks another.
+  #
+  # derisk decorates every window, so Chromium's own title bar would be a
+  # second one: its close button sat at the end of the tab strip beside
+  # derisk's. The system frame leaves the decorations to derisk. It has to
+  # be set before the first window opens; switched on in a running browser,
+  # the window lands over derisk's title bar until the next launch.
   initial_preferences = {
     profile.default_content_setting_values.javascript_optimizer = 2;
     extensions.theme.system_theme = 1;
+    browser.custom_chrome_frame = false;
   };
 }
