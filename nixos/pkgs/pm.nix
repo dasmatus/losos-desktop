@@ -3,13 +3,12 @@
 # pmd serves it over D-Bus.
 #
 # The image takes the OS from nixpkgs and keeps pm as the tool a user of the
-# running system builds and runs software with. It is pinned to a commit and
-# moved by hand, because pm's plugin contract has changed under this
-# repository before.
+# running system builds and runs software with. It is pinned by the
+# components/pm submodule and moved by hand, because pm's plugin contract has
+# changed under this repository before.
 {
   lib,
   rustPlatform,
-  fetchgit,
   pkg-config,
 }:
 
@@ -17,12 +16,12 @@ rustPlatform.buildRustPackage {
   pname = "pm";
   version = "0.1.0-unstable-2026-09-20";
 
-  # fetchgit rather than fetchFromGitHub: a git clone reaches github.com from
-  # hosts that cannot use its archive endpoint.
-  src = fetchgit {
-    url = "https://github.com/dichhead/pm";
-    rev = "47a32e3f74a99f3fe21b7af2d73ab1446da8bacc";
-    hash = "sha256-uckTm/0j4RBxPDmicpfkYtuMa4CHSx1NbtAUnWp+JRE=";
+  # The components/pm submodule, at the commit this tree records for it
+  # (flake.nix, `self.submodules`). cleanSource drops the submodule's .git
+  # file, so the source hash covers only the tree.
+  src = lib.cleanSourceWith {
+    name = "pm-source";
+    src = lib.cleanSource ../../components/pm;
   };
 
   cargoHash = "sha256-aTpouEF4TOrN4CYwqSFG8mK/mr+u3C0AeNldyCBNH1U=";

@@ -75,6 +75,14 @@ let
         #
         # cc_wrapper puts the compiler behind ccache when the builder has
         # one (ccacheWrapper), which is what lets CI compile this in rounds.
+        # The link gets the same treatment: Chromium already keeps a ThinLTO
+        # cache in out/Release/thinlto-cache, which dies with the build
+        # directory, so where the builder has the ccache directory, it is
+        # pointed into it and saved with the compiler cache. lld then
+        # optimizes again only the modules whose bitcode or imports changed,
+        # in the round after one that ran out of time mid-link and after a
+        # patch or a Chromium update alike. The directory is a symlink made
+        # at build time, so the derivation is the same without it.
         postConfigure =
           (old.postConfigure or "")
           + ''
@@ -95,6 +103,10 @@ let
                 exit 1
               fi
             done
+            if [ -d /var/cache/uranium-ccache ] && [ -w /var/cache/uranium-ccache ]; then
+              mkdir -p /var/cache/uranium-ccache/thinlto
+              ln -sfn /var/cache/uranium-ccache/thinlto out/Release/thinlto-cache
+            fi
           '';
       })
     else
