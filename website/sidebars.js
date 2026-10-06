@@ -32,7 +32,12 @@ module.exports = {
       collapsed: false,
       items: ['trust', 'packages', 'binary-cache', 'pm'],
     },
-    'halium',
+    {
+      type: 'category',
+      label: 'Phones',
+      collapsed: false,
+      items: ['halium', 'web-flasher'],
+    },
     {
       type: 'category',
       label: 'History and gaps',

@@ -40,10 +40,24 @@
     # here, plus a new cargoHash in nixos/pkgs when its Cargo.lock changed.
     # Nix 2.27 and later read this and fetch the submodules with the flake.
     self.submodules = true;
+
+    # Only for the check that builds the Home Manager module (nixos/home/pm.nix)
+    # into a real Home Manager generation. A user's own Home Manager is what
+    # imports the module, so nothing the image or a release builds reads this.
+    # git+https rather than github:, for the same api.github.com reason as
+    # nixpkgs above; shallow, because the history is not needed.
+    home-manager = {
+      url = "git+https://github.com/nix-community/home-manager?ref=master&shallow=1";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      home-manager,
+    }:
     let
       inherit (nixpkgs) lib;
 
@@ -73,11 +87,19 @@
         else
           value;
 
+      # What the images built for release take from the proxy's URL, which
+      # is a repository variable in CI rather than anything written here.
+      proxySettings = lib.optionalAttrs (proxyUrl != "") {
+        losos.uranium.flatpakRemote = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/flatpak/";
+        losos.ping.url = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/ping";
+      };
+
       mkSystem =
         system:
         lib.nixosSystem {
           modules = [
             self.nixosModules.default
+            proxySettings
             {
               # Use nixpkgs' standard glibc platform so its stock package
               # closures can substitute from cache.nixos.org.
@@ -88,24 +110,21 @@
               { config, ... }:
               lib.optionalAttrs (proxyUrl != "") {
                 # The image's update source and the artifact published to the
-                # proxy must agree; the URL is a repository variable in CI.
+                # proxy must agree.
                 losos.update.baseUrl = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/updates/${config.losos.channel}/${archOf system}/";
-                # And the Uranium Flatpak's remote (.github/workflows/uranium.yml).
-                losos.uranium.flatpakRemote = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/flatpak/";
-                losos.ping.url = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/ping";
               }
             )
           ];
         };
 
-      # The Halium build: the same OS on an Android phone's hardware layer
-      # (nixos/halium/). arm64 only, since that is what Halium devices are.
-      # This configuration has no device kernel and boots no device; it is
-      # what CI evaluates and builds, and a device port is this plus its
-      # losos.halium settings.
-      haliumSystem = lib.nixosSystem {
+      # The GSI: the same OS as one image for every Treble phone and tablet
+      # that takes generic system images and runs Linux 5.10 or newer, over
+      # Halium (nixos/halium/).
+      # arm64 only, since that is what those devices are.
+      gsiSystem = lib.nixosSystem {
         modules = [
-          self.nixosModules.halium
+          self.nixosModules.gsi
+          proxySettings
           {
             nixpkgs.hostPlatform = "aarch64-linux";
             losos.version = lib.mkDefault version;
@@ -118,16 +137,22 @@
     in
     {
       nixosModules.default = ./nixos/modules;
-      nixosModules.halium = ./nixos/halium;
+      nixosModules.gsi = ./nixos/halium;
 
       overlays.default = import ./nixos/pkgs;
+
+      # pm with its plugins installed by the user's Home Manager
+      # (docs/pm.md, "pm's plugins"): `programs.pm.enable = true`.
+      # homeManagerModules is the older name Home Manager's docs still use.
+      homeModules.pm = import ./nixos/home/pm.nix { inherit self; };
+      homeManagerModules.pm = self.homeModules.pm;
 
       nixosConfigurations =
         lib.listToAttrs (
           map (system: lib.nameValuePair "losos-desktop-${archOf system}" (mkSystem system)) systems
         )
         // {
-          losos-desktop-halium-aarch64 = haliumSystem;
+          losos-desktop-gsi-aarch64 = gsiSystem;
         };
 
       packages = forAllSystems (
@@ -142,7 +167,21 @@
           image = requireProxy build.image;
           installer = requireProxy build.installerIso;
           qcow2 = requireProxy build.qcow2;
-          release = requireProxy build.releaseArtifacts;
+          # On arm64 the release also carries the GSI's files, under the
+          # same SHA256SUMS and signature, which is where the web flasher
+          # (website/static/flasher/) downloads them from.
+          release = requireProxy (
+            if system == "aarch64-linux" then
+              pkgs.runCommand "${build.releaseArtifacts.name}-with-gsi" { } ''
+                mkdir -p $out
+                cp ${build.releaseArtifacts}/* ${gsiSystem.config.system.build.gsiImages}/* $out/
+                cd $out
+                rm SHA256SUMS
+                sha256sum -- * > SHA256SUMS
+              ''
+            else
+              build.releaseArtifacts
+          );
           uki = requireProxy build.uki;
           toplevel = build.toplevel;
           inherit (ours)
@@ -166,9 +205,10 @@
           default = requireProxy build.image;
         }
         // lib.optionalAttrs (system == "aarch64-linux") {
-          # boot.img and rootfs.img.xz, with SHA256SUMS. No update URL is
-          # baked into them, so this needs no LOSOS_PROXY_URL.
-          halium = haliumSystem.config.system.build.haliumImages;
+          # init_boot.img, vbmeta.img and userdata.simg.gz, with SHA256SUMS:
+          # what the flasher writes. No update URL is baked into them, so
+          # this needs no LOSOS_PROXY_URL.
+          gsi = gsiSystem.config.system.build.gsiImages;
           inherit (ours) libhybris;
         }
       );
@@ -200,12 +240,15 @@
           # pins. Building uranium-patched would prove more, but takes longer
           # than CI's budget; this reads one source tarball.
           uranium-patches = self.packages.${system}.uranium.patchCheck;
+          home-manager-pm = import ./nixos/tests/home-manager-pm.nix {
+            inherit self home-manager pkgs;
+          };
         }
         // lib.optionalAttrs (system == "aarch64-linux") {
-          # Every Halium module and assertion, libhybris's build, and the
-          # images themselves: mkbootimg, the ext4 rootfs and its
-          # compression only run when the images are built.
-          halium = self.packages.${system}.halium;
+          # Every GSI module and assertion, libhybris's build, and the
+          # images themselves: mkbootimg, avbtool, the ext4 rootfs and its
+          # sparse, compressed form only run when the images are built.
+          gsi = self.packages.${system}.gsi;
           libhybris = self.packages.${system}.libhybris;
         }
         # Boots the image under QEMU and checks the systemd pieces are actually

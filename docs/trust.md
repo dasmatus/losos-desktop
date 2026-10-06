@@ -37,6 +37,18 @@ Everything the flake builds from, besides this repository:
   `Cargo.lock` and `cargoHash`. It is the desktop, the display manager and the
   portal backend. The `components/mcsapi` submodule is the same mcsapi commit,
   and builds `x2mcsapi`.
+- **Home Manager**, `github.com/nix-community/home-manager`, pinned by
+  revision and `narHash` in `flake.lock`. Only `nix flake check` reads it, to
+  build `homeModules.pm` into a Home Manager generation
+  (`nixos/tests/home-manager-pm.nix`); the image and the release never do.
+- **Halium's generic system image** (`nixos/pkgs/halium-gsi.nix`), the
+  Android 14 system the [Halium GSI](halium.md) runs the vendor's HALs
+  under: UBports' build of Halium's AOSP tree, as Droidian publishes it in
+  its apt repository, pinned by the hash that repository's index gives for
+  the package. It is prebuilt bionic code nothing here can compile, and it
+  runs as host root in the Android container, so it is trusted as much as
+  the vendor blobs beside it. The phone's own kernel, vendor partitions and
+  bootloader are the device maker's, and the GSI trusts them as Android does.
 - **Flathub**, for apps installed after the fact. Its repo file, with the
   signing key every install is checked against, is
   `nixos/modules/flathub.flatpakrepo` in this tree; the image adds the remote

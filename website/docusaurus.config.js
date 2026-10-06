@@ -36,6 +36,21 @@ module.exports = {
     hooks: { onBrokenMarkdownLinks: 'throw' },
   },
 
+  // The web flasher (static/flasher/) is plain files, and the one thing it
+  // needs from the build is where the proxy is, which CI has as the
+  // repository variable LOSOS_PROXY_URL and nothing here names. Without it
+  // the flasher still installs from files the person already has.
+  plugins: [
+    () => ({
+      name: 'flasher-config',
+      async postBuild({ outDir }) {
+        const fs = require('node:fs/promises');
+        const config = { proxy: process.env.LOSOS_PROXY_URL || null, channel: 'nightly' };
+        await fs.writeFile(`${outDir}/flasher/config.json`, `${JSON.stringify(config)}\n`);
+      },
+    }),
+  ],
+
   presets: [
     [
       'classic',
@@ -61,12 +76,17 @@ module.exports = {
       colorMode: { respectPrefersColorScheme: true },
       navbar: {
         title: 'LosOS Desktop',
-        items: repository
-          ? [
+        items: [
+          // A page of its own outside the docs, so not a route Docusaurus
+          // knows; pathname:// links to it as a file.
+          { href: 'pathname:///flasher/', label: 'Flasher', position: 'left' },
+          ...(repository
+            ? [
               { href: `${repository}/wiki`, label: 'Wiki', position: 'right' },
               { href: repository, label: 'GitHub', position: 'right' },
             ]
-          : [],
+            : []),
+        ],
       },
       footer: {
         style: 'dark',

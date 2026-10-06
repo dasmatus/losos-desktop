@@ -87,11 +87,13 @@ in
   losos-installer = callWithMold ./losos-installer.nix { };
   losos-security = callWithMold ./losos-security.nix { };
   losos-swap = callWithMold ./losos-swap.nix { };
-  # Halium (nixos/modules/halium.nix): Android's HAL headers, and libhybris,
-  # which loads the vendor's bionic-linked GPU and HAL libraries into glibc
-  # processes.
+  # Halium (nixos/halium/): Android's HAL headers, libhybris, which loads
+  # the vendor's bionic-linked GPU and HAL libraries into glibc processes,
+  # and the generic Android system image that starts those HALs. That image
+  # is unpacked from Droidian's build, not linked, so it needs no mold.
   android-headers = callWithMold ./android-headers.nix { };
   libhybris = callWithMold ./libhybris.nix { };
+  halium-gsi = final.callPackage ./halium-gsi.nix { };
   # The Android Translation Layer (nixos/modules/atl.nix), which nixpkgs does
   # not carry either; only in the closure when losos.android.enable is set.
   android-translation-layer = callWithMold ./android-translation-layer.nix { };

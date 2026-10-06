@@ -17,8 +17,8 @@
 #   tools/nix-prebuild-plan x86_64 > plan.txt
 #   nix build --stdin < plan.txt
 #
-# On aarch64 the Halium images are included the same way, since flake check
-# builds them. Needs LOSOS_PROXY_URL, as building the release does.
+# On aarch64 the GSI's images are included the same way, since the release
+# carries them and flake check builds them. Needs LOSOS_PROXY_URL, as building the release does.
 set -euo pipefail
 
 [ $# = 1 ] || { sed -n 's/^#   //p' "$0" >&2; exit 2; }
@@ -41,7 +41,7 @@ targets() {
       for = version:
         [ (at \"losos-desktop-$arch\" version).config.system.build.releaseArtifacts.drvPath ]
         ++ (if \"$arch\" == \"aarch64\"
-            then [ (at \"losos-desktop-halium-aarch64\" version).config.system.build.haliumImages.drvPath ]
+            then [ (at \"losos-desktop-gsi-aarch64\" version).config.system.build.gsiImages.drvPath ]
             else [ ]);
     in builtins.concatStringsSep \"\n\" (for $1)"
 }
