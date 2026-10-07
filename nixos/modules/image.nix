@@ -11,8 +11,10 @@
 #
 #   system.build.image             the OS as a disk: write it to a disk and boot
 #   system.build.releaseArtifacts  what systemd-sysupdate downloads, plus the
-#                                  disk image and the installer ISO
-#                                  (installer.nix), with SHA256SUMS
+#                                  disk image, the installer ISO
+#                                  (installer.nix) and, on x86_64, the
+#                                  Windows installer (windows-installer.nix),
+#                                  with SHA256SUMS
 #
 # The installer used to be this image again, with a second UKI that booted
 # into an install. installer.nix says why it is a separate live system now.
@@ -252,6 +254,10 @@ in
 
         xz --threads=$NIX_BUILD_CORES -c ${image}/${raw} > ${prefix}_${arch.name}.raw.xz
         cp ${config.system.build.installerIso} ${prefix}_${arch.name}-installer.iso
+        ${lib.optionalString (config.system.build ? windowsInstaller) ''
+          cp ${config.system.build.windowsInstaller}/bin/losos-windows-installer.exe \
+            ${prefix}_${arch.name}-windows-installer.exe
+        ''}
         qemu-img convert -f raw -O qcow2 ${image}/${raw} ${prefix}_${arch.name}.qcow2
 
         sha256sum -- * > SHA256SUMS

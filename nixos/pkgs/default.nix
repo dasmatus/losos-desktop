@@ -86,6 +86,9 @@ in
   derisk = callWithMold ./derisk.nix { };
   losos-installer = callWithMold ./losos-installer.nix { };
   losos-security = callWithMold ./losos-security.nix { };
+  # The Windows installer's Linux build, for its tests and for installing
+  # into a disk image; the .exe is windows-installer.nix's.
+  losos-windows-installer = callWithMold ./losos-windows-installer.nix { };
   losos-swap = callWithMold ./losos-swap.nix { };
   # Halium (nixos/halium/): Android's HAL headers, libhybris, which loads
   # the vendor's bionic-linked GPU and HAL libraries into glibc processes,

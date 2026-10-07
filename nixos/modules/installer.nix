@@ -57,7 +57,11 @@ let
       inherit (config.systemd.repart) partitions;
     in
     {
+      # disk.nix only matches an ESP; the installer makes this one, at the
+      # size image.nix gives its own.
       "10-esp" = partitions."10-esp" // {
+        SizeMinBytes = "512M";
+        SizeMaxBytes = "512M";
         CopyFiles = espFiles;
       };
       "20-usr-verity-a" = partitions."20-usr-verity-a" // {
@@ -90,7 +94,14 @@ let
       moved =
         if target.Type == "partition" then
           { Path = "@TARGET@"; }
-        else if (target.PathRelativeTo or "root") == "esp" then
+        # $BOOT is the ESP on a disk the installer lays out, which has no
+        # XBOOTLDR partition.
+        else if
+          lib.elem (target.PathRelativeTo or "root") [
+            "esp"
+            "boot"
+          ]
+        then
           {
             Path = "${esp}${target.Path}";
             PathRelativeTo = "root";
