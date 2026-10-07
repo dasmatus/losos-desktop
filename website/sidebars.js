@@ -17,6 +17,7 @@ module.exports = {
         'installer',
         'windows-installer',
         'first-boot',
+        'sign-in',
         'releases',
         'allocator',
         'security-report',
