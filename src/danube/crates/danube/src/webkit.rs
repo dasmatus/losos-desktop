@@ -286,15 +286,15 @@ impl Display {
             }
             let mut entries = ptr::null_mut();
             let mut n = 0;
-            // A TRUE return fills `entries` with `n` of them; the null
-            // check is for a keymap that says so with none.
+            // A TRUE return fills `entries` with `n` of them.
             if wpe_keymap_get_entries_for_keyval(keymap, keyval, &mut entries, &mut n) == FALSE
                 || n == 0
-                || entries.is_null()
             {
                 return 0;
             }
-            let code = (*entries).keycode;
+            // `as_ref` is `None` for a keymap that says TRUE and hands back
+            // no array, so the read never touches a null pointer.
+            let code = entries.as_ref().map_or(0, |entry| entry.keycode);
             g_free(entries.cast());
             code
         }
