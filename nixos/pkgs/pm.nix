@@ -10,12 +10,11 @@
   lib,
   rustPlatform,
   pkg-config,
+  lld,
+  llvmPackages,
 }:
 
-rustPlatform.buildRustPackage {
-  pname = "pm";
-  version = "0.1.0-unstable-2026-09-20";
-
+let
   # The components/pm submodule, at the commit this tree records for it
   # (flake.nix, `self.submodules`). cleanSource drops the submodule's .git
   # file, so the source hash covers only the tree.
@@ -24,9 +23,69 @@ rustPlatform.buildRustPackage {
     src = lib.cleanSource ../../components/pm;
   };
 
-  cargoHash = "sha256-aTpouEF4TOrN4CYwqSFG8mK/mr+u3C0AeNldyCBNH1U=";
+  # pm's build.rs compiles its bundled plugins from plugins/, a workspace of
+  # its own with its own lock, in a nested cargo run; this is that lock's
+  # crates, as cargoDeps is pm's. pm-plugins.nix builds from the same
+  # workspace and takes them from here.
+  pluginsDeps = rustPlatform.fetchCargoVendor {
+    name = "pm-plugins";
+    inherit src;
+    sourceRoot = "${src.name}/plugins";
+    hash = "sha256-fSunFckO17JITyvPJRURq597MNeqfSrah+3bhtZbfac=";
+  };
+in
+rustPlatform.buildRustPackage {
+  pname = "pm";
+  version = "0.1.0-unstable-2026-10-07";
 
-  nativeBuildInputs = [ pkg-config ];
+  inherit src;
+
+  cargoHash = "sha256-SNqfEX73OIVkbaaZhH/j0cBrY5peStoNEjyaT/JDlk0=";
+
+  # build.rs builds the plugins for wasm32-unknown-unknown. nixpkgs' rustc
+  # carries that target's std but links it with `lld` from PATH rather than
+  # a bundled rust-lld, and the tree-sitter grammars among them are C, which
+  # takes a clang that targets wasm32: the unwrapped one, since the cc
+  # wrapper adds flags for the host.
+  nativeBuildInputs = [
+    pkg-config
+    lld
+    llvmPackages.clang-unwrapped
+    llvmPackages.llvm
+  ];
+  env = {
+    CC_wasm32_unknown_unknown = "clang";
+    AR_wasm32_unknown_unknown = "llvm-ar";
+  };
+
+  # nixpkgs' rustc has no std for wasm32-wasip2, which build.rs wants for
+  # one test fixture: a plugin that asks for WASI and must be refused. pm
+  # itself never loads it, so it is left out here, and the one test that
+  # reads it is skipped below.
+  postPatch = ''
+        substituteInPlace build.rs \
+          --replace-fail '    compile_wasi_fixture(&plugins, &target_dir);
+        copy_if_changed(
+            &target_dir.join("wasm32-wasip2/release/wasi.wasm"),
+            &test_components.join("wasi.wasm"),
+        );
+    ' ""
+  '';
+
+  # The nested cargo build in plugins/ reads this before the vendored pm
+  # crates cargoSetupHook configures, which do not hold the plugins' crates.
+  # fetchCargoVendor keeps crates.io crates one level down.
+  preBuild = ''
+    mkdir -p plugins/.cargo
+    cat > plugins/.cargo/config.toml <<EOF
+    [source.crates-io]
+    replace-with = "pm-plugins-vendored"
+    [source.pm-plugins-vendored]
+    directory = "${pluginsDeps}/source-registry-0"
+    EOF
+  '';
+
+  passthru = { inherit pluginsDeps; };
 
   # pm's own suite, less what assumes a conventional Linux host. context,
   # perms, pm_trace, sandbox, steps, symbols and worker run /bin/cat,
@@ -55,10 +114,12 @@ rustPlatform.buildRustPackage {
     "progress"
     "wire"
   ];
-  # The two tests in command_output that spawn a literal /bin/true.
+  # The two tests in command_output that spawn a literal /bin/true, and the
+  # one that loads the WASI fixture postPatch leaves out.
   checkFlags = [
     "--skip=a_finished_command_leaves_no_line_behind"
     "--skip=a_sandbox_without_progress_still_runs_commands"
+    "--skip=a_plugin_that_wants_more_of_the_host_than_log_does_not_instantiate"
   ];
 
   meta = {

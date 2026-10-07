@@ -13,6 +13,7 @@
     ./disk.nix
     ./update.nix
     ./installer.nix
+    ./windows-installer.nix
     ./testing.nix
   ];
 }
