@@ -6,29 +6,30 @@
 //!
 //! The engine lives in a thread-local, since every WebKit object belongs to
 //! this thread. Signal handlers get the tab's id as their data and mostly
-//! touch only [`Shared`]; the few that need the engine itself borrow it
-//! with [`try_with`] and give up cleanly (deny, block the popup) when a
-//! command being handled already has it, which only happens when WebKit
-//! emits a signal from inside a call the engine made.
+//! only send the window an [`Event`] (through [`LINK`], another
+//! thread-local); the few that need the engine itself borrow it with
+//! [`try_with`] and give up cleanly (deny, block the popup) when a command
+//! being handled already has it, which only happens when WebKit emits a
+//! signal from inside a call the engine made.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_uint};
 use std::path::{Path, PathBuf};
 use std::ptr;
-use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
 
+use crossbeam_channel::Receiver;
 use eframe::egui;
-use tracing::{info, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::callback;
 use crate::config::{self, Settings};
 use crate::ffi::*;
 use crate::input::{Input, Touch};
 use crate::permissions::{self, Kind};
-use crate::shared::{Command, PermissionAsk, Shared, Tab, TabId};
+use crate::shared::{Command, Event, Events, PermissionAsk, Tab, TabId};
 
 /// How the engine starts.
 pub struct Options {
@@ -55,7 +56,6 @@ struct Entry {
 }
 
 struct Engine {
-    shared: Arc<Shared>,
     commands: Receiver<Command>,
     main_loop: *mut GMainLoop,
     display: *mut WPEDisplay,
@@ -90,20 +90,32 @@ struct Filters {
     /// compiles again under a new name and the old one can be removed.
     current: Vec<String>,
     loaded: usize,
-    shared: Arc<Shared>,
 }
 
 thread_local! {
     static ENGINE: RefCell<Option<Engine>> = const { RefCell::new(None) };
+    /// The channel to the window, for signal handlers, which must reach
+    /// it even while a command has the engine borrowed.
+    static LINK: RefCell<Option<Events>> = const { RefCell::new(None) };
     static FILTERS: RefCell<Option<Filters>> = const { RefCell::new(None) };
     /// What the window last pasted into WebKit's clipboard, so that putting
     /// it there is not mistaken for the page copying it.
     static PASTED: RefCell<Option<String>> = const { RefCell::new(None) };
-    static DOWNLOADS: RefCell<PathBuf> = RefCell::new(PathBuf::new());
+    static DOWNLOADS: RefCell<PathBuf> = const { RefCell::new(PathBuf::new()) };
 }
 
 fn try_with<R>(f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
     ENGINE.with(|e| e.try_borrow_mut().ok()?.as_mut().map(f))
+}
+
+/// Tells the window `event`, and repaints it. The window being gone is
+/// not an error here: WebKit is about to quit on its command.
+fn emit(event: Event) {
+    LINK.with(|l| {
+        if let Some(link) = l.borrow().as_ref() {
+            let _ = link.send(event);
+        }
+    });
 }
 
 /// Wakes the main loop to handle the window's commands. Safe from any
@@ -117,19 +129,26 @@ pub fn wake() {
         })
         .is_none();
         // Busy only if a command's own WebKit call ran the loop; try again.
-        if busy { TRUE } else { FALSE }
+        if busy {
+            TRUE
+        } else {
+            FALSE
+        }
     }
     unsafe { g_idle_add_full(G_PRIORITY_DEFAULT, drain, ptr::null_mut(), None) };
 }
 
 /// Runs WebKit until the window closes or asks it to quit.
-pub fn run(shared: Arc<Shared>, commands: Receiver<Command>, options: Options) {
-    let _ = SHARED.set(shared.clone());
+pub fn run(commands: Receiver<Command>, events: Events, options: Options) {
+    LINK.with(|l| *l.borrow_mut() = Some(events));
     unsafe {
         let display = wpe_display_headless_new();
         let mut error = ptr::null_mut();
         if wpe_display_connect(display, &mut error) == FALSE {
-            warn!(error = take_error(error), "cannot connect WPE's headless display");
+            warn!(
+                error = take_error(error),
+                "cannot connect WPE's headless display"
+            );
         }
         wpe_display_set_primary(display);
 
@@ -147,7 +166,12 @@ pub fn run(shared: Arc<Shared>, commands: Receiver<Command>, options: Options) {
         // No keyring: the sandbox has no Secret Service to talk to, and a
         // password manager extension keeps passwords.
         webkit_network_session_set_persistent_credential_storage_enabled(session, FALSE);
-        connect(session.cast(), "download-started", callback!(on_download as unsafe extern "C" fn(_, _, _)), ptr::null_mut());
+        connect(
+            session.cast(),
+            "download-started",
+            callback!(on_download as unsafe extern "C" fn(_, _, _)),
+            ptr::null_mut(),
+        );
         DOWNLOADS.with(|d| *d.borrow_mut() = options.downloads.clone());
 
         let settings = webkit_settings_new();
@@ -158,7 +182,11 @@ pub fn run(shared: Arc<Shared>, commands: Receiver<Command>, options: Options) {
         webkit_settings_set_allow_top_navigation_to_data_urls(settings, FALSE);
         let name = cstring("Danube");
         let version = cstring(env!("CARGO_PKG_VERSION"));
-        webkit_settings_set_user_agent_with_application_details(settings, name.as_ptr(), version.as_ptr());
+        webkit_settings_set_user_agent_with_application_details(
+            settings,
+            name.as_ptr(),
+            version.as_ptr(),
+        );
         let desktop_agent = string(webkit_settings_get_user_agent(settings)).unwrap_or_default();
 
         let content = webkit_user_content_manager_new();
@@ -168,7 +196,7 @@ pub fn run(shared: Arc<Shared>, commands: Receiver<Command>, options: Options) {
             clipboard.cast(),
             "notify::change-count",
             callback!(on_clipboard as unsafe extern "C" fn(_, _, _)),
-            Arc::as_ptr(&shared) as gpointer,
+            ptr::null_mut(),
         );
 
         let main_loop = g_main_loop_new(ptr::null_mut(), FALSE);
@@ -185,17 +213,21 @@ pub fn run(shared: Arc<Shared>, commands: Receiver<Command>, options: Options) {
                     stamp: None,
                     current: Vec::new(),
                     loaded: 0,
-                    shared: shared.clone(),
                 })
             });
             reload_filters();
             // losos-adblock compiles daily; a minute is soon enough to
             // pick up a new compile, and costs one stat.
-            g_timeout_add_full(G_PRIORITY_DEFAULT, 60_000, check_filters, ptr::null_mut(), None);
+            g_timeout_add_full(
+                G_PRIORITY_DEFAULT,
+                60_000,
+                check_filters,
+                ptr::null_mut(),
+                None,
+            );
         }
 
         let engine = Engine {
-            shared: shared.clone(),
             commands,
             main_loop,
             display,
@@ -237,13 +269,21 @@ pub fn run(shared: Arc<Shared>, commands: Receiver<Command>, options: Options) {
 
         info!("WebKit is up");
         g_main_loop_run(main_loop);
-        shared.update(|s| s.quit = true);
     }
+    emit(Event::Quit);
+    // Dropping the channels: senders of commands see WebKit is gone.
+    ENGINE.with(|e| e.borrow_mut().take());
+    LINK.with(|l| l.borrow_mut().take());
 }
 
 impl Engine {
     fn handle(&mut self, command: Command) {
         match command {
+            Command::Attach(ctx) => LINK.with(|l| {
+                if let Some(link) = l.borrow_mut().as_mut() {
+                    link.attach(ctx);
+                }
+            }),
             Command::NewTab { uri, activate } => {
                 let id = self.open(uri.as_deref(), None);
                 if activate {
@@ -258,24 +298,23 @@ impl Engine {
                     unsafe { webkit_web_view_load_uri(view, uri.as_ptr()) };
                 }
             }
-            Command::Back(id) => self.view(id).map_or((), |v| unsafe { webkit_web_view_go_back(v) }),
-            Command::Forward(id) => {
-                self.view(id).map_or((), |v| unsafe { webkit_web_view_go_forward(v) })
-            }
-            Command::Reload(id) => {
-                if let Some(view) = self.view(id) {
-                    self.shared.update(|s| {
-                        if let Some(t) = s.tabs.iter_mut().find(|t| t.id == id) {
-                            t.crashed = false;
-                        }
-                    });
-                    unsafe { webkit_web_view_reload(view) };
-                }
-            }
-            Command::Stop(id) => {
-                self.view(id).map_or((), |v| unsafe { webkit_web_view_stop_loading(v) })
-            }
-            Command::Resize { width, height, scale } => {
+            Command::Back(id) => self
+                .view(id)
+                .map_or((), |v| unsafe { webkit_web_view_go_back(v) }),
+            Command::Forward(id) => self
+                .view(id)
+                .map_or((), |v| unsafe { webkit_web_view_go_forward(v) }),
+            Command::Reload(id) => self
+                .view(id)
+                .map_or((), |v| unsafe { webkit_web_view_reload(v) }),
+            Command::Stop(id) => self
+                .view(id)
+                .map_or((), |v| unsafe { webkit_web_view_stop_loading(v) }),
+            Command::Resize {
+                width,
+                height,
+                scale,
+            } => {
                 let width = width.max(1);
                 let height = height.max(1);
                 if self.size != (width, height, scale) {
@@ -312,12 +351,28 @@ impl Engine {
                 if let Some(wpe) = self.entry(id).map(|e| e.wpe) {
                     let held = self.modifiers;
                     self.modifiers = WPE_MODIFIER_KEYBOARD_CONTROL;
-                    self.input(wpe, Input::Key { keyval: 'v' as u32, pressed: true });
-                    self.input(wpe, Input::Key { keyval: 'v' as u32, pressed: false });
+                    self.input(
+                        wpe,
+                        Input::Key {
+                            keyval: 'v' as u32,
+                            pressed: true,
+                        },
+                    );
+                    self.input(
+                        wpe,
+                        Input::Key {
+                            keyval: 'v' as u32,
+                            pressed: false,
+                        },
+                    );
                     self.modifiers = held;
                 }
             }
-            Command::Permission { id, allow, remember } => {
+            Command::Permission {
+                id,
+                allow,
+                remember,
+            } => {
                 if let Some((request, host, kind)) = self.pending.remove(&id) {
                     if remember {
                         self.permissions.set(&host, kind, allow);
@@ -331,7 +386,7 @@ impl Engine {
                         g_object_unref(request.cast());
                     }
                 }
-                self.shared.update(|s| s.permissions.retain(|p| p.id != id));
+                emit(Event::PermissionDone(id));
             }
             Command::Phone(phone) => {
                 let agent = if phone {
@@ -406,25 +461,76 @@ impl Engine {
         let data = id as gpointer;
         unsafe {
             let notify = callback!(on_notify as unsafe extern "C" fn(_, _, _));
-            for signal in ["notify::title", "notify::uri", "notify::estimated-load-progress", "notify::is-loading"] {
+            for signal in [
+                "notify::title",
+                "notify::uri",
+                "notify::estimated-load-progress",
+                "notify::is-loading",
+            ] {
                 connect(view.cast(), signal, notify, data);
             }
-            connect(view.cast(), "load-changed", callback!(on_load_changed as unsafe extern "C" fn(_, _, _)), data);
-            connect(view.cast(), "create", callback!(on_create as unsafe extern "C" fn(_, _, _) -> _), data);
-            connect(view.cast(), "ready-to-show", callback!(on_ready_to_show as unsafe extern "C" fn(_, _)), data);
-            connect(view.cast(), "close", callback!(on_close as unsafe extern "C" fn(_, _)), data);
-            connect(view.cast(), "decide-policy", callback!(on_decide_policy as unsafe extern "C" fn(_, _, _, _) -> _), data);
-            connect(view.cast(), "permission-request", callback!(on_permission as unsafe extern "C" fn(_, _, _) -> _), data);
-            connect(view.cast(), "mouse-target-changed", callback!(on_mouse_target as unsafe extern "C" fn(_, _, _, _)), data);
-            connect(view.cast(), "web-process-terminated", callback!(on_crashed as unsafe extern "C" fn(_, _, _)), data);
-            connect(wpe.cast(), "buffer-rendered", callback!(on_frame as unsafe extern "C" fn(_, _, _)), data);
+            connect(
+                view.cast(),
+                "load-changed",
+                callback!(on_load_changed as unsafe extern "C" fn(_, _, _)),
+                data,
+            );
+            connect(
+                view.cast(),
+                "create",
+                callback!(on_create as unsafe extern "C" fn(_, _, _) -> _),
+                data,
+            );
+            connect(
+                view.cast(),
+                "ready-to-show",
+                callback!(on_ready_to_show as unsafe extern "C" fn(_, _)),
+                data,
+            );
+            connect(
+                view.cast(),
+                "close",
+                callback!(on_close as unsafe extern "C" fn(_, _)),
+                data,
+            );
+            connect(
+                view.cast(),
+                "decide-policy",
+                callback!(on_decide_policy as unsafe extern "C" fn(_, _, _, _) -> _),
+                data,
+            );
+            connect(
+                view.cast(),
+                "permission-request",
+                callback!(on_permission as unsafe extern "C" fn(_, _, _) -> _),
+                data,
+            );
+            connect(
+                view.cast(),
+                "mouse-target-changed",
+                callback!(on_mouse_target as unsafe extern "C" fn(_, _, _, _)),
+                data,
+            );
+            connect(
+                view.cast(),
+                "web-process-terminated",
+                callback!(on_crashed as unsafe extern "C" fn(_, _, _)),
+                data,
+            );
+            connect(
+                wpe.cast(),
+                "buffer-rendered",
+                callback!(on_frame as unsafe extern "C" fn(_, _, _)),
+                data,
+            );
             wpe_view_set_visible(wpe, FALSE);
         }
         self.fit(wpe);
         self.tabs.push(Entry { id, view, wpe });
-        self.shared.update(|s| {
-            s.tabs.push(Tab { id, ..Tab::default() });
-        });
+        emit(Event::Opened(Tab {
+            id,
+            ..Tab::default()
+        }));
         if related.is_none() {
             let uri = cstring(uri.unwrap_or(&self.home));
             unsafe { webkit_web_view_load_uri(view, uri.as_ptr()) };
@@ -441,13 +547,16 @@ impl Engine {
             let shown = entry.id == id;
             unsafe { wpe_view_set_visible(entry.wpe, shown as gboolean) };
         }
-        if let Some(old) = previous.filter(|old| *old != id).and_then(|old| self.entry(old)) {
+        if let Some(old) = previous
+            .filter(|old| *old != id)
+            .and_then(|old| self.entry(old))
+        {
             let wpe = old.wpe;
             self.set_focus(wpe, false);
         }
         let wpe = self.entry(id).unwrap().wpe;
         self.set_focus(wpe, self.focused);
-        self.shared.update(|s| s.active = Some(id));
+        emit(Event::Activated(id));
     }
 
     fn close(&mut self, id: TabId) {
@@ -459,19 +568,16 @@ impl Engine {
             self.active = None;
             // The neighbour to the right takes its place, as in most
             // browsers, or the one to the left at the end of the strip.
-            let next = self.tabs.get(index).or_else(|| self.tabs.last()).map(|e| e.id);
+            let next = self
+                .tabs
+                .get(index)
+                .or_else(|| self.tabs.last())
+                .map(|e| e.id);
             if let Some(next) = next {
                 self.activate(next);
             }
         }
-        self.shared.update(|s| {
-            s.tabs.retain(|t| t.id != id);
-            s.frames.remove(&id);
-            s.permissions.retain(|p| p.tab != id);
-            if s.active == Some(id) {
-                s.active = None;
-            }
-        });
+        emit(Event::Closed(id));
         unsafe { g_object_unref(entry.view.cast()) };
         if self.tabs.is_empty() {
             // The last tab closed: the window goes too.
@@ -495,7 +601,14 @@ impl Engine {
         unsafe {
             let toplevel = wpe_view_get_toplevel(wpe);
             if !toplevel.is_null() {
-                wpe_toplevel_state_changed(toplevel, if focused { WPE_TOPLEVEL_STATE_ACTIVE } else { 0 });
+                wpe_toplevel_state_changed(
+                    toplevel,
+                    if focused {
+                        WPE_TOPLEVEL_STATE_ACTIVE
+                    } else {
+                        0
+                    },
+                );
             }
             if focused {
                 wpe_view_focus_in(wpe);
@@ -543,7 +656,12 @@ impl Engine {
                     0.0,
                     0.0,
                 ),
-                Input::Button { x, y, button, pressed } => {
+                Input::Button {
+                    x,
+                    y,
+                    button,
+                    pressed,
+                } => {
                     self.pointer = (x, y);
                     let mask = match button {
                         1 => WPE_MODIFIER_POINTER_BUTTON1,
@@ -552,7 +670,10 @@ impl Engine {
                     };
                     let (kind, count) = if pressed {
                         self.buttons |= mask;
-                        (WPE_EVENT_POINTER_DOWN, wpe_view_compute_press_count(wpe, x, y, button, time))
+                        (
+                            WPE_EVENT_POINTER_DOWN,
+                            wpe_view_compute_press_count(wpe, x, y, button, time),
+                        )
                     } else {
                         self.buttons &= !mask;
                         (WPE_EVENT_POINTER_UP, 0)
@@ -569,11 +690,21 @@ impl Engine {
                         count,
                     )
                 }
-                Input::Scroll { x, y, dx, dy, precise } => {
+                Input::Scroll {
+                    x,
+                    y,
+                    dx,
+                    dy,
+                    precise,
+                } => {
                     let (x, y) = if x.is_nan() { self.pointer } else { (x, y) };
                     wpe_event_scroll_new(
                         wpe,
-                        if precise { WPE_INPUT_SOURCE_TOUCHPAD } else { WPE_INPUT_SOURCE_MOUSE },
+                        if precise {
+                            WPE_INPUT_SOURCE_TOUCHPAD
+                        } else {
+                            WPE_INPUT_SOURCE_MOUSE
+                        },
                         time,
                         self.modifiers,
                         dx,
@@ -587,7 +718,11 @@ impl Engine {
                 Input::Key { keyval, pressed } => {
                     let keycode = keycode(self.display, keyval);
                     wpe_event_keyboard_new(
-                        if pressed { WPE_EVENT_KEYBOARD_KEY_DOWN } else { WPE_EVENT_KEYBOARD_KEY_UP },
+                        if pressed {
+                            WPE_EVENT_KEYBOARD_KEY_DOWN
+                        } else {
+                            WPE_EVENT_KEYBOARD_KEY_UP
+                        },
                         wpe,
                         WPE_INPUT_SOURCE_KEYBOARD,
                         time,
@@ -603,7 +738,16 @@ impl Engine {
                         Touch::Up => WPE_EVENT_TOUCH_UP,
                         Touch::Cancel => WPE_EVENT_TOUCH_CANCEL,
                     };
-                    wpe_event_touch_new(kind, wpe, WPE_INPUT_SOURCE_TOUCHSCREEN, time, self.modifiers, id, x, y)
+                    wpe_event_touch_new(
+                        kind,
+                        wpe,
+                        WPE_INPUT_SOURCE_TOUCHSCREEN,
+                        time,
+                        self.modifiers,
+                        id,
+                        x,
+                        y,
+                    )
                 }
             }
         };
@@ -663,33 +807,25 @@ unsafe fn refresh(view: *mut WebKitWebView, id: TabId) -> Tab {
     }
 }
 
-/// The shared state, for signal handlers, which must reach it even while a
-/// command has the engine borrowed. Set once, before WebKit starts.
-static SHARED: std::sync::OnceLock<Arc<Shared>> = std::sync::OnceLock::new();
-
-fn the_shared() -> Arc<Shared> {
-    SHARED.get().cloned().expect("set before WebKit starts")
-}
-
-unsafe extern "C" fn on_notify(view: *mut WebKitWebView, _: *mut GParamSpec, data: gpointer) {
-    let id = data as TabId;
-    let tab = unsafe { refresh(view, id) };
-    the_shared().update(|s| {
-        if let Some(t) = s.tabs.iter_mut().find(|t| t.id == id) {
-            let crashed = t.crashed;
-            *t = Tab { crashed, ..tab };
+/// Sends the engine a command of its own, through the window's channel,
+/// for a handler that cannot borrow the engine right now.
+fn later(command: Command) {
+    LINK.with(|l| {
+        if let Some(link) = l.borrow().as_ref() {
+            link.defer(command);
         }
     });
 }
 
+unsafe extern "C" fn on_notify(view: *mut WebKitWebView, _: *mut GParamSpec, data: gpointer) {
+    let id = data as TabId;
+    emit(Event::Changed(unsafe { refresh(view, id) }));
+}
+
 unsafe extern "C" fn on_load_changed(view: *mut WebKitWebView, event: c_int, data: gpointer) {
+    debug!(tab = data as TabId, event, "load changed");
     if event == WEBKIT_LOAD_STARTED {
-        let id = data as TabId;
-        the_shared().update(|s| {
-            if let Some(t) = s.tabs.iter_mut().find(|t| t.id == id) {
-                t.crashed = false;
-            }
-        });
+        emit(Event::LoadStarted(data as TabId));
     }
     unsafe { on_notify(view, ptr::null_mut(), data) };
 }
@@ -699,6 +835,7 @@ unsafe extern "C" fn on_frame(_: *mut WPEView, buffer: *mut WPEBuffer, data: gpo
     let image = unsafe {
         let width = wpe_buffer_get_width(buffer).max(0) as usize;
         let height = wpe_buffer_get_height(buffer).max(0) as usize;
+        trace!(tab = id, width, height, "frame");
         let mut error = ptr::null_mut();
         let bytes = wpe_buffer_import_to_pixels(buffer, &mut error);
         if bytes.is_null() {
@@ -714,9 +851,7 @@ unsafe extern "C" fn on_frame(_: *mut WPEView, buffer: *mut WPEBuffer, data: gpo
         to_image(pixels, width, height)
     };
     if let Some(image) = image {
-        the_shared().update(|s| {
-            s.frames.insert(id, Arc::new(image));
-        });
+        emit(Event::Frame(id, Arc::new(image)));
     }
 }
 
@@ -756,23 +891,18 @@ unsafe extern "C" fn on_create(
 unsafe extern "C" fn on_ready_to_show(_: *mut WebKitWebView, data: gpointer) {
     let id = data as TabId;
     if try_with(|e| e.activate(id)).is_none() {
-        the_shared().send(Command::Activate(id));
+        later(Command::Activate(id));
     }
 }
 
 unsafe extern "C" fn on_close(_: *mut WebKitWebView, data: gpointer) {
-    the_shared().send(Command::Close(data as TabId));
+    later(Command::Close(data as TabId));
 }
 
 unsafe extern "C" fn on_crashed(_: *mut WebKitWebView, _reason: c_int, data: gpointer) {
     let id = data as TabId;
     warn!(tab = id, "a web process ended");
-    the_shared().update(|s| {
-        if let Some(t) = s.tabs.iter_mut().find(|t| t.id == id) {
-            t.crashed = true;
-            t.loading = false;
-        }
-    });
+    emit(Event::Crashed(id));
 }
 
 unsafe extern "C" fn on_decide_policy(
@@ -802,7 +932,10 @@ unsafe extern "C" fn on_decide_policy(
                     return FALSE;
                 };
                 webkit_policy_decision_ignore(decision);
-                the_shared().send(Command::NewTab { uri: Some(uri), activate: false });
+                later(Command::NewTab {
+                    uri: Some(uri),
+                    activate: false,
+                });
                 TRUE
             }
             _ => FALSE,
@@ -847,9 +980,12 @@ unsafe extern "C" fn on_permission(
                 e.next_permission += 1;
                 g_object_ref(request.cast());
                 e.pending.insert(id, (request, host.clone(), kind));
-                e.shared.update(|s| {
-                    s.permissions.push_back(PermissionAsk { id, tab, host: host.clone(), kind })
-                });
+                emit(Event::Permission(PermissionAsk {
+                    id,
+                    tab,
+                    host: host.clone(),
+                    kind,
+                }));
             }
         });
         if asked.is_none() {
@@ -872,11 +1008,10 @@ unsafe extern "C" fn on_mouse_target(
             None
         }
     };
-    the_shared().update(|s| s.hovered_link = link);
+    emit(Event::HoveredLink(link));
 }
 
-unsafe extern "C" fn on_clipboard(clipboard: *mut WPEClipboard, _: *mut GParamSpec, data: gpointer) {
-    let shared = unsafe { &*(data as *const Shared) };
+unsafe extern "C" fn on_clipboard(clipboard: *mut WPEClipboard, _: *mut GParamSpec, _: gpointer) {
     let text = unsafe {
         let content = wpe_clipboard_get_content(clipboard);
         if content.is_null() {
@@ -887,15 +1022,34 @@ unsafe extern "C" fn on_clipboard(clipboard: *mut WPEClipboard, _: *mut GParamSp
     let Some(text) = text else { return };
     let ours = PASTED.with(|p| p.borrow().as_deref() == Some(text.as_str()));
     if !ours {
-        shared.update(|s| s.copied = Some(text));
+        emit(Event::Copied(text));
     }
 }
 
-unsafe extern "C" fn on_download(_: *mut WebKitNetworkSession, download: *mut WebKitDownload, _: gpointer) {
+unsafe extern "C" fn on_download(
+    _: *mut WebKitNetworkSession,
+    download: *mut WebKitDownload,
+    _: gpointer,
+) {
     unsafe {
-        connect(download.cast(), "decide-destination", callback!(on_destination as unsafe extern "C" fn(_, _, _) -> _), ptr::null_mut());
-        connect(download.cast(), "finished", callback!(on_downloaded as unsafe extern "C" fn(_, _)), ptr::null_mut());
-        connect(download.cast(), "failed", callback!(on_download_failed as unsafe extern "C" fn(_, _, _)), ptr::null_mut());
+        connect(
+            download.cast(),
+            "decide-destination",
+            callback!(on_destination as unsafe extern "C" fn(_, _, _) -> _),
+            ptr::null_mut(),
+        );
+        connect(
+            download.cast(),
+            "finished",
+            callback!(on_downloaded as unsafe extern "C" fn(_, _)),
+            ptr::null_mut(),
+        );
+        connect(
+            download.cast(),
+            "failed",
+            callback!(on_download_failed as unsafe extern "C" fn(_, _, _)),
+            ptr::null_mut(),
+        );
     }
 }
 
@@ -925,7 +1079,11 @@ pub fn destination(dir: &Path, suggested: &str) -> PathBuf {
     path
 }
 
-unsafe extern "C" fn on_destination(download: *mut WebKitDownload, suggested: *const c_char, _: gpointer) -> gboolean {
+unsafe extern "C" fn on_destination(
+    download: *mut WebKitDownload,
+    suggested: *const c_char,
+    _: gpointer,
+) -> gboolean {
     let suggested = unsafe { string(suggested) }.unwrap_or_default();
     let dir = DOWNLOADS.with(|d| d.borrow().clone());
     let _ = std::fs::create_dir_all(&dir);
@@ -937,14 +1095,26 @@ unsafe extern "C" fn on_destination(download: *mut WebKitDownload, suggested: *c
 
 unsafe extern "C" fn on_downloaded(download: *mut WebKitDownload, _: gpointer) {
     let path = unsafe { string(webkit_download_get_destination(download)) }.unwrap_or_default();
-    let name = Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(path);
-    the_shared().notify(format!("Downloaded {name} to Downloads"));
+    let name = Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or(path);
+    emit(Event::Notice(format!("Downloaded {name} to Downloads")));
 }
 
 unsafe extern "C" fn on_download_failed(_: *mut WebKitDownload, error: *mut GError, _: gpointer) {
     // The error belongs to the signal; read it, do not free it.
-    let message = unsafe { if error.is_null() { None } else { string((*error).message) } };
-    the_shared().notify(format!("Download failed: {}", message.unwrap_or_default()));
+    let message = unsafe {
+        if error.is_null() {
+            None
+        } else {
+            string((*error).message)
+        }
+    };
+    emit(Event::Notice(format!(
+        "Download failed: {}",
+        message.unwrap_or_default()
+    )));
 }
 
 /// Reloads every rule set if losos-adblock compiled since the last look.
@@ -973,13 +1143,15 @@ fn reload_filters() {
             let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) else {
                 continue;
             };
-            let secs = modified.duration_since(SystemTime::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let secs = modified
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
             jobs.push((format!("{id}-{secs}"), path));
         }
         unsafe { webkit_user_content_manager_remove_all_filters(f.content) };
         f.loaded = 0;
         f.current = jobs.iter().map(|(ident, _)| ident.clone()).collect();
-        f.shared.update(|s| s.filters = 0);
+        emit(Event::Filters(0));
         Some((f.store, jobs))
     });
     let Some((store, jobs)) = jobs else { return };
@@ -987,9 +1159,24 @@ fn reload_filters() {
     for (ident, path) in jobs {
         let job = Box::into_raw(Box::new((ident.clone(), path)));
         let ident = cstring(&ident);
-        unsafe { webkit_user_content_filter_store_load(store, ident.as_ptr(), ptr::null_mut(), on_filter_loaded, job.cast()) };
+        unsafe {
+            webkit_user_content_filter_store_load(
+                store,
+                ident.as_ptr(),
+                ptr::null_mut(),
+                on_filter_loaded,
+                job.cast(),
+            )
+        };
     }
-    unsafe { webkit_user_content_filter_store_fetch_identifiers(store, ptr::null_mut(), on_identifiers, ptr::null_mut()) };
+    unsafe {
+        webkit_user_content_filter_store_fetch_identifiers(
+            store,
+            ptr::null_mut(),
+            on_identifiers,
+            ptr::null_mut(),
+        )
+    };
 }
 
 fn add_filter(filter: *mut WebKitUserContentFilter) {
@@ -997,8 +1184,7 @@ fn add_filter(filter: *mut WebKitUserContentFilter) {
         if let Some(f) = f.borrow_mut().as_mut() {
             unsafe { webkit_user_content_manager_add_filter(f.content, filter) };
             f.loaded += 1;
-            let loaded = f.loaded;
-            f.shared.update(|s| s.filters = loaded);
+            emit(Event::Filters(f.loaded));
         }
     });
     unsafe { webkit_user_content_filter_unref(filter) };
@@ -1007,7 +1193,11 @@ fn add_filter(filter: *mut WebKitUserContentFilter) {
 /// A set compiled before is loaded as it is; one that is new or changed is
 /// compiled from losos-adblock's JSON, which takes WebKit a few seconds
 /// for a big list.
-unsafe extern "C" fn on_filter_loaded(source: *mut GObject, result: *mut GAsyncResult, data: gpointer) {
+unsafe extern "C" fn on_filter_loaded(
+    source: *mut GObject,
+    result: *mut GAsyncResult,
+    data: gpointer,
+) {
     let store = source as *mut WebKitUserContentFilterStore;
     let mut error = ptr::null_mut();
     let filter = unsafe { webkit_user_content_filter_store_load_finish(store, result, &mut error) };
@@ -1022,16 +1212,29 @@ unsafe extern "C" fn on_filter_loaded(source: *mut GObject, result: *mut GAsyncR
     let path = cstring(&path.to_string_lossy());
     unsafe {
         let file = g_file_new_for_path(path.as_ptr());
-        webkit_user_content_filter_store_save_from_file(store, ident.as_ptr(), file, ptr::null_mut(), on_filter_saved, data);
+        webkit_user_content_filter_store_save_from_file(
+            store,
+            ident.as_ptr(),
+            file,
+            ptr::null_mut(),
+            on_filter_saved,
+            data,
+        );
         g_object_unref(file.cast());
     }
 }
 
-unsafe extern "C" fn on_filter_saved(source: *mut GObject, result: *mut GAsyncResult, data: gpointer) {
+unsafe extern "C" fn on_filter_saved(
+    source: *mut GObject,
+    result: *mut GAsyncResult,
+    data: gpointer,
+) {
     let store = source as *mut WebKitUserContentFilterStore;
     let job = unsafe { Box::from_raw(data as *mut (String, PathBuf)) };
     let mut error = ptr::null_mut();
-    let filter = unsafe { webkit_user_content_filter_store_save_from_file_finish(store, result, &mut error) };
+    let filter = unsafe {
+        webkit_user_content_filter_store_save_from_file_finish(store, result, &mut error)
+    };
     if filter.is_null() {
         warn!(set = %job.1.display(), error = unsafe { take_error(error) }, "WebKit refused a rule set");
         return;
@@ -1047,13 +1250,24 @@ unsafe extern "C" fn on_identifiers(source: *mut GObject, result: *mut GAsyncRes
     if list.is_null() {
         return;
     }
-    let current = FILTERS.with(|f| f.borrow().as_ref().map(|f| f.current.clone()).unwrap_or_default());
+    let current = FILTERS.with(|f| {
+        f.borrow()
+            .as_ref()
+            .map(|f| f.current.clone())
+            .unwrap_or_default()
+    });
     let mut at = list;
     unsafe {
         while !(*at).is_null() {
             if let Some(ident) = string(*at) {
                 if !current.contains(&ident) {
-                    webkit_user_content_filter_store_remove(store, *at, ptr::null_mut(), None, ptr::null_mut());
+                    webkit_user_content_filter_store_remove(
+                        store,
+                        *at,
+                        ptr::null_mut(),
+                        None,
+                        ptr::null_mut(),
+                    );
                 }
             }
             at = at.add(1);

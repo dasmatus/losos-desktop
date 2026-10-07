@@ -108,7 +108,10 @@ impl Store {
     /// The answers in `path`; none when it is missing or unreadable. A
     /// `None` path remembers nothing past this run (captive portal).
     pub fn open(path: Option<PathBuf>) -> Self {
-        let text = path.as_ref().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
+        let text = path
+            .as_ref()
+            .and_then(|p| fs::read_to_string(p).ok())
+            .unwrap_or_default();
         Self {
             path,
             answers: parse(&text),
@@ -172,7 +175,8 @@ mod tests {
 
     #[test]
     fn ignores_bad_lines() {
-        let answers = parse("a.example camera maybe\nb.example teleport allow\nc.example location deny\n");
+        let answers =
+            parse("a.example camera maybe\nb.example teleport allow\nc.example location deny\n");
         assert_eq!(answers.len(), 1);
     }
 }

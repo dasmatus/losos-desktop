@@ -111,13 +111,12 @@ fn network_rule(rule: &str) -> Option<(String, bool)> {
     }
     let (rest, subdomains) = if let Some(rest) = pattern.strip_prefix("||") {
         (rest, true)
-    } else if let Some(rest) = pattern.strip_prefix('|') {
+    } else {
+        let rest = pattern.strip_prefix('|')?;
         let rest = rest
             .strip_prefix("https://")
             .or_else(|| rest.strip_prefix("http://"))?;
         (rest, false)
-    } else {
-        return None;
     };
     // The domain ends at `^` (a separator), `/` with nothing after it, or
     // the end of the rule. Anything else after the name is a path.

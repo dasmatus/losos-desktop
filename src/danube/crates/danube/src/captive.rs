@@ -27,7 +27,10 @@ impl Check {
     /// `expect = ...`), which the NixOS module writes.
     pub fn load() -> Option<Self> {
         let text = std::fs::read_to_string("/etc/danube/captive-portal.conf").ok()?;
-        let mut check = Check { url: String::new(), expect: String::new() };
+        let mut check = Check {
+            url: String::new(),
+            expect: String::new(),
+        };
         for (key, value) in text.lines().filter_map(|l| l.split_once('=')) {
             match key.trim() {
                 "url" => check.url = value.trim().into(),
@@ -69,27 +72,41 @@ pub fn judge(response: &[u8], expect: &str) -> Verdict {
     let Some((head, body)) = text.split_once("\r\n\r\n") else {
         return Verdict::Portal;
     };
-    let status: u16 = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let status: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let online = if expect.is_empty() {
         status == 204
     } else {
         status == 200 && body.trim() == expect.trim()
     };
-    if online { Verdict::Online } else { Verdict::Portal }
+    if online {
+        Verdict::Online
+    } else {
+        Verdict::Portal
+    }
 }
 
 pub fn check(check: &Check) -> Verdict {
     let Some((host, port, path)) = parse(&check.url) else {
         return Verdict::Offline;
     };
-    let Some(addr) = (host.as_str(), port).to_socket_addrs().ok().and_then(|mut a| a.next()) else {
+    let Some(addr) = (host.as_str(), port)
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+    else {
         return Verdict::Offline;
     };
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_secs(5)) else {
         return Verdict::Offline;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let request = format!("GET {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: Danube\r\nConnection: close\r\n\r\n");
+    let request = format!(
+        "GET {path} HTTP/1.0\r\nHost: {host}\r\nUser-Agent: Danube\r\nConnection: close\r\n\r\n"
+    );
     if stream.write_all(request.as_bytes()).is_err() {
         return Verdict::Offline;
     }
@@ -113,12 +130,17 @@ pub fn watch(check_: Check, danube: &std::path::Path) -> ! {
         let state = std::fs::read_to_string(NETWORK_STATE).ok();
         if state != last {
             last = state.clone();
-            let routable = state.as_deref().is_some_and(|s| s.contains("OPER_STATE=routable"));
+            let routable = state
+                .as_deref()
+                .is_some_and(|s| s.contains("OPER_STATE=routable"));
             // A just-joined network may take a moment to hand out DNS.
             std::thread::sleep(Duration::from_secs(2));
             if routable && check(&check_) == Verdict::Portal {
                 tracing::info!("a captive portal is in the way; opening the sign-in window");
-                match std::process::Command::new(danube).arg("--captive-portal").status() {
+                match std::process::Command::new(danube)
+                    .arg("--captive-portal")
+                    .status()
+                {
                     Ok(_) => {}
                     Err(error) => tracing::warn!(%error, "cannot open the sign-in window"),
                 }
@@ -134,16 +156,47 @@ mod tests {
 
     #[test]
     fn judges_answers() {
-        assert_eq!(judge(b"HTTP/1.1 204 No Content\r\n\r\n", ""), Verdict::Online);
-        assert_eq!(judge(b"HTTP/1.1 302 Found\r\nLocation: http://portal/\r\n\r\n", ""), Verdict::Portal);
-        assert_eq!(judge(b"HTTP/1.1 200 OK\r\n\r\nNetworkManager is online\n", "NetworkManager is online"), Verdict::Online);
-        assert_eq!(judge(b"HTTP/1.1 200 OK\r\n\r\n<html>Log in</html>", "NetworkManager is online"), Verdict::Portal);
+        assert_eq!(
+            judge(b"HTTP/1.1 204 No Content\r\n\r\n", ""),
+            Verdict::Online
+        );
+        assert_eq!(
+            judge(
+                b"HTTP/1.1 302 Found\r\nLocation: http://portal/\r\n\r\n",
+                ""
+            ),
+            Verdict::Portal
+        );
+        assert_eq!(
+            judge(
+                b"HTTP/1.1 200 OK\r\n\r\nNetworkManager is online\n",
+                "NetworkManager is online"
+            ),
+            Verdict::Online
+        );
+        assert_eq!(
+            judge(
+                b"HTTP/1.1 200 OK\r\n\r\n<html>Log in</html>",
+                "NetworkManager is online"
+            ),
+            Verdict::Portal
+        );
     }
 
     #[test]
     fn parses_urls() {
-        assert_eq!(parse("http://nmcheck.gnome.org/check_network_status.txt"), Some(("nmcheck.gnome.org".into(), 80, "/check_network_status.txt".into())));
-        assert_eq!(parse("http://a.example:8080"), Some(("a.example".into(), 8080, "/".into())));
+        assert_eq!(
+            parse("http://nmcheck.gnome.org/check_network_status.txt"),
+            Some((
+                "nmcheck.gnome.org".into(),
+                80,
+                "/check_network_status.txt".into()
+            ))
+        );
+        assert_eq!(
+            parse("http://a.example:8080"),
+            Some(("a.example".into(), 8080, "/".into()))
+        );
         assert_eq!(parse("https://a.example/"), None);
     }
 }

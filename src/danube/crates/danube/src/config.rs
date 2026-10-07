@@ -53,7 +53,8 @@ impl Settings {
     /// The settings for the person whose home is `home`.
     pub fn load(home: &Path) -> Self {
         let mut settings = Self::default();
-        let derisk = fs::read_to_string(home.join(".config/derisk/settings.conf")).unwrap_or_default();
+        let derisk =
+            fs::read_to_string(home.join(".config/derisk/settings.conf")).unwrap_or_default();
         for (key, value) in pairs(&derisk) {
             if key == "defaults.search" {
                 if let Some(url) = search_url(value) {
@@ -113,7 +114,11 @@ pub fn address(typed: &str, search: &str) -> Option<String> {
     if !typed.contains(char::is_whitespace) {
         let host = typed.split(['/', '?', '#']).next().unwrap_or_default();
         let name = host.rsplit_once(':').map_or(host, |(name, port)| {
-            if port.chars().all(|c| c.is_ascii_digit()) { name } else { host }
+            if port.chars().all(|c| c.is_ascii_digit()) {
+                name
+            } else {
+                host
+            }
         });
         if name == "localhost" || name.parse::<std::net::Ipv4Addr>().is_ok() {
             return Some(format!("http://{typed}"));
@@ -121,7 +126,9 @@ pub fn address(typed: &str, search: &str) -> Option<String> {
         let looks_like_host = name.contains('.')
             && !name.starts_with('.')
             && !name.ends_with('.')
-            && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '.');
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '-' || c == '.');
         if looks_like_host {
             return Some(format!("https://{typed}"));
         }
@@ -170,11 +177,23 @@ mod tests {
     #[test]
     fn reads_what_is_typed() {
         assert_eq!(address("example.com", S).unwrap(), "https://example.com");
-        assert_eq!(address("https://a.example/x", S).unwrap(), "https://a.example/x");
-        assert_eq!(address("localhost:8080/x", S).unwrap(), "http://localhost:8080/x");
+        assert_eq!(
+            address("https://a.example/x", S).unwrap(),
+            "https://a.example/x"
+        );
+        assert_eq!(
+            address("localhost:8080/x", S).unwrap(),
+            "http://localhost:8080/x"
+        );
         assert_eq!(address("192.168.1.1", S).unwrap(), "http://192.168.1.1");
-        assert_eq!(address("rust & wasm", S).unwrap(), "https://duckduckgo.com/?q=rust+%26+wasm");
-        assert_eq!(address("hello", S).unwrap(), "https://duckduckgo.com/?q=hello");
+        assert_eq!(
+            address("rust & wasm", S).unwrap(),
+            "https://duckduckgo.com/?q=rust+%26+wasm"
+        );
+        assert_eq!(
+            address("hello", S).unwrap(),
+            "https://duckduckgo.com/?q=hello"
+        );
         assert_eq!(address("  ", S), None);
     }
 

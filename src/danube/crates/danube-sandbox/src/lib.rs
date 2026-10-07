@@ -179,7 +179,8 @@ impl Plan {
                 }
                 // Hakoniwa's container always dies with the launcher, and
                 // the launcher with WebKit (launch.rs).
-                "--die-with-parent" | "--new-session" | "--unshare-user" | "--unshare-user-try" => {}
+                "--die-with-parent" | "--new-session" | "--unshare-user" | "--unshare-user-try" => {
+                }
                 "--unshare-pid" => plan.unshare.push(Unshare::Pid),
                 "--unshare-ipc" => plan.unshare.push(Unshare::Ipc),
                 "--unshare-net" => plan.unshare.push(Unshare::Net),
@@ -297,7 +298,10 @@ mod tests {
                 optional: true
             }
         );
-        assert_eq!(plan.env, vec![("A".into(), Some("1".into())), ("B".into(), None)]);
+        assert_eq!(
+            plan.env,
+            vec![("A".into(), Some("1".into())), ("B".into(), None)]
+        );
     }
 
     #[test]
@@ -306,6 +310,9 @@ mod tests {
             Plan::from_bwrap_args(args(&["--cap-add", "ALL", "--", "x"])),
             Err(Error::Unknown(_))
         ));
-        assert!(matches!(Plan::from_bwrap_args(args(&["--unshare-pid"])), Err(Error::NoProgram)));
+        assert!(matches!(
+            Plan::from_bwrap_args(args(&["--unshare-pid"])),
+            Err(Error::NoProgram)
+        ));
     }
 }

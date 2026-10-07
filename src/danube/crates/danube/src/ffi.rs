@@ -188,8 +188,10 @@ unsafe extern "C" {
     pub fn wpe_toplevel_state_changed(toplevel: *mut WPEToplevel, state: c_uint);
     pub fn wpe_buffer_get_width(buffer: *mut WPEBuffer) -> c_int;
     pub fn wpe_buffer_get_height(buffer: *mut WPEBuffer) -> c_int;
-    pub fn wpe_buffer_import_to_pixels(buffer: *mut WPEBuffer, error: *mut *mut GError)
-        -> *mut GBytes;
+    pub fn wpe_buffer_import_to_pixels(
+        buffer: *mut WPEBuffer,
+        error: *mut *mut GError,
+    ) -> *mut GBytes;
     pub fn wpe_event_unref(event: *mut WPEEvent);
     pub fn wpe_event_pointer_button_new(
         kind: c_int,
@@ -244,7 +246,10 @@ unsafe extern "C" {
         x: c_double,
         y: c_double,
     ) -> *mut WPEEvent;
-    pub fn wpe_clipboard_set_content(clipboard: *mut WPEClipboard, content: *mut WPEClipboardContent);
+    pub fn wpe_clipboard_set_content(
+        clipboard: *mut WPEClipboard,
+        content: *mut WPEClipboardContent,
+    );
     pub fn wpe_clipboard_get_content(clipboard: *mut WPEClipboard) -> *mut WPEClipboardContent;
     pub fn wpe_clipboard_content_new() -> *mut WPEClipboardContent;
     pub fn wpe_clipboard_content_unref(content: *mut WPEClipboardContent);
@@ -279,7 +284,10 @@ unsafe extern "C" {
         application_name: *const c_char,
         application_version: *const c_char,
     );
-    pub fn webkit_settings_set_enable_developer_extras(settings: *mut WebKitSettings, enabled: gboolean);
+    pub fn webkit_settings_set_enable_developer_extras(
+        settings: *mut WebKitSettings,
+        enabled: gboolean,
+    );
     pub fn webkit_settings_set_javascript_can_open_windows_automatically(
         settings: *mut WebKitSettings,
         enabled: gboolean,
@@ -301,7 +309,10 @@ unsafe extern "C" {
         cache_directory: *const c_char,
     ) -> *mut WebKitNetworkSession;
     pub fn webkit_network_session_new_ephemeral() -> *mut WebKitNetworkSession;
-    pub fn webkit_network_session_set_itp_enabled(session: *mut WebKitNetworkSession, enabled: gboolean);
+    pub fn webkit_network_session_set_itp_enabled(
+        session: *mut WebKitNetworkSession,
+        enabled: gboolean,
+    );
     pub fn webkit_network_session_set_persistent_credential_storage_enabled(
         session: *mut WebKitNetworkSession,
         enabled: gboolean,
@@ -313,7 +324,9 @@ unsafe extern "C" {
     );
     pub fn webkit_user_content_manager_remove_all_filters(manager: *mut WebKitUserContentManager);
     pub fn webkit_user_content_filter_unref(filter: *mut WebKitUserContentFilter);
-    pub fn webkit_user_content_filter_store_new(path: *const c_char) -> *mut WebKitUserContentFilterStore;
+    pub fn webkit_user_content_filter_store_new(
+        path: *const c_char,
+    ) -> *mut WebKitUserContentFilterStore;
     pub fn webkit_user_content_filter_store_save_from_file(
         store: *mut WebKitUserContentFilterStore,
         identifier: *const c_char,
@@ -364,25 +377,33 @@ unsafe extern "C" {
     pub fn webkit_navigation_policy_decision_get_navigation_action(
         decision: *mut WebKitPolicyDecision,
     ) -> *mut WebKitNavigationAction;
-    pub fn webkit_navigation_action_get_mouse_button(action: *mut WebKitNavigationAction) -> c_uint;
+    pub fn webkit_navigation_action_get_mouse_button(action: *mut WebKitNavigationAction)
+        -> c_uint;
     pub fn webkit_policy_decision_ignore(decision: *mut WebKitPolicyDecision);
-    pub fn webkit_navigation_action_get_request(action: *mut WebKitNavigationAction)
-        -> *mut WebKitURIRequest;
+    pub fn webkit_navigation_action_get_request(
+        action: *mut WebKitNavigationAction,
+    ) -> *mut WebKitURIRequest;
     pub fn webkit_uri_request_get_uri(request: *mut WebKitURIRequest) -> *const c_char;
-    pub fn webkit_download_set_destination(download: *mut WebKitDownload, destination: *const c_char);
+    pub fn webkit_download_set_destination(
+        download: *mut WebKitDownload,
+        destination: *const c_char,
+    );
     pub fn webkit_download_get_destination(download: *mut WebKitDownload) -> *const c_char;
     pub fn webkit_download_set_allow_overwrite(download: *mut WebKitDownload, allowed: gboolean);
     pub fn webkit_permission_request_allow(request: *mut WebKitPermissionRequest);
     pub fn webkit_permission_request_deny(request: *mut WebKitPermissionRequest);
-    pub fn webkit_user_media_permission_is_for_audio_device(request: *mut WebKitPermissionRequest)
-        -> gboolean;
-    pub fn webkit_user_media_permission_is_for_video_device(request: *mut WebKitPermissionRequest)
-        -> gboolean;
+    pub fn webkit_user_media_permission_is_for_audio_device(
+        request: *mut WebKitPermissionRequest,
+    ) -> gboolean;
+    pub fn webkit_user_media_permission_is_for_video_device(
+        request: *mut WebKitPermissionRequest,
+    ) -> gboolean;
     pub fn webkit_user_media_permission_is_for_display_device(
         request: *mut WebKitPermissionRequest,
     ) -> gboolean;
     pub fn webkit_hit_test_result_context_is_link(result: *mut WebKitHitTestResult) -> gboolean;
-    pub fn webkit_hit_test_result_context_is_editable(result: *mut WebKitHitTestResult) -> gboolean;
+    pub fn webkit_hit_test_result_context_is_editable(result: *mut WebKitHitTestResult)
+        -> gboolean;
     pub fn webkit_hit_test_result_get_link_uri(result: *mut WebKitHitTestResult) -> *const c_char;
 }
 
@@ -392,7 +413,12 @@ unsafe extern "C" {
 /// # Safety
 /// `handler` must have the signal's signature and `instance` must be a
 /// live GObject.
-pub unsafe fn connect(instance: gpointer, signal: &str, handler: GCallback, data: gpointer) -> c_ulong {
+pub unsafe fn connect(
+    instance: gpointer,
+    signal: &str,
+    handler: GCallback,
+    data: gpointer,
+) -> c_ulong {
     let signal = CString::new(signal).expect("signal names have no NUL");
     unsafe { g_signal_connect_data(instance, signal.as_ptr(), handler, data, None, 0) }
 }

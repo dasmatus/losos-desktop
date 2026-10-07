@@ -231,7 +231,9 @@ pub fn run(plan: Plan) -> Result<ExitCode, Error> {
 
     let carried = open_fds(&plan.consumed_fds);
     if carried.len() > MAX_FDS {
-        return Err(Error::Pass(std::io::Error::other("too many open descriptors")));
+        return Err(Error::Pass(std::io::Error::other(
+            "too many open descriptors",
+        )));
     }
     let (ours, theirs) = socketpair(
         AddressFamily::Unix,
@@ -252,9 +254,8 @@ pub fn run(plan: Plan) -> Result<ExitCode, Error> {
     let c = container(&plan);
     // SAFETY: the closure runs in the forked child, and only makes the
     // async-signal-safe calls `enter` lists before exec.
-    let mut command = unsafe {
-        c.command_from_closure(move || enter(count, seccomp.as_deref(), &program))
-    };
+    let mut command =
+        unsafe { c.command_from_closure(move || enter(count, seccomp.as_deref(), &program)) };
     let mut env: std::collections::HashMap<String, String> = std::env::vars().collect();
     for (key, value) in &plan.env {
         match value {
@@ -266,7 +267,7 @@ pub fn run(plan: Plan) -> Result<ExitCode, Error> {
     env.remove("WEBKIT_SANDBOX_LAUNCHER_INNER");
     command.envs(env);
     command.current_dir(plan.chdir.as_deref().unwrap_or("/"));
-    command.stdin(Stdio::from(OwnedFd::from(theirs)));
+    command.stdin(Stdio::from(theirs));
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
 

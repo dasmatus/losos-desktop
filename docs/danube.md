@@ -21,8 +21,14 @@ press per character, and Ctrl+C, Ctrl+X and Ctrl+V cross between WebKit's
 clipboard and the desktop's.
 
 WebKit runs on the process's main thread under GLib's main loop, the window
-on a second thread under winit's (`engine.rs` and `ui.rs`); the window sends
-commands, and WebKit keeps the tabs' state current and asks for a repaint.
+on a second thread under winit's (`engine.rs` and `ui.rs`). Two bounded
+channels (crossbeam's) join them and nothing is locked: the window sends
+commands, WebKit sends events (a tab opened, its title, a frame, a
+permission asked) and asks for a repaint, and the window keeps its own
+picture of the tabs from them. A frame that does not fit the channel is
+dropped for the next. The threads beside them, derisk's menus, later
+`danube` runs handing over URLs, the captive portal's recheck, are scoped
+to the same `run` and end with WebKit.
 
 nixpkgs has only WebKitGTK, so `nixos/pkgs/wpewebkit.nix` builds the WPE
 port from the WPE release of the same WebKit version, with nixpkgs'

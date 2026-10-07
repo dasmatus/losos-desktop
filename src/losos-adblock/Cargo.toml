@@ -24,6 +24,9 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # reads the domain rules itself (rules.rs).
 adblock = { version = "0.13.3", default-features = false, features = ["content-blocking", "embedded-domain-resolver", "full-regex-handling"] }
 serde_json = "1"
+# The forwarder's queries go through a bounded queue to a few worker
+# threads, in place of a thread per query.
+crossbeam-channel = "0.5"
 # Lists are fetched over HTTPS by a client with no C dependencies, which
 # reads the system's CA bundle (SSL_CERT_FILE on NixOS).
 ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }

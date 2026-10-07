@@ -388,7 +388,10 @@ mod tests {
         let rules: serde_json::Value = serde_json::from_str(&set).unwrap();
         let rules = rules.as_array().unwrap();
         assert_eq!(rules[0]["action"]["type"], "block");
-        assert_eq!(rules[rules.len() - 1]["action"]["type"], "ignore-previous-rules");
+        assert_eq!(
+            rules[rules.len() - 1]["action"]["type"],
+            "ignore-previous-rules"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }

@@ -8,19 +8,23 @@
 //! unchanged, to the servers the network handed out, which resolved lists
 //! in /run/systemd/resolve/resolv.conf for programs like this one.
 //!
-//! One thread per query: resolved caches and coalesces, so what reaches
-//! here is a desktop's worth of cache misses, and a thread blocked on a
-//! slow upstream holds up nothing else.
+//! Queries go through a bounded queue to a few worker threads: resolved
+//! caches and coalesces, so what reaches here is a desktop's worth of
+//! cache misses, and a worker blocked on a slow upstream holds up only its
+//! own query. When every worker is busy and the queue is full, a query is
+//! dropped and the client retries, as DNS clients do. Every thread is
+//! scoped to `run`, which shares its state by reference.
 
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, TcpStream, UdpSocket};
 use std::os::fd::FromRawFd;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+use crossbeam_channel::TrySendError;
 use tracing::{debug, info, warn};
 
 use crate::dns;
@@ -32,6 +36,11 @@ const RESOLV_CONF: &str = "/run/systemd/resolve/resolv.conf";
 const UPSTREAM_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often the compiled list and resolv.conf are checked for changes.
 const RELOAD_EVERY: Duration = Duration::from_secs(15);
+/// Worker threads answering UDP queries, and how many queries may wait
+/// for one: enough for a burst of cache misses, few enough that a dead
+/// upstream cannot pile up minutes of work.
+const WORKERS: usize = 8;
+const QUEUE: usize = 256;
 
 /// The listening sockets: from systemd's socket activation, or bound here.
 pub struct Sockets {
@@ -257,83 +266,94 @@ fn serve_tcp_client(shared: &Shared, mut stream: TcpStream) -> io::Result<()> {
 /// Serves until the process is stopped.
 pub fn run(sockets: Sockets, list: PathBuf) -> io::Result<()> {
     let own = sockets.local_addrs();
-    let shared = Arc::new(Shared {
+    let shared = Shared {
         state: RwLock::new(State {
             blocklist: load_list(&list),
             upstreams: load_upstreams(&own),
         }),
         list,
         own,
-    });
+    };
+    let shared = &shared;
 
-    // Reloads: the blocklist after an update, the upstreams after the
-    // network changes. Checked by modification time, so an update needs no
-    // signal to reach a running forwarder.
-    let watcher = shared.clone();
-    thread::spawn(move || {
-        let mut list_time = modified(&watcher.list);
-        let mut conf_time = modified(std::path::Path::new(RESOLV_CONF));
-        loop {
-            thread::sleep(RELOAD_EVERY);
-            let now = modified(&watcher.list);
-            if now != list_time {
-                list_time = now;
-                let list = load_list(&watcher.list);
-                if let Ok(mut state) = watcher.state.write() {
-                    state.blocklist = list;
-                }
-            }
-            let now = modified(std::path::Path::new(RESOLV_CONF));
-            if now != conf_time {
-                conf_time = now;
-                let upstreams = load_upstreams(&watcher.own);
-                if let Ok(mut state) = watcher.state.write() {
-                    state.upstreams = upstreams;
-                }
-            }
-        }
-    });
+    // One UDP query per message: the datagram and who sent it, with the
+    // socket it came on to answer from.
+    let (queue, queries) = crossbeam_channel::bounded::<(Vec<u8>, SocketAddr, &UdpSocket)>(QUEUE);
 
-    for listener in sockets.tcp {
-        let shared = shared.clone();
-        thread::spawn(move || {
-            for stream in listener.incoming().flatten() {
-                let shared = shared.clone();
-                thread::spawn(move || {
-                    if let Err(error) = serve_tcp_client(&shared, stream) {
-                        debug!(%error, "TCP client");
+    thread::scope(|s| {
+        // Reloads: the blocklist after an update, the upstreams after the
+        // network changes. Checked by modification time, so an update needs
+        // no signal to reach a running forwarder.
+        s.spawn(move || {
+            let mut list_time = modified(&shared.list);
+            let mut conf_time = modified(std::path::Path::new(RESOLV_CONF));
+            loop {
+                thread::sleep(RELOAD_EVERY);
+                let now = modified(&shared.list);
+                if now != list_time {
+                    list_time = now;
+                    let list = load_list(&shared.list);
+                    if let Ok(mut state) = shared.state.write() {
+                        state.blocklist = list;
                     }
-                });
+                }
+                let now = modified(std::path::Path::new(RESOLV_CONF));
+                if now != conf_time {
+                    conf_time = now;
+                    let upstreams = load_upstreams(&shared.own);
+                    if let Ok(mut state) = shared.state.write() {
+                        state.upstreams = upstreams;
+                    }
+                }
             }
         });
-    }
 
-    let mut handles = Vec::new();
-    for socket in sockets.udp {
-        let shared = shared.clone();
-        handles.push(thread::spawn(move || {
-            let socket = Arc::new(socket);
-            let mut buf = vec![0u8; 65535];
-            loop {
-                let Ok((n, from)) = socket.recv_from(&mut buf) else {
-                    continue;
-                };
-                let query = buf[..n].to_vec();
-                let shared = shared.clone();
-                let socket = socket.clone();
-                thread::spawn(move || {
+        for _ in 0..WORKERS {
+            let queries = queries.clone();
+            s.spawn(move || {
+                for (query, from, socket) in queries {
                     let started = Instant::now();
-                    if let Some(reply) = answer(&shared, &query, false) {
+                    if let Some(reply) = answer(shared, &query, false) {
                         let _ = socket.send_to(&reply, from);
                     }
                     debug!(elapsed = ?started.elapsed(), "answered");
-                });
-            }
-        }));
-    }
-    for handle in handles {
-        let _ = handle.join();
-    }
+                }
+            });
+        }
+
+        // A TCP client gets a thread of its own for as long as it stays
+        // connected; there are few, and each may send several queries.
+        for listener in &sockets.tcp {
+            s.spawn(move || {
+                for stream in listener.incoming().flatten() {
+                    s.spawn(move || {
+                        if let Err(error) = serve_tcp_client(shared, stream) {
+                            debug!(%error, "TCP client");
+                        }
+                    });
+                }
+            });
+        }
+
+        for socket in &sockets.udp {
+            let queue = queue.clone();
+            s.spawn(move || {
+                let mut buf = vec![0u8; 65535];
+                loop {
+                    let Ok((n, from)) = socket.recv_from(&mut buf) else {
+                        continue;
+                    };
+                    match queue.try_send((buf[..n].to_vec(), from, socket)) {
+                        Ok(()) => {}
+                        Err(TrySendError::Full(_)) => {
+                            debug!(%from, "query dropped, every worker is busy")
+                        }
+                        Err(TrySendError::Disconnected(_)) => return,
+                    }
+                }
+            });
+        }
+    });
     Ok(())
 }
 

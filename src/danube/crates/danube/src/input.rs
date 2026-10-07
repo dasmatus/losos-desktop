@@ -13,11 +13,33 @@ use eframe::egui::{self, Event, Key, Modifiers, PointerButton, Pos2, Rect, Touch
 /// One input event for the page, in logical pixels from its top left.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Input {
-    Move { x: f64, y: f64 },
-    Button { x: f64, y: f64, button: u32, pressed: bool },
-    Scroll { x: f64, y: f64, dx: f64, dy: f64, precise: bool },
-    Key { keyval: u32, pressed: bool },
-    Touch { id: u32, x: f64, y: f64, phase: Touch },
+    Move {
+        x: f64,
+        y: f64,
+    },
+    Button {
+        x: f64,
+        y: f64,
+        button: u32,
+        pressed: bool,
+    },
+    Scroll {
+        x: f64,
+        y: f64,
+        dx: f64,
+        dy: f64,
+        precise: bool,
+    },
+    Key {
+        keyval: u32,
+        pressed: bool,
+    },
+    Touch {
+        id: u32,
+        x: f64,
+        y: f64,
+        phase: Touch,
+    },
     Leave,
     /// The keyboard modifiers now held; carried by every event after it.
     Modifiers(Mods),
@@ -149,9 +171,12 @@ pub fn translate(
                 }
             }
             Event::PointerGone if !has_touch && !*touch_active => out.push(Input::Leave),
-            Event::PointerButton { pos, button, pressed, modifiers }
-                if !has_touch && !*touch_active && (over(*pos) || !*pressed) =>
-            {
+            Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers,
+            } if !has_touch && !*touch_active && (over(*pos) || !*pressed) => {
                 let button = match button {
                     PointerButton::Primary => 1,
                     PointerButton::Middle => 2,
@@ -162,9 +187,19 @@ pub fn translate(
                 };
                 let (x, y) = at(*pos);
                 out.push(Input::Modifiers((*modifiers).into()));
-                out.push(Input::Button { x, y, button, pressed: *pressed });
+                out.push(Input::Button {
+                    x,
+                    y,
+                    button,
+                    pressed: *pressed,
+                });
             }
-            Event::MouseWheel { unit, delta, modifiers, .. } => {
+            Event::MouseWheel {
+                unit,
+                delta,
+                modifiers,
+                ..
+            } => {
                 // Wheel events carry no position; egui's latest pointer
                 // position is the one the window passes in as hover.
                 let _ = modifiers;
@@ -195,15 +230,28 @@ pub fn translate(
                     Touch::Move => {}
                 }
                 let (x, y) = at(*pos);
-                out.push(Input::Touch { id: id.0 as u32, x, y, phase });
+                out.push(Input::Touch {
+                    id: id.0 as u32,
+                    x,
+                    y,
+                    phase,
+                });
             }
-            Event::Key { key, pressed, modifiers, .. } if focused => {
+            Event::Key {
+                key,
+                pressed,
+                modifiers,
+                ..
+            } if focused => {
                 if !sends_key(*key, *modifiers) {
                     continue;
                 }
                 if let Some(keyval) = keysym(*key) {
                     out.push(Input::Modifiers((*modifiers).into()));
-                    out.push(Input::Key { keyval, pressed: *pressed });
+                    out.push(Input::Key {
+                        keyval,
+                        pressed: *pressed,
+                    });
                 }
             }
             Event::Text(text) if focused => push_text(&mut out, text),
@@ -217,8 +265,14 @@ pub fn translate(
 fn push_text(out: &mut Vec<Input>, text: &str) {
     for c in text.chars() {
         let keyval = char_keysym(c);
-        out.push(Input::Key { keyval, pressed: true });
-        out.push(Input::Key { keyval, pressed: false });
+        out.push(Input::Key {
+            keyval,
+            pressed: true,
+        });
+        out.push(Input::Key {
+            keyval,
+            pressed: false,
+        });
     }
 }
 
@@ -262,12 +316,24 @@ mod tests {
         assert_eq!(
             out,
             vec![
-                Input::Key { keyval: 0x61, pressed: true },
-                Input::Key { keyval: 0x61, pressed: false }
+                Input::Key {
+                    keyval: 0x61,
+                    pressed: true
+                },
+                Input::Key {
+                    keyval: 0x61,
+                    pressed: false
+                }
             ]
         );
         let out = translate(&[ctrl], page(), true, false, &mut touch);
-        assert_eq!(out.last(), Some(&Input::Key { keyval: 0x61, pressed: true }));
+        assert_eq!(
+            out.last(),
+            Some(&Input::Key {
+                keyval: 0x61,
+                pressed: true
+            })
+        );
     }
 
     #[test]
@@ -290,7 +356,12 @@ mod tests {
             out,
             vec![
                 Input::Modifiers(Mods(0)),
-                Input::Button { x: 10.0, y: 10.0, button: 1, pressed: true }
+                Input::Button {
+                    x: 10.0,
+                    y: 10.0,
+                    button: 1,
+                    pressed: true
+                }
             ]
         );
     }
@@ -314,7 +385,15 @@ mod tests {
         ];
         let mut touch = false;
         let out = translate(&events, page(), false, false, &mut touch);
-        assert_eq!(out, vec![Input::Touch { id: 7, x: 5.0, y: 5.0, phase: Touch::Down }]);
+        assert_eq!(
+            out,
+            vec![Input::Touch {
+                id: 7,
+                x: 5.0,
+                y: 5.0,
+                phase: Touch::Down
+            }]
+        );
         assert!(touch);
     }
 }

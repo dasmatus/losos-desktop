@@ -231,9 +231,14 @@ mod tests {
             let path = Path::new(path);
             assert!(
                 !path.starts_with(&session.home)
-                    || [".local/share/danube", ".cache/danube", ".config/danube", "Downloads"]
-                        .iter()
-                        .any(|d| path == session.home.join(d)),
+                    || [
+                        ".local/share/danube",
+                        ".cache/danube",
+                        ".config/danube",
+                        "Downloads"
+                    ]
+                    .iter()
+                    .any(|d| path == session.home.join(d)),
                 "{path:?} is writable"
             );
         }
