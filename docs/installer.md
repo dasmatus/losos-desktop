@@ -5,6 +5,8 @@ nixpkgs 26.05 shipped 260.4, so the installer does the same job by hand with
 the same tools. nixos-unstable now carries 261, so sysinstall is available;
 the installer has not been moved onto it yet. It is its own small live system, `nixos/installer/`, on its own ISO,
 and `nixos/modules/installer.nix` evaluates it from the OS's configuration.
+A machine that keeps Windows uses the [Windows installer](windows-installer.md)
+instead, which installs the same release beside it.
 
 It boots by UEFI only: the ISO's appended FAT partition holds the installer's
 UKI as `EFI/BOOT/BOOT<ARCH>.EFI`, with no bootloader in front of it, and the

@@ -8,6 +8,7 @@ losos-desktop_<v>_usr-x86-64_<uuid>.raw.xz          /usr for a sysupdate slot
 losos-desktop_<v>_usr-x86-64-verity_<uuid>.raw.xz   its hash tree
 losos-desktop_<v>_x86_64.raw.xz                     the disk image
 losos-desktop_<v>_x86_64-installer.iso              the installer
+losos-desktop_<v>_x86_64-windows-installer.exe      the installer for Windows, x86_64 only
 losos-desktop_<v>_x86_64.qcow2                      the disk image, for a VM
 SHA256SUMS
 ```
@@ -15,9 +16,10 @@ SHA256SUMS
 CI pushes it to GHCR as one OCI artifact per architecture with `oras`, and
 `proxy/` serves the newest one to sysupdate, which cannot fetch from an OCI
 registry itself (see [Binary cache](binary-cache.md)). The publish job then replaces the
-`nightly` GitHub release with the installer ISOs and their lines of
-`SHA256SUMS`, and nothing else: GitHub rejects release assets of 2 GiB or
-more, which `/usr` and the disk image are not far from, and the ISO is what a
+`nightly` GitHub release with the installer ISOs, the
+[Windows installer](windows-installer.md) and their lines of `SHA256SUMS`,
+and nothing else: GitHub rejects release assets of 2 GiB or more, which
+`/usr` and the disk image are not far from, and the installers are what a
 person downloads by hand.
 
 The `/usr` halves are cut out of the finished disk image at the offsets repart
