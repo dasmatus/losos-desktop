@@ -67,12 +67,24 @@ next page loaded.
 
 The palette is the address bar. Ctrl+L (or Alt+D) in Danube asks derisk
 to show it, and what is typed there that reads as a web address
-(`example.com`, `localhost:8080`, a full URL) opens in the default
-browser, which is Danube: a second `danube URL` hands the URL to the
-running browser, which opens it in a new tab. Anything else the palette
-searches for with the desktop's search engine, chosen by the choice
-screen and Settings, Default apps ([choice screens](choice-screens.md)).
-Danube has no search setting of its own.
+(`example.com`, `localhost:8080`, a full URL) opens in Danube, in a new
+tab. Anything else the palette searches for with the desktop's search
+engine, chosen by the choice screen and Settings, Default apps
+([choice screens](choice-screens.md)). Danube has no search setting of
+its own.
+
+The palette's Tabs and Extensions headings are derisk's bundled browser
+palette plugin (a WebAssembly plugin of the palette, like its other
+sources) showing what Danube registers: `register_palette` on the agent
+socket, with the tabs (id, title, URL, which is active) and the
+extensions (none until the extension runtime exists), sent again
+whenever they change. What is picked there comes back as a `palette`
+event with a command: `activate_tab`, `close_tab`, `new_tab`, or `open`
+with the URL derisk made of the typed text, which Danube opens in a new
+tab. The extension commands (`enable_extension`, `disable_extension`,
+`extension_options`) Danube only logs for now. Without the plugin (an
+older derisk) the registration is refused and the menus below still list
+the tabs.
 
 The menus are derisk global menus, in the top bar and in the command
 palette, where "Tabs › Wikipedia" switches to that tab and "Close Tab ›

@@ -7,8 +7,14 @@
 //! address, whether the page is secure, the ad blocking in force) is the
 //! Page menu, and the address bar is the palette itself, which Danube
 //! asks derisk to show (`dispatch` of the `palette` action) for Ctrl+L.
-//! The palette opens what is typed as an address through the default
-//! browser, which is Danube again, so it lands in a new tab here.
+//! The palette's own Tabs and Extensions headings come from the second
+//! thing Danube registers, `register_palette`: its tabs (and, once there
+//! are any, its extensions) as data for derisk's bundled browser palette
+//! plugin, which turns them into palette rows and sends what is picked
+//! back as `{"event":"palette","source":"danube","command":{...}}`: a tab
+//! to activate or close, a new tab, or an address typed in the palette to
+//! open. Registering again replaces the data, and derisk drops it when
+//! the connection closes.
 //!
 //! derisk names windows by its own ids, so Danube finds its window in
 //! derisk's `state` by app id and title. The window sends an [`Update`]
@@ -160,6 +166,46 @@ pub fn command(item: &str, tabs: &[Tab], active: Option<TabId>) -> Option<Comman
     })
 }
 
+/// What the palette's browser plugin gets: the tabs as derisk's
+/// `register_palette` schema has them, and the extensions, none until the
+/// extension runtime exists.
+pub fn palette_data(tabs: &[Tab], active: Option<TabId>) -> Value {
+    let tabs: Vec<Value> = tabs
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id.to_string(),
+                "title": t.title,
+                "url": t.uri,
+                "active": Some(t.id) == active,
+            })
+        })
+        .collect();
+    json!({"tabs": tabs, "extensions": []})
+}
+
+/// The command for what was picked under the palette's Tabs and
+/// Extensions headings; `None` for one Danube cannot do yet (the
+/// extension commands, until the runtime exists) or does not know.
+pub fn palette_command(command: &Value) -> Option<Command> {
+    let id = || command["id"].as_str()?.parse::<TabId>().ok();
+    Some(match command["op"].as_str()? {
+        "activate_tab" => Command::Activate(id()?),
+        "close_tab" => Command::Close(id()?),
+        "new_tab" => Command::NewTab {
+            uri: None,
+            activate: true,
+        },
+        // derisk has already made a URL of the typed text: https:// for a
+        // bare host, the chosen search engine for anything else.
+        "open" => Command::NewTab {
+            uri: Some(command["url"].as_str()?.to_owned()),
+            activate: true,
+        },
+        _ => return None,
+    })
+}
+
 fn socket() -> Option<PathBuf> {
     Some(PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("derisk/agent.sock"))
 }
@@ -167,6 +213,9 @@ fn socket() -> Option<PathBuf> {
 enum Asked {
     State,
     Register,
+    /// The palette data registered; a refusal is an older derisk without
+    /// the browser plugin, which keeps its menus.
+    RegisterPalette,
     /// The palette shown; its answer says nothing Danube acts on.
     Palette,
 }
@@ -245,6 +294,8 @@ fn talk(
 ) -> Result<(), Stopped> {
     let mut asked: VecDeque<Asked> = VecDeque::new();
     let mut registered: Option<(u64, Value)> = None;
+    // The palette data derisk holds; sent again only when it changes.
+    let mut registered_palette: Option<Value> = None;
     // Palette requests already passed on; the window only counts up.
     let mut palette = current.palette;
     let send =
@@ -261,6 +312,14 @@ fn talk(
             if !send(stream, show_palette(), Asked::Palette, &mut asked) {
                 return Ok(());
             }
+        }
+        let data = palette_data(&current.tabs, current.active);
+        if registered_palette.as_ref() != Some(&data) {
+            let request = json!({"method": "register_palette", "source": "danube", "data": data});
+            if !send(stream, request, Asked::RegisterPalette, &mut asked) {
+                return Ok(());
+            }
+            registered_palette = Some(data);
         }
         if asked.is_empty() && !send(stream, json!({"method": "state"}), Asked::State, &mut asked) {
             return Ok(());
@@ -281,6 +340,14 @@ fn talk(
                 }
             } else if let Some(command) = command(item, &current.tabs, current.active) {
                 commands.send(command);
+            }
+            continue;
+        }
+        if message["event"] == "palette" && message["source"] == "danube" {
+            if let Some(command) = palette_command(&message["command"]) {
+                commands.send(command);
+            } else {
+                warn!(command = %message["command"], "a palette command Danube cannot do");
             }
             continue;
         }
@@ -314,6 +381,11 @@ fn talk(
             Some(Asked::Register) if message["ok"] != true => {
                 warn!(error = %message["error"], "derisk refused the menus");
                 registered = None;
+            }
+            Some(Asked::RegisterPalette) if message["ok"] != true => {
+                // Not sent again until the tabs change: the menus still
+                // list them, so an older derisk loses nothing but rows.
+                warn!(error = %message["error"], "derisk refused the palette data");
             }
             _ => {}
         }
@@ -393,5 +465,54 @@ mod tests {
             command("danube.previous", &two, Some(4)),
             Some(Command::Activate(7))
         ));
+    }
+
+    #[test]
+    fn palette_data_and_commands() {
+        let tabs = vec![
+            Tab {
+                id: 4,
+                title: "Example".into(),
+                uri: "https://example.com/".into(),
+                ..Tab::default()
+            },
+            Tab {
+                id: 7,
+                ..Tab::default()
+            },
+        ];
+        let data = palette_data(&tabs, Some(7));
+        assert_eq!(
+            data,
+            json!({
+                "tabs": [
+                    {"id": "4", "title": "Example", "url": "https://example.com/", "active": false},
+                    {"id": "7", "title": "", "url": "", "active": true},
+                ],
+                "extensions": [],
+            })
+        );
+        assert!(matches!(
+            palette_command(&json!({"op": "activate_tab", "id": "4"})),
+            Some(Command::Activate(4))
+        ));
+        assert!(matches!(
+            palette_command(&json!({"op": "close_tab", "id": "7"})),
+            Some(Command::Close(7))
+        ));
+        assert!(matches!(
+            palette_command(&json!({"op": "new_tab"})),
+            Some(Command::NewTab {
+                uri: None,
+                activate: true
+            })
+        ));
+        assert!(matches!(
+            palette_command(&json!({"op": "open", "url": "https://example.org/"})),
+            Some(Command::NewTab { uri: Some(url), activate: true }) if url == "https://example.org/"
+        ));
+        assert!(palette_command(&json!({"op": "activate_tab", "id": "x"})).is_none());
+        assert!(palette_command(&json!({"op": "open"})).is_none());
+        assert!(palette_command(&json!({"op": "enable_extension", "id": "bitwarden"})).is_none());
     }
 }
