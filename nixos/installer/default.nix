@@ -240,29 +240,38 @@ in
     };
 
     serviceConfig = {
-      ExecStart = lib.escapeShellArgs [
-        (lib.getExe pkgs.derisk)
-        "installer"
-        "--"
-        (lib.getExe pkgs.losos-installer)
-        "serve"
-        "--name"
-        "LosOS Desktop"
-        "--repart-definitions"
-        losos.repartDefinitions
-        "--sysupdate-definitions"
-        losos.sysupdateTemplates
-        "--esp"
-        losos.esp
-        "--medium"
-        "/iso"
-        "--work"
-        "/run/losos-installer"
-        "--source"
-        losos.baseUrl
-        "--local-source"
-        releaseDisk
-      ];
+      ExecStart =
+        lib.escapeShellArgs [
+          (lib.getExe pkgs.derisk)
+          "installer"
+          "--"
+          (lib.getExe pkgs.losos-installer)
+          "serve"
+          "--name"
+          "LosOS Desktop"
+          "--repart-definitions"
+          losos.repartDefinitions
+          "--sysupdate-definitions"
+          losos.sysupdateTemplates
+          "--esp"
+          losos.esp
+          "--medium"
+          "/iso"
+          "--work"
+          "/run/losos-installer"
+          "--source"
+          losos.baseUrl
+          "--local-source"
+          releaseDisk
+        ]
+        # GRUB into the installed disk's MBR and BIOS boot partition, so a
+        # legacy BIOS PC starts it as UEFI firmware does (bios.nix).
+        +
+          lib.optionalString (losos.biosBoot != null)
+            " ${lib.escapeShellArgs [
+               "--bios-boot"
+               losos.biosBoot
+             ]}";
       PAMName = "derisk-installer";
       User = "root";
       TTYPath = "/dev/tty1";

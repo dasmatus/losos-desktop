@@ -2,12 +2,17 @@
 # store as one squashfs, and an appended FAT partition holding its UKI as the
 # removable-media boot path.
 #
-# EFI only, as the OS is. Written to a stick, the ISO reads as a GPT disk with
-# that FAT partition as its ESP; burnt to a disc, El Torito points the
-# firmware at the same partition. The firmware starts the UKI directly, with
-# no boot loader in front: there is one entry and nothing to choose. nixpkgs'
-# iso-image.nix is not used because it is built around GRUB and syslinux, and
-# around a Nix that registers the store at boot, none of which is here.
+# Written to a stick, the ISO reads as a GPT disk with that FAT partition as
+# its ESP; burnt to a disc, El Torito points the firmware at the same
+# partition. UEFI firmware starts the UKI directly, with no boot loader in
+# front: there is one entry and nothing to choose. nixpkgs' iso-image.nix is
+# not used because it is built around GRUB and syslinux, and around a Nix
+# that registers the store at boot, none of which is here.
+#
+# On x86_64 a legacy BIOS PC starts it too, with GRUB, because the OS it
+# installs starts on one (modules/bios.nix): GRUB's hybrid MBR on a stick,
+# its El Torito image on a disc, and either starts the UKI's own kernel and
+# initrd with the UKI's command line, kept beside it in boot/.
 {
   config,
   lib,
@@ -51,6 +56,49 @@ let
         mcopy -i $out ${config.system.build.uki}/${ukiFile} ::/EFI/BOOT/BOOT${lib.toUpper efiArch}.EFI
         fsck.vfat -n $out
       '';
+
+  # GRUB for a legacy BIOS, as one El Torito image with its modules and menu
+  # inside, so it reads nothing of its own from the medium. The same image
+  # starts from a disc, and from a stick through boot_hybrid.img in the MBR,
+  # which xorriso points at it (--grub2-boot-info). Either way $root starts
+  # as the drive GRUB was loaded from, a CD or a disk, so the menu finds the
+  # medium by its label rather than guessing.
+  bios = lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 (
+    let
+      grubDir = "${pkgs.grub2}/lib/grub/i386-pc";
+      menu = pkgs.writeText "losos-installer-grub.cfg" ''
+        set timeout=3
+        if serial --unit=0 --speed=115200; then
+          terminal_input --append serial
+          terminal_output --append serial
+        fi
+        search --no-floppy --set=root --label ${volumeID}
+        menuentry "Install LosOS Desktop" {
+          linux /boot/linux ${config.boot.uki.settings.UKI.Cmdline}
+          initrd /boot/initrd
+        }
+      '';
+    in
+    {
+      image =
+        pkgs.runCommand "losos-installer-eltorito"
+          {
+            nativeBuildInputs = [ pkgs.buildPackages.grub2 ];
+          }
+          ''
+            grub-script-check ${menu}
+            mkdir memdisk $out
+            cp ${menu} memdisk/grub.cfg
+            tar -C memdisk -cf memdisk.tar grub.cfg
+            echo 'normal (memdisk)/grub.cfg' > early.cfg
+            grub-mkimage -O i386-pc-eltorito -d ${grubDir} -m memdisk.tar -c early.cfg -p / \
+              -o $out/eltorito.img \
+              biosdisk iso9660 part_gpt part_msdos search search_label linux normal \
+              memdisk tar configfile test echo serial terminal
+          '';
+      mbr = "${grubDir}/boot_hybrid.img";
+    }
+  );
 in
 {
   assertions = [
@@ -127,10 +175,23 @@ in
           -partition_offset 16 \
           -append_partition 2 C12A7328-F81F-11D2-BA4B-00A0C93EC93B ${esp} \
           -appended_part_as_gpt \
+          ${
+            lib.optionalString (bios != { }) ''
+              -b boot/eltorito.img \
+              -no-emul-boot -boot-load-size 4 -boot-info-table \
+              --grub2-boot-info --grub2-mbr ${bios.mbr} \
+              -eltorito-alt-boot \
+            ''
+          } \
           -e --interval:appended_partition_2:all:: \
           -no-emul-boot \
           -graft-points \
           -output $out \
-          nix-store.squashfs=${squashfs}
+          nix-store.squashfs=${squashfs} \
+          ${lib.optionalString (bios != { }) ''
+            boot/eltorito.img=${bios.image}/eltorito.img \
+            boot/linux=${config.boot.uki.settings.UKI.Linux} \
+            boot/initrd=${config.boot.uki.settings.UKI.Initrd}
+          ''}
       '';
 }

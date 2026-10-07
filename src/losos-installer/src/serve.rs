@@ -43,6 +43,8 @@ pub struct Config {
     /// Where a release disk is mounted when one is attached
     /// ([`install::has_release`]).
     pub local_source: Option<PathBuf>,
+    /// [`Plan::bios_boot`].
+    pub bios_boot: Option<PathBuf>,
 }
 
 /// The release disk's directory, when one holding a release is mounted.
@@ -223,6 +225,7 @@ pub fn run(config: &Config, input: impl BufRead, output: impl Write + Send + 'st
                     work: config.work.clone(),
                     source: config.source.clone(),
                     local: config.local_source.clone(),
+                    bios_boot: config.bios_boot.clone(),
                 };
                 let events = events.clone();
                 installing = Some(thread::spawn(move || install_reporting(&plan, &events)));
