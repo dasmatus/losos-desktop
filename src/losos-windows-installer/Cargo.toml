@@ -1,0 +1,25 @@
+[package]
+name = "losos-windows-installer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+
+[dependencies]
+fatfs = "0.3.6"
+getrandom = "0.4"
+liblzma = { version = "0.4.8", default-features = false, features = ["static", "parallel"] }
+miette = { version = "7.6.0", features = ["fancy"] }
+pgp = "0.21.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Ioctl", "Win32_System_IO", "Win32_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_Security", "Win32_System_Registry", "Win32_UI_Shell", "Win32_System_Memory"] }
+
+# Fat LTO and one codegen unit, as every Rust crate in losos-desktop builds.
+[profile.release]
+lto = true
+codegen-units = 1

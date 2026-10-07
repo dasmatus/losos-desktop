@@ -317,6 +317,17 @@ jobs:
       - *install-nix
       - *checkout
 
+      # Fixed-output inputs come from cache.nixos.org where it has them, with
+      # copied outputs checked against their hashes. This includes pinned
+      # bootstrap and compiler inputs as well as upstream source archives.
+      # It runs before the import because it evaluates `.#release`, and
+      # evaluation is what adds the flake's own sources (a crate's Cargo.lock,
+      # an eval-time fetch) to the store. prebuild's references include them,
+      # and no substituter has them, so realising them before this evaluation
+      # failed with "there is no substituter that can build it".
+      - name: Fetch fixed-output inputs
+        run: tools/nix-fetch-sources .#release
+
       # What `prebuild` compiled for this architecture. The paths it refers
       # to and did not build are stock ones, and come from the substituters
       # first, because an import refuses a path whose references are not in
@@ -362,12 +373,6 @@ jobs:
             exit 1
           fi
           echo "Every prebuilt package is in the store or a substituter."
-
-      # Fixed-output inputs come from cache.nixos.org where it has them, with
-      # copied outputs checked against their hashes. This includes pinned
-      # bootstrap and compiler inputs as well as upstream source archives.
-      - name: Fetch fixed-output inputs
-        run: tools/nix-fetch-sources .#release
 
       # Record the store after preloading and importing, so the cache push
       # excludes the Nix installer, every path the fetch added, and what
@@ -589,7 +594,8 @@ jobs:
   # Replaces the nightly GitHub release and moves the channel's tag in GHCR.
   # sysupdate reads the OS's files through proxy/ because GitHub releases
   # reject assets of 2 GiB or larger, so the release carries only the
-  # installer ISOs, which are what a person downloads by hand. Only an
+  # installer ISOs and the Windows installer, which are what a person
+  # downloads by hand. Only an
   # architecture that finished its build and passed its flake check reached
   # GHCR, so that is the gate.
   publish:
@@ -655,11 +661,12 @@ jobs:
           done
 
       # The release tag stays the channel name; update images come from the
-      # channel tags in GHCR via proxy/. The installer ISOs are attached with
+      # channel tags in GHCR via proxy/. The installer ISOs and the Windows
+      # installer (x86_64 only, docs/windows-installer.md) are attached with
       # their own lines of SHA256SUMS. The tag is deleted with the release and
-      # made again at this commit, so it names the source the ISOs were built
-      # from. An ISO at GitHub's limit fails the step rather than publishing a
-      # release without it.
+      # made again at this commit, so it names the source they were built
+      # from. An installer at GitHub's limit fails the step rather than
+      # publishing a release without it.
       - name: Publish to the channel release
         if: steps.pulled.outputs.any == 'true'
         env:
@@ -671,17 +678,18 @@ jobs:
             echo "::error::The release has no installer ISO."
             exit 1
           fi
-          for iso in "${isos[@]}"; do
-            if [ "$(stat -c %s "$iso")" -ge $((2 * 1024 * 1024 * 1024)) ]; then
-              echo "::error::$iso is 2 GiB or larger, which a GitHub release rejects."
+          installers=("${isos[@]}" release/*-windows-installer.exe)
+          for file in "${installers[@]}"; do
+            if [ "$(stat -c %s "$file")" -ge $((2 * 1024 * 1024 * 1024)) ]; then
+              echo "::error::$file is 2 GiB or larger, which a GitHub release rejects."
               exit 1
             fi
           done
           mkdir -p assets
-          mv -t assets "${isos[@]}"
-          grep -- '-installer\.iso$' release/SHA256SUMS > assets/SHA256SUMS
+          mv -t assets "${installers[@]}"
+          grep -E -- '-installer\.iso$|-windows-installer\.exe$' release/SHA256SUMS > assets/SHA256SUMS
           gh release delete nightly --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
           gh release create nightly --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "LosOS nightly" --prerelease \
-            --notes "Rolling nightly channel. Write an installer ISO to a USB stick and boot it with UEFI; it installs the newest nightly over the network." \
+            --notes "Rolling nightly channel. Write an installer ISO to a USB stick and boot it with UEFI, or run the Windows installer on a PC that keeps Windows; either installs the newest nightly over the network." \
             assets/*
