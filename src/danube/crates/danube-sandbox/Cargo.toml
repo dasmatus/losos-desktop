@@ -1,0 +1,22 @@
+[package]
+name = "danube-sandbox"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "danube_sandbox"
+path = "src/lib.rs"
+
+[[bin]]
+name = "danube-sandbox"
+path = "src/main.rs"
+
+[dependencies]
+hakoniwa.workspace = true
+libc.workspace = true
+miette.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# The same nix as Hakoniwa, for passing file descriptors into the container.
+nix = { version = "0.29", features = ["socket", "uio", "fs", "process", "signal"] }

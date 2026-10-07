@@ -1,7 +1,9 @@
 # x2mcsapi, mcsapi's adapter that styles apps not built on mcsapi so they
 # match derisk: a GTK 3 and GTK 4 theme, a Qt style sheet and web CSS, all
-# generated from the same mcsapi theme derisk draws itself with. Uranium's
-# launcher runs it to style the browser's own interface (uranium.nix).
+# generated from the same mcsapi theme derisk draws itself with. Nothing in
+# the image runs it since Danube, an mcsapi window itself, replaced
+# Uranium, whose launcher styled Chromium's interface with it; it stays a
+# package for apps outside the image.
 #
 # The same mcsapi commit derisk's Cargo.lock pins, so both read a theme the
 # same way; move the two together.

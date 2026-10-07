@@ -12,9 +12,8 @@ fetches. It serves these from this project's GHCR namespace:
   path through it against a fake registry; the tests are in `proxy/test/`.
 - **Build caches.** `/build-cache/<name>/<arch>/<part>` redirects to one
   part of a compiler cache CI keeps in GHCR: `losos` for the overlay's
-  patched GTK and Qt (`losos-ccache:<arch>`), `uranium` for Chromium's
-  ccache and ThinLTO cache (`uranium-ccache:<arch>`). Each is a zstd tarball
-  split into 4 GB parts, `ccache.tar.zst.part-00` on, and
+  patched GTK and Qt (`losos-ccache:<arch>`). It is a zstd tarball split
+  into 4 GB parts, `ccache.tar.zst.part-00` on, and
   `tools/build-cache-fetch` fetches and unpacks one, through the proxy
   first and from GHCR with oras when the proxy has nothing.
 - **Updates.** `/updates/<channel>/<arch>/<file>` serves a file of
@@ -46,10 +45,10 @@ What has to be set up once, outside the repository:
    variable `GHCR_REPOSITORY=dasmatus/losos-desktop`. `vercel.json` has the
    rest. Its build installs a pinned Rust with rustup when absent and adds
    the WebAssembly target when Rust is already installed.
-2. **GHCR**: the `losos-desktop/nix-cache`, `losos-desktop/images`,
-   `losos-desktop/losos-ccache` and `losos-desktop/uranium-ccache`
-   packages public, once CI has created them; or a read-only token in
-   Vercel as `GHCR_TOKEN`, with its owner's GitHub login as `GHCR_USERNAME`.
+2. **GHCR**: the `losos-desktop/nix-cache`, `losos-desktop/images` and
+   `losos-desktop/losos-ccache` packages public, once CI has created them;
+   or a read-only token in Vercel as `GHCR_TOKEN`, with its owner's GitHub
+   login as `GHCR_USERNAME`.
 3. **A signing key**: `nix key generate-secret --key-name losos-desktop-1`,
    stored as the secret `NIX_CACHE_SIGNING_KEY`; its public half, from `nix
    key convert-secret-to-public`, as the variable `NIX_CACHE_PUBLIC_KEY`.

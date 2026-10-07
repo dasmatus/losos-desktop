@@ -62,7 +62,9 @@ still takes time, so don't start one to check a module edit.
   installed and signed by a user's own Home Manager (`docs/pm.md`).
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
   plugins, `losos-installer`, `losos-security`, `losos-swap`, `losos-docs`
-  (`website/` built for reading offline), the pm payload builder, and Halium's `libhybris`, `android-headers` and generic
+  (`website/` built for reading offline), the Danube browser and the WPE
+  WebKit it draws (`docs/danube.md`), `losos-adblock` (`docs/adblock.md`),
+  the pm payload builder, and Halium's `libhybris`, `android-headers` and generic
   system image (`halium-gsi`).
   It also replaces `gtk3`, `gtk4` and Qt 6's `qtbase` with builds carrying
   `patches/gtk3`, `patches/gtk4` and `patches/qtbase`, which make their apps
@@ -124,9 +126,8 @@ cited.
 
 ## CI
 
-`.github/workflows/ci.yml` is the main workflow; `uranium.yml` compiles
-the patched browser in rounds and publishes its Flatpak (`docs/uranium.md`). `prebuild` builds every
-package the release needs (the patched GTK and Qt, what links them, and this
+`.github/workflows/ci.yml` is the main workflow. `prebuild` builds every
+package the release needs (the patched GTK and Qt, WPE WebKit, what links them, and this
 repository's programs) for each architecture first. Nothing lists them:
 `tools/nix-prebuild-plan` keeps the derivations that do not change when
 `losos.version` does. It pushes them to the GHCR cache outside a pull

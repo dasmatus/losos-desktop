@@ -1,0 +1,30 @@
+[package]
+name = "danube"
+version = "0.1.0"
+edition = "2021"
+description = "The LosOS web browser: WPE WebKit drawn inside an mcsapi window"
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+danube-sandbox.workspace = true
+libc.workspace = true
+miette.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json = "1"
+# The window and WebKit talk over bounded channels, and each helper thread
+# is a scoped one that ends with them; crossbeam's channels can be waited
+# on with a timeout and shared between receivers, which std's cannot.
+crossbeam-channel = "0.5"
+# The window and its chrome: eframe on winit, drawn with mcsapi's
+# components in the desktop's theme, like derisk's own apps.
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+# Only for its platform traits: the window's event loop runs off the main
+# thread, which WebKit has.
+winit = { version = "0.30", default-features = false, features = ["wayland", "x11"] }
+mcsapi-components = { path = "../../../../components/mcsapi/crates/mcsapi-components" }
+mcsapi-theme = { path = "../../../../components/mcsapi/crates/mcsapi-theme" }
+
+[build-dependencies]
+pkg-config = "0.3"

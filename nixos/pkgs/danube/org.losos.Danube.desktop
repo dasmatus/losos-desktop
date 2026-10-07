@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Name=Danube
+GenericName=Web Browser
+Comment=Browse the web
+Exec=danube %U
+Icon=org.losos.Danube
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=org.losos.Danube
+Actions=new-window;captive-portal;
+
+[Desktop Action new-window]
+Name=New Tab
+Exec=danube
+
+[Desktop Action captive-portal]
+Name=Sign in to network
+Exec=danube --captive-portal
