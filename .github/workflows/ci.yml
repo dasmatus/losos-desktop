@@ -317,6 +317,17 @@ jobs:
       - *install-nix
       - *checkout
 
+      # Fixed-output inputs come from cache.nixos.org where it has them, with
+      # copied outputs checked against their hashes. This includes pinned
+      # bootstrap and compiler inputs as well as upstream source archives.
+      # It runs before the import because it evaluates `.#release`, and
+      # evaluation is what adds the flake's own sources (a crate's Cargo.lock,
+      # an eval-time fetch) to the store. prebuild's references include them,
+      # and no substituter has them, so realising them before this evaluation
+      # failed with "there is no substituter that can build it".
+      - name: Fetch fixed-output inputs
+        run: tools/nix-fetch-sources .#release
+
       # What `prebuild` compiled for this architecture. The paths it refers
       # to and did not build are stock ones, and come from the substituters
       # first, because an import refuses a path whose references are not in
@@ -356,12 +367,6 @@ jobs:
             exit 1
           fi
           echo "Every prebuilt package is in the store or a substituter."
-
-      # Fixed-output inputs come from cache.nixos.org where it has them, with
-      # copied outputs checked against their hashes. This includes pinned
-      # bootstrap and compiler inputs as well as upstream source archives.
-      - name: Fetch fixed-output inputs
-        run: tools/nix-fetch-sources .#release
 
       # Record the store after preloading and importing, so the cache push
       # excludes the Nix installer, every path the fetch added, and what
