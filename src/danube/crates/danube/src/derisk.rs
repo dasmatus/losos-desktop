@@ -196,8 +196,8 @@ pub fn palette_command(command: &Value) -> Option<Command> {
             uri: None,
             activate: true,
         },
-        // derisk has already made a URL of the typed text: https:// for a
-        // bare host, the chosen search engine for anything else.
+        // derisk has already made an http(s) URL of the typed text (https://
+        // for a bare host, http:// for localhost); a search is derisk's own.
         "open" => Command::NewTab {
             uri: Some(command["url"].as_str()?.to_owned()),
             activate: true,

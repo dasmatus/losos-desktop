@@ -80,8 +80,8 @@ socket, with the tabs (id, title, URL, which is active) and the
 extensions (none until the extension runtime exists), sent again
 whenever they change. What is picked there comes back as a `palette`
 event with a command: `activate_tab`, `close_tab`, `new_tab`, or `open`
-with the URL derisk made of the typed text, which Danube opens in a new
-tab. The extension commands (`enable_extension`, `disable_extension`,
+with the http(s) URL derisk made of the typed text (`https://` for a
+bare host, `http://` for localhost), which Danube opens in a new tab. The extension commands (`enable_extension`, `disable_extension`,
 `extension_options`) Danube only logs for now. Without the plugin (an
 older derisk) the registration is refused and the menus below still list
 the tabs.
