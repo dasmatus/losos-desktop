@@ -12,6 +12,11 @@ name = "losos-security"
 path = "src/main.rs"
 
 [dependencies]
+# Logs go through tracing to stderr, `RUST_LOG` choosing the level, and
+# failures are reported by miette, as in every LosOS program.
+miette = { version = "7.6.0", features = ["fancy"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # The system bus, so GNOME's Privacy & Security panel can read the report.
 # zbus rather than a hand-rolled client: the panel talks D-Bus, and the one
 # thing worse than no security report is one that lies because its serialiser
