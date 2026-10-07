@@ -28,3 +28,5 @@ mcsapi-theme = { path = "../../../../components/mcsapi/crates/mcsapi-theme" }
 
 [build-dependencies]
 pkg-config = "0.3"
+# Writes ffi.rs's declarations from WPE WebKit's headers at build time.
+bindgen = "0.72"

@@ -30,6 +30,18 @@ dropped for the next. The threads beside them, derisk's menus, later
 `danube` runs handing over URLs, the captive portal's recheck, are scoped
 to the same `run` and end with WebKit.
 
+There are no Rust bindings for WPE's 2.0 API, so the crate makes its own:
+`build.rs` runs bindgen over the installed `wpe/webkit.h` and
+`wpe/headless/wpe-headless.h` at build time, allowlisted to WebKit's and
+WPE's symbols and the handful of GLib calls used, and `ffi.rs` includes the
+result. Every signature and enum value is the library's own, so a WebKit
+update that changes one fails to compile rather than at runtime. `webkit.rs`
+wraps the objects in types that own one reference each (`Display`,
+`WebView`, `View`, `Toplevel`, `Settings`, `NetworkSession`, `FilterStore`
+and so on), give it back when dropped, offer the calls as methods, and take
+closures for signals, which GObject frees with the connection. `engine.rs`
+holds only the tab logic on top of them and has no `unsafe` in it.
+
 nixpkgs has only WebKitGTK, so `nixos/pkgs/wpewebkit.nix` builds the WPE
 port from the WPE release of the same WebKit version, with nixpkgs'
 WebKitGTK patches. It builds only the WPEPlatform API (headless and Wayland
