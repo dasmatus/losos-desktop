@@ -174,7 +174,12 @@
             if system == "aarch64-linux" then
               pkgs.runCommand "${build.releaseArtifacts.name}-with-gsi" { } ''
                 mkdir -p $out
-                cp ${build.releaseArtifacts}/* ${gsiSystem.config.system.build.gsiImages}/* $out/
+                # Both directories carry a SHA256SUMS, and one cp refuses to
+                # overwrite a file it just created, so each copy drops its own
+                # before the combined list is written.
+                cp ${build.releaseArtifacts}/* $out/
+                rm $out/SHA256SUMS
+                cp ${gsiSystem.config.system.build.gsiImages}/* $out/
                 cd $out
                 rm SHA256SUMS
                 sha256sum -- * > SHA256SUMS
