@@ -626,7 +626,12 @@ fn keycode(display: *mut WPEDisplay, keyval: u32) -> u32 {
         }
         let mut entries = ptr::null_mut();
         let mut n = 0;
-        if wpe_keymap_get_entries_for_keyval(keymap, keyval, &mut entries, &mut n) == FALSE || n == 0 {
+        // WPE sets `entries` only on success; checking it as well keeps the
+        // dereference below sound if a keymap ever reports entries without one.
+        if wpe_keymap_get_entries_for_keyval(keymap, keyval, &mut entries, &mut n) == FALSE
+            || n == 0
+            || entries.is_null()
+        {
             return 0;
         }
         let code = (*entries).keycode;
