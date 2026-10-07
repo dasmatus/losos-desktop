@@ -122,6 +122,7 @@ let
     specialArgs.losos = {
       inherit (cfg) version;
       inherit (cfg.update) baseUrl pubring;
+      docsUrl = cfg.docs.url;
       inherit esp repartDefinitions sysupdateTemplates;
     };
   };

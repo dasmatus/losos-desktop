@@ -231,6 +231,12 @@ in
       # toggle and the page icons. Named directly: minimal.nix leaves icons
       # out of the system profile, and a service has no profile anyway.
       XDG_DATA_DIRS = "${papirus}/share";
+    }
+    # Where an error alert's section is published. The alert prints the
+    # address for reading on another device: the live system has no browser
+    # (docs.nix).
+    // lib.optionalAttrs (losos.docsUrl != null) {
+      MCSAPI_DOCS_URL = losos.docsUrl;
     };
 
     serviceConfig = {

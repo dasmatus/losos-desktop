@@ -87,6 +87,9 @@ in
   losos-installer = callWithMold ./losos-installer.nix { };
   losos-security = callWithMold ./losos-security.nix { };
   losos-swap = callWithMold ./losos-swap.nix { };
+  # This repository's documentation, for reading offline; built by Node, so
+  # nothing to link.
+  losos-docs = final.callPackage ./losos-docs.nix { };
   # Halium (nixos/halium/): Android's HAL headers, libhybris, which loads
   # the vendor's bionic-linked GPU and HAL libraries into glibc processes,
   # and the generic Android system image that starts those HALs. That image
