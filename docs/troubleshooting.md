@@ -1,18 +1,18 @@
 # When something goes wrong
 
-derisk's apps, the installer and first-boot setup show a failure as an
-error alert: what failed on its first line, red, the causes under it, what
-to do about it when the app knows, and its code. A warning, something that
-went only partly wrong, has the accent color instead. "Copy details" copies
-the whole report as plain text, for a bug report; "Learn more" opens the
-section of this page the error names.
+derisk's apps, the installer and first-boot setup show a failure in an
+alert dialog: what failed as its title, red, the causes under it, what to do
+about it when the app knows, and its code. A warning, something that went
+only partly wrong, has the accent color instead. "Copy details" copies the
+whole report as plain text, for a bug report; "Learn more" opens the section
+of this page the error names; "OK" or Escape closes it.
 
 Those sections are read from the copy of this documentation the image
 carries, `/run/current-system/sw/share/doc/losos` (`nixos/modules/docs.nix`),
 so they open without a network, and from the published site when the copy
 has no such page. The installer and first-boot setup run before there is a
-session or a browser, so their alerts print the section's address on the
-published site instead, for reading on another device. The alerts are mcsapi's `ErrorAlert` drawing an
+session or a browser, so their dialogs print the section's address on the
+published site instead, for reading on another device. The dialogs are mcsapi's `ErrorDialog` drawing an
 `mcsapi_ui::Error`, a miette report that knows its section; the theme colors
 them like every other component.
 
@@ -78,5 +78,5 @@ First-boot setup applies its pages one by one with `localectl`,
 `timedatectl` and `homectl`, and the message is the tool's. The step that
 fails is usually the account: homed refuses a user name that is taken or not
 a valid name, and a password its quality check rejects. Back returns to the
-account page with the error still shown. Setup runs again on every boot
+account page. Setup runs again on every boot
 until an account exists ([First-boot setup](first-boot.md)).

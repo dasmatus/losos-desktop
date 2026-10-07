@@ -86,7 +86,7 @@ still takes time, so don't start one to check a module edit.
   with the web flasher (`website/static/flasher/`, `docs/web-flasher.md`) beside it;
   `website/wiki.js` writes the same pages for the GitHub wiki, and
   `DOCS_OFFLINE=1` builds the copy the image carries (`modules/docs.nix`),
-  which derisk's error alerts open a section of (`docs/troubleshooting.md`). A new page in
+  which derisk's error dialogs open a section of (`docs/troubleshooting.md`). A new page in
   `docs/` goes in `website/sidebars.js` too, or both fail. Pages link each
   other as `page.md`, which GitHub, Docusaurus and the wiki all follow.
 - `tools/nix-cache-push` pushes built store paths into that cache.
