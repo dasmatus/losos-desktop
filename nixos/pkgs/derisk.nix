@@ -10,6 +10,7 @@
   lib,
   rustPlatform,
   pkg-config,
+  lld,
   libxkbcommon,
   wayland,
   libGL,
@@ -27,7 +28,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "derisk";
-  version = "0.1.0-unstable-2026-10-05";
+  version = "0.1.0-unstable-2026-10-07";
 
   # The components/derisk submodule, at the commit this tree records for it
   # (flake.nix, `self.submodules`). cleanSource drops the submodule's .git
@@ -37,7 +38,7 @@ rustPlatform.buildRustPackage {
     src = lib.cleanSource ../../components/derisk;
   };
 
-  cargoHash = "sha256-an5SzKzJGObEpik/DoYGGaSvRQjaOwdrDU4U+WbfUSI=";
+  cargoHash = "sha256-/gAvUxW/c2V+lyzYKe/cjUFED2Kic97Z5pYBJlzhq5I=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is
@@ -51,7 +52,14 @@ rustPlatform.buildRustPackage {
   ];
   buildFeatures = [ "derisk/host" ] ++ lib.optional withHardenedMalloc "derisk/hardened-malloc";
 
-  nativeBuildInputs = [ pkg-config ];
+  # build.rs compiles the command palette's plugins (plugins/ in the same
+  # workspace and Cargo.lock, so the vendored crates cover them) for
+  # wasm32-unknown-unknown. nixpkgs' rustc carries that target's std but links
+  # it with `lld` from PATH rather than a bundled rust-lld.
+  nativeBuildInputs = [
+    pkg-config
+    lld
+  ];
   buildInputs = [
     libxkbcommon
     wayland
