@@ -35,15 +35,9 @@ let
   };
   oursDeps = rustPlatform.importCargoLock { lockFile = ../../plugins/Cargo.lock; };
 
-  # pm's plugin workspace, from the same commit as pm itself. Its lock lives
-  # in the fetched source, so it is vendored by hash rather than read at
-  # evaluation time.
-  pmDeps = rustPlatform.fetchCargoVendor {
-    name = "pm-plugins";
-    src = pm.src;
-    sourceRoot = "${pm.src.name}/plugins";
-    hash = "sha256-OK+QHCUSv6hCWRtUs7p8aVi08mmft3b5oQ1MmqrVyeQ=";
-  };
+  # pm's plugin workspace, from the same commit as pm itself, whose build
+  # vendors its crates already (pm.nix).
+  pmDeps = pm.pluginsDeps;
 
   local = [
     "losos-image"
