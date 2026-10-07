@@ -15,6 +15,7 @@ module.exports = {
         'layout',
         'installer',
         'first-boot',
+        'sign-in',
         'releases',
         'allocator',
         'security-report',
