@@ -8,7 +8,7 @@
 //! the extension reports the tab that changed it.
 
 use std::collections::{HashMap, VecDeque};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, IsTerminal, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
@@ -16,6 +16,8 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::{json, Value};
+use tracing::warn;
+use tracing_subscriber::EnvFilter;
 use uranium_tabs::{command, menus, pair, read_message, write_message, ShellWindow, Snapshot};
 
 enum Event {
@@ -103,6 +105,16 @@ impl Derisk {
 }
 
 fn main() {
+    // stderr, never stdout: stdout is Chromium's native messaging protocol,
+    // and Chromium keeps a host's stderr in its own log.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
+        .init();
+
     let (events, inbox) = mpsc::channel();
 
     let from_browser = events.clone();
@@ -116,7 +128,7 @@ fn main() {
                         return;
                     }
                 }
-                Err(e) => eprintln!("uranium-tabs: not a snapshot: {e}"),
+                Err(error) => warn!(%error, "not a snapshot"),
             }
         }
         let _ = from_browser.send(Event::Quit);
@@ -194,10 +206,7 @@ fn main() {
                         // Forgotten, so the next tick tries again: the window
                         // may not have been mapped yet.
                         d.registered.remove(&window);
-                        eprintln!(
-                            "uranium-tabs: derisk refused the menus: {}",
-                            message["error"]
-                        );
+                        warn!(error = %message["error"], "derisk refused the menus");
                     }
                     _ => {}
                 }
