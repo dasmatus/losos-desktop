@@ -47,6 +47,9 @@ rustPlatform.buildRustPackage {
   nativeBuildInputs = [
     pkg-config
     makeWrapper
+    # build.rs writes the C API's declarations from WPE's headers with
+    # bindgen, which needs libclang.
+    rustPlatform.bindgenHook
   ];
   buildInputs = [
     wpewebkit

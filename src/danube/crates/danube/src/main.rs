@@ -22,6 +22,7 @@ mod input;
 mod permissions;
 mod shared;
 mod ui;
+mod webkit;
 
 use std::convert::Infallible;
 use std::io::{BufRead, BufReader, IsTerminal, Write};
