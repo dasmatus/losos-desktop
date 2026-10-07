@@ -24,7 +24,7 @@ module.exports = {
       type: 'category',
       label: 'Desktop and apps',
       collapsed: false,
-      items: ['gtk-qt-phone', 'icon-theme', 'uranium', 'choice-screens'],
+      items: ['gtk-qt-phone', 'icon-theme', 'danube', 'adblock', 'choice-screens'],
     },
     {
       type: 'category',

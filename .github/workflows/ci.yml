@@ -150,8 +150,8 @@ jobs:
       - name: Find the packages
         run: tools/nix-prebuild-plan ${{ matrix.arch }} > "$RUNNER_TEMP/plan.txt"
 
-      # The compiler cache the last run on main left in GHCR, as uranium.yml
-      # keeps Chromium's, through the proxy where it serves it. It only helps when something has to compile again:
+      # The compiler cache the last run on main left in GHCR, through the
+      # proxy where it serves it. It only helps when something has to compile again:
       # a nixpkgs bump that moves GTK or Qt by a point release, or a changed
       # patch, recompiles only the files that differ. A pull request reads
       # it and writes nothing back.

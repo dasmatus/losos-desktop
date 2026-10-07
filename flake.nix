@@ -90,7 +90,6 @@
       # What the images built for release take from the proxy's URL, which
       # is a repository variable in CI rather than anything written here.
       proxySettings = lib.optionalAttrs (proxyUrl != "") {
-        losos.uranium.flatpakRemote = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/flatpak/";
         losos.ping.url = lib.mkDefault "${lib.removeSuffix "/" proxyUrl}/ping";
       };
 
@@ -196,14 +195,11 @@
             losos-installer
             losos-security
             losos-swap
-            uranium
-            uranium-tabs
+            losos-adblock
+            danube
+            wpewebkit
             x2mcsapi
             ;
-          # Uranium compiled with its patches, which the image leaves off
-          # (losos.uranium.patched). For a build host big enough to compile
-          # Chromium, whose result the project cache can then serve.
-          inherit (ours) uranium-patched;
           # The image carries no Nix (an update is a new /usr, not a switch);
           # this package is for a build host that wants matching Nix.
           nix = ours.nix;
@@ -241,10 +237,8 @@
           derisk = self.packages.${system}.derisk;
           pm = self.packages.${system}.pm;
           pm-plugins = self.packages.${system}.pm-plugins;
-          # Uranium's Chromium patches still apply to the Chromium nixpkgs
-          # pins. Building uranium-patched would prove more, but takes longer
-          # than CI's budget; this reads one source tarball.
-          uranium-patches = self.packages.${system}.uranium.patchCheck;
+          losos-adblock = self.packages.${system}.losos-adblock;
+          danube = self.packages.${system}.danube;
           home-manager-pm = import ./nixos/tests/home-manager-pm.nix {
             inherit self home-manager pkgs;
           };

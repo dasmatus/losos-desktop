@@ -12,7 +12,8 @@
     ./setup.nix
     ./network.nix
     ./desktop.nix
-    ./browser.nix
+    ./danube.nix
+    ./adblock.nix
     ./flatpak.nix
     ./atl.nix
     ./services.nix

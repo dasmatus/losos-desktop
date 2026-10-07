@@ -32,8 +32,7 @@ let
       });
   # The compiler behind ccache when the builder offers a cache at
   # /var/cache/losos-ccache (Nix's extra-sandbox-paths, which CI's prebuild
-  # job sets and fills from GHCR), and directly otherwise, as Uranium's
-  # wrapper does. The derivation is the same either way, so a build that used
+  # job sets and fills from GHCR), and directly otherwise. The derivation is the same either way, so a build that used
   # the cache is the one the image asks for. ccache returns an object only
   # for the same preprocessed input and compiler, so a GTK or Qt point
   # release, or a changed patch, recompiles only the files it touched.
@@ -66,8 +65,7 @@ let
   # with, carries -fuse-ld=mold as GTK's does. Only the arguments a package
   # asks for are passed, so a new one needs nothing beyond being called
   # through here. Nothing else in nixpkgs is touched, so it all still
-  # substitutes from cache.nixos.org. Uranium is the exception, called
-  # plainly below: Chromium accepts ThinLTO, and so CFI, only with lld.
+  # substitutes from cache.nixos.org.
   moldStdenv = final.stdenvAdapters.useMoldLinker final.stdenv;
   callWithMold = final.lib.callPackageWith (
     final
@@ -97,31 +95,27 @@ in
   # The Android Translation Layer (nixos/modules/atl.nix), which nixpkgs does
   # not carry either; only in the closure when losos.android.enable is set.
   android-translation-layer = callWithMold ./android-translation-layer.nix { };
-  # Uranium (uranium.nix), the web browser. The default build wraps
-  # nixpkgs' ungoogled-chromium as nixpkgs alone builds it: taken from this
-  # package set, it would link the patched GTK below and need compiling,
-  # which takes longer than CI's time budget, while nixpkgs' own build
-  # substitutes from cache.nixos.org. ungoogled-chromium, not chromium, so
-  # the browser has no Google API keys, no Safe Browsing lookups, no
-  # field trials and none of Google's domains to reach (docs/nixos.md,
-  # "Uranium"). uranium-patched compiles it with patches/chromium;
-  # losos.uranium.patched picks it for the image.
-  uranium =
+  # Danube (danube.nix), the web browser, on WPE WebKit (wpewebkit.nix),
+  # which nixpkgs does not carry. WebKit is built from nixpkgs' own package
+  # set: from this one, GStreamer's plugins would link the patched GTK and
+  # need compiling too. It still compiles here, since nothing upstream
+  # substitutes it, but not through ccache: nixpkgs' ccache wrapper around
+  # clang loses the C++ standard library's headers. Its output is in the
+  # project's cache from the first CI run on, so it compiles again only
+  # when nixpkgs moves WebKit or its dependencies.
+  #
+  # Danube replaced Uranium, which was Chromium under the OS's name with a
+  # native messaging host for derisk's menus (docs/danube.md, "What it
+  # replaced"); Chromium could not be drawn inside an mcsapi window, so it
+  # is not coming back.
+  wpewebkit =
     let
       plain = import final.path { inherit (final.stdenv.hostPlatform) system; };
     in
-    final.callPackage ./uranium.nix {
-      chromium-unwrapped = plain.ungoogled-chromium.browser;
-      uranium-tabs-static = plain.pkgsStatic.callPackage ./uranium-tabs.nix { };
-      wayland-utils-static = plain.pkgsStatic.wayland-utils;
-      # The ungoogled-chromium patch series that build applies, which is
-      # not in its passthru: the same call nixpkgs makes, so the same path.
-      ungoogler = plain.callPackage (
-        final.path + "/pkgs/applications/networking/browsers/chromium/ungoogled.nix"
-      ) { } { inherit (plain.ungoogled-chromium.upstream-info.deps.ungoogled-patches) rev hash; };
-    };
-  uranium-patched = final.uranium.override { patched = true; };
-  uranium-tabs = final.callPackage ./uranium-tabs.nix { };
+    plain.callPackage ./wpewebkit.nix { webkitgtk = plain.webkitgtk_6_0; };
+  danube = callWithMold ./danube.nix { };
+  # The system-wide ad blocker (docs/adblock.md).
+  losos-adblock = callWithMold ./losos-adblock.nix { };
   x2mcsapi = callWithMold ./x2mcsapi.nix { };
   # Not a package: every package in nixpkgs, as a pm package's contents.
   pm-payloads = import ./pm-payloads.nix { inherit (final) lib pkgsStatic runCommand; };

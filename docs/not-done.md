@@ -127,3 +127,17 @@
   not been built, nor sysupdate seen writing to a disk that is not the one
   running. `nix build .#release` was not completed there either, for
   lack of disk space rather than an error.
+- **Danube is unfinished in places** ([Danube](danube.md)). A page's file
+  upload button opens nothing, since WebKit's file chooser request is not
+  answered yet, and a site's notifications are never shown, even when
+  allowed. There are no extensions until the extension runtime lands, no
+  bookmarks, history list or find in page, and no way to resume a
+  download. Its sandboxes need unprivileged user namespaces, and a phone's
+  own kernel may refuse them; Danube then stops rather than running a
+  page outside one, so on such a phone it does not open at all.
+  `--no-sandbox` skips only the outer one. It has run against WPE WebKit
+  in a session, not yet on a desktop or phone with derisk.
+- **Ad blocking is DNS-wide only for names.** A filter list's URL and
+  element rules apply in Danube alone; other browsers and apps get only
+  whole blocked domains ([System-wide ad blocking](adblock.md)), and a
+  program with its own DNS over HTTPS skips it entirely.

@@ -1,0 +1,23 @@
+# Danube, the OS's web browser, on WPE WebKit (docs/danube.md): the
+# browser, and the Hakoniwa launcher that sandboxes it and each of WebKit's
+# web processes.
+[workspace]
+resolver = "2"
+members = ["crates/danube", "crates/danube-sandbox"]
+
+[workspace.dependencies]
+# Logs go through tracing to stderr, `RUST_LOG` choosing the level, and
+# failures are reported by miette, as in every LosOS program.
+miette = { version = "7.6.0", features = ["fancy"] }
+thiserror = "2"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+libc = "0.2"
+hakoniwa = { version = "1.8.0", features = ["landlock", "seccomp"] }
+danube-sandbox = { path = "crates/danube-sandbox" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

@@ -26,7 +26,7 @@ section.
 | Halium | [Halium GSI](halium.md) |
 | What a device port supplies | [Halium GSI](halium.md#which-devices): there are no device ports any more |
 | GTK and Qt on a phone | [GTK and Qt on a phone](gtk-qt-phone.md) |
-| Uranium | [Uranium](uranium.md) |
+| Uranium | [Danube](danube.md), which replaced it |
 | Active users and the choice screens | [Active users and the choice screens](choice-screens.md) |
 | One icon theme | [One icon theme](icon-theme.md) |
 | What is not done | [What is not done](not-done.md) |

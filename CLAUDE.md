@@ -61,8 +61,9 @@ still takes time, so don't start one to check a module edit.
 - `nixos/home/pm.nix` is the flake's `homeModules.pm`: pm and its plugins
   installed and signed by a user's own Home Manager (`docs/pm.md`).
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
-  plugins, `losos-installer`, `losos-security`, `losos-swap`, the pm
-  payload builder, and Halium's `libhybris`, `android-headers` and generic
+  plugins, `losos-installer`, `losos-security`, `losos-swap`, the Danube
+  browser and the WPE WebKit it draws (`docs/danube.md`), `losos-adblock`
+  (`docs/adblock.md`), the pm payload builder, and Halium's `libhybris`, `android-headers` and generic
   system image (`halium-gsi`).
   It also replaces `gtk3`, `gtk4` and Qt 6's `qtbase` with builds carrying
   `patches/gtk3`, `patches/gtk4` and `patches/qtbase`, which make their apps
@@ -73,7 +74,7 @@ still takes time, so don't start one to check a module edit.
 - `components/` holds derisk, mcsapi and pm as git submodules. The flake
   builds them from there; `nixos/pkgs/{derisk,x2mcsapi,pm}.nix` keep only
   their `cargoHash` and build flags.
-- `src/` holds the three programs this repository writes. The overlay builds
+- `src/` holds the programs this repository writes. The overlay builds
   them.
 - `plugins/` holds pm plugins, written in Rust and compiled to WebAssembly
   components. pm asks a plugin about a command only when no built-in
@@ -121,9 +122,8 @@ cited.
 
 ## CI
 
-`.github/workflows/ci.yml` is the main workflow; `uranium.yml` compiles
-the patched browser in rounds and publishes its Flatpak (`docs/uranium.md`). `prebuild` builds every
-package the release needs (the patched GTK and Qt, what links them, and this
+`.github/workflows/ci.yml` is the main workflow. `prebuild` builds every
+package the release needs (the patched GTK and Qt, WPE WebKit, what links them, and this
 repository's programs) for each architecture first. Nothing lists them:
 `tools/nix-prebuild-plan` keeps the derivations that do not change when
 `losos.version` does. It pushes them to the GHCR cache outside a pull
