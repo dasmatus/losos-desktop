@@ -25,7 +25,7 @@ rustPlatform.buildRustPackage {
     src = lib.cleanSource ../../components/mcsapi;
   };
 
-  cargoHash = "sha256-81vwA9/vHDFMTKGXCCFNCNZXIigmXuQHD5ydg31JNNo=";
+  cargoHash = "sha256-ztJ0tqLNsZrXrE96DUUEXGCRctn3vPjOXVqjxGhPbt4=";
 
   cargoBuildFlags = [
     "-p"

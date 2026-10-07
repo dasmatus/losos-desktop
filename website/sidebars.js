@@ -6,6 +6,7 @@ module.exports = {
   docs: [
     'index',
     'building',
+    'troubleshooting',
     {
       type: 'category',
       label: 'The system',
@@ -14,7 +15,9 @@ module.exports = {
         'systemd',
         'layout',
         'installer',
+        'windows-installer',
         'first-boot',
+        'sign-in',
         'releases',
         'allocator',
         'security-report',

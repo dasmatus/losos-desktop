@@ -8,11 +8,12 @@
 #
 #   nix build                      the disk image (.#image)
 #   nix build .#installer          the installer ISO: Wi-Fi, a disk, sysupdate
+#   nix build .#windows-installer  x86_64: the .exe that installs beside Windows
 #   nix build .#release            the files CI publishes through the proxy
 #   nix run .#vm                   boot the image in QEMU with UEFI firmware
 #   nix build .#pm-payloads.<pkg>  any nixpkgs package, static, for a pm build file
-#   nix flake check                evaluate both architectures, test losos-security
-#                                  and losos-installer, and (with KVM) boot the image
+#   nix flake check                evaluate both architectures, test this repository's
+#                                  programs, and (with KVM) boot the image
 {
   description = "LosOS Desktop: a systemd-native, image-based derisk desktop on NixOS";
 
@@ -195,6 +196,7 @@
             losos-installer
             losos-security
             losos-swap
+            losos-windows-installer
             losos-adblock
             danube
             wpewebkit
@@ -211,6 +213,10 @@
           # this needs no LOSOS_PROXY_URL.
           gsi = gsiSystem.config.system.build.gsiImages;
           inherit (ours) libhybris;
+        }
+        // lib.optionalAttrs (build ? windowsInstaller) {
+          # The channel URL is compiled in, as in the UKI.
+          windows-installer = requireProxy build.windowsInstaller;
         }
       );
 
@@ -234,6 +240,7 @@
           losos-installer = self.packages.${system}.losos-installer;
           losos-security = self.packages.${system}.losos-security;
           losos-swap = self.packages.${system}.losos-swap;
+          losos-windows-installer = self.packages.${system}.losos-windows-installer;
           derisk = self.packages.${system}.derisk;
           pm = self.packages.${system}.pm;
           pm-plugins = self.packages.${system}.pm-plugins;

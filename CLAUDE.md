@@ -45,9 +45,9 @@ still takes time, so don't start one to check a module edit.
 ## Layout
 
 - `nixos/modules/` has one file per concern: `boot`, `disk`, `update`,
-  `accounts`, `setup`, `desktop`, `services`, `hardware`, `installer`, `pm` and
-  a few more. `base.nix` imports what every target shares; `default.nix`
-  adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
+  `accounts`, `setup`, `desktop`, `services`, `hardware`, `installer`,
+  `windows-installer`, `pm` and a few more. `base.nix` imports what every
+  target shares; `default.nix` adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
 - `nixos/halium/` is the Halium GSI, one image for every Treble phone that
   takes GSIs and runs Linux 5.10 or newer: `base.nix` plus NixOS's initrd as
   `init_boot` (or after the phone's own ramdisk in `boot`),
@@ -61,9 +61,10 @@ still takes time, so don't start one to check a module edit.
 - `nixos/home/pm.nix` is the flake's `homeModules.pm`: pm and its plugins
   installed and signed by a user's own Home Manager (`docs/pm.md`).
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
-  plugins, `losos-installer`, `losos-security`, `losos-swap`, the Danube
-  browser and the WPE WebKit it draws (`docs/danube.md`), `losos-adblock`
-  (`docs/adblock.md`), the pm payload builder, and Halium's `libhybris`, `android-headers` and generic
+  plugins, `losos-installer`, `losos-security`, `losos-swap`, `losos-docs`
+  (`website/` built for reading offline), the Danube browser and the WPE
+  WebKit it draws (`docs/danube.md`), `losos-adblock` (`docs/adblock.md`),
+  the pm payload builder, and Halium's `libhybris`, `android-headers` and generic
   system image (`halium-gsi`).
   It also replaces `gtk3`, `gtk4` and Qt 6's `qtbase` with builds carrying
   `patches/gtk3`, `patches/gtk4` and `patches/qtbase`, which make their apps
@@ -75,7 +76,8 @@ still takes time, so don't start one to check a module edit.
   builds them from there; `nixos/pkgs/{derisk,x2mcsapi,pm}.nix` keep only
   their `cargoHash` and build flags.
 - `src/` holds the programs this repository writes. The overlay builds
-  them.
+  them; `losos-windows-installer` is also cross-built to a Windows `.exe` by
+  `modules/windows-installer.nix` (`docs/windows-installer.md`).
 - `plugins/` holds pm plugins, written in Rust and compiled to WebAssembly
   components. pm asks a plugin about a command only when no built-in
   fingerprint matched it.
@@ -85,7 +87,9 @@ still takes time, so don't start one to check a module edit.
   active users (`/ping`, `docs/choice-screens.md`).
 - `website/` is the Docusaurus site that publishes `docs/` on GitHub Pages,
   with the web flasher (`website/static/flasher/`, `docs/web-flasher.md`) beside it;
-  `website/wiki.js` writes the same pages for the GitHub wiki. A new page in
+  `website/wiki.js` writes the same pages for the GitHub wiki, and
+  `DOCS_OFFLINE=1` builds the copy the image carries (`modules/docs.nix`),
+  which derisk's error dialogs open a section of (`docs/troubleshooting.md`). A new page in
   `docs/` goes in `website/sidebars.js` too, or both fail. Pages link each
   other as `page.md`, which GitHub, Docusaurus and the wiki all follow.
 - `tools/nix-cache-push` pushes built store paths into that cache.
