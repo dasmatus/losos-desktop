@@ -54,11 +54,13 @@ pub enum Command {
     },
     Activate(TabId),
     Close(TabId),
-    Load(TabId, String),
     Back(TabId),
     Forward(TabId),
     Reload(TabId),
     Stop(TabId),
+    /// Put the tab's address on the desktop's clipboard (through
+    /// [`Event::Copied`], as a page's own copy goes).
+    CopyAddress(TabId),
     /// The page area, in logical pixels, and the window's scale.
     Resize {
         width: i32,
@@ -107,7 +109,7 @@ pub enum Event {
     Permission(PermissionAsk),
     /// The request was answered (or its tab closed); the bar goes away.
     PermissionDone(u64),
-    /// How many content blocker rule sets are in force, for the shield.
+    /// How many content blocker rule sets are in force, for the Page menu.
     Filters(usize),
     /// WebKit is gone; the window closes.
     Quit,

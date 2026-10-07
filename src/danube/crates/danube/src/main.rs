@@ -205,7 +205,7 @@ fn run(args: Args) -> Result<ExitCode, Error> {
             thread::Builder::new()
                 .name("window".into())
                 .spawn_scoped(s, move || {
-                    let result = window(commands.clone(), outbox, updates, settings, captive);
+                    let result = window(commands.clone(), outbox, updates, captive);
                     // The window is gone: so is WebKit.
                     commands.send(Command::Quit);
                     result
@@ -253,7 +253,6 @@ fn window(
     commands: Commands,
     events: Receiver<shared::Event>,
     updates: Sender<derisk::Update>,
-    settings: config::Settings,
     captive: bool,
 ) -> Result<(), Error> {
     let viewport = eframe::egui::ViewportBuilder::default()
@@ -283,7 +282,7 @@ fn window(
         Box::new(move |cc| {
             commands.send(Command::Attach(cc.egui_ctx.clone()));
             Ok(Box::new(ui::Window::new(
-                commands, events, updates, settings, captive,
+                commands, events, updates, captive,
             )))
         }),
     )

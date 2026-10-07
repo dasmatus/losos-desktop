@@ -282,15 +282,15 @@ impl Engine {
             }
             Command::Activate(id) => self.activate(id),
             Command::Close(id) => self.close(id),
-            Command::Load(id, uri) => {
-                if let Some(page) = self.page(id) {
-                    page.load_uri(&uri);
-                }
-            }
             Command::Back(id) => self.page(id).map_or((), WebView::go_back),
             Command::Forward(id) => self.page(id).map_or((), WebView::go_forward),
             Command::Reload(id) => self.page(id).map_or((), WebView::reload),
             Command::Stop(id) => self.page(id).map_or((), WebView::stop_loading),
+            Command::CopyAddress(id) => {
+                if let Some(uri) = self.page(id).map(WebView::uri).filter(|u| !u.is_empty()) {
+                    emit(Event::Copied(uri));
+                }
+            }
             Command::Resize {
                 width,
                 height,

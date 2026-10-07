@@ -3,7 +3,9 @@
 Danube is the OS's web browser and the default for links and web pages
 (`nixos/modules/danube.nix`). It is [WPE WebKit](https://wpewebkit.org),
 the WebKit port with no toolkit of its own, drawn inside a window built
-from mcsapi's components in derisk's theme (`src/danube`). It also opens
+from mcsapi's components in derisk's theme (`src/danube`). It is the web
+view and nothing more: derisk's command palette is its address bar and
+its tab switcher, and derisk's top bar carries its menus. It also opens
 the sign-in page of a network that wants one first (a captive portal), and
 it loads the content blockers that [system-wide ad blocking](adblock.md)
 compiles.
@@ -12,9 +14,10 @@ compiles.
 
 WPE's headless platform renders each page into a buffer and hands it over
 instead of putting it on screen. Danube copies the active tab's frame into
-an egui texture and draws it under its own toolbar, so the browser's
-interface is ordinary mcsapi code: the same buttons, inputs, alerts and
-toasts as derisk's apps, recoloured whenever derisk publishes a new theme
+an egui texture and draws it, so what little interface the window has (a
+progress line, a permission request's bar, a crashed page's notice,
+toasts) is ordinary mcsapi code: the same components as derisk's apps,
+recoloured whenever derisk publishes a new theme
 (`$XDG_RUNTIME_DIR/derisk/theme.json`). Pointer, wheel, touch and key input
 over the page goes back to WebKit as WPE events; typed text goes as one key
 press per character, and Ctrl+C, Ctrl+X and Ctrl+V cross between WebKit's
@@ -50,31 +53,50 @@ architecture and keeps it in the project's cache.
 
 ## The window
 
-On a desktop the tabs run along the top, above Back, Forward, Reload, the
-address bar and the ad blocking badge. On a phone, a window whose short
-side is under 600 logical pixels as in [GTK and Qt on a phone](gtk-qt-phone.md),
-the toolbar and address bar sit at the bottom, under the thumb, and the
-tabs are a switcher behind a button that shows their count. A phone window
-also sends a mobile User-Agent string ("Android", "Mobile"), so sites serve
-their phone version from the next page loaded.
+The window is the page, and nothing else: no toolbar, no address bar, no
+tab strip. Danube is the web view; addresses, tabs and (later)
+extensions are derisk's command palette's to manage, and derisk's top bar
+shows its menus. The window's title names the tab in front. Over the page
+the window draws only what has to be there: a progress line along the top
+while a page loads, a bar for a site's permission request, a notice on a
+page whose web process died, and the link under the pointer. A phone
+window (short side under 600 logical pixels, as in
+[GTK and Qt on a phone](gtk-qt-phone.md)) sends a mobile User-Agent
+string ("Android", "Mobile"), so sites serve their phone version from the
+next page loaded.
 
-The address bar opens what looks like an address and searches for
-anything else, with the desktop's search engine: derisk's
-`defaults.search`, set by the choice screen and Settings, Default apps
-([choice screens](choice-screens.md)), DuckDuckGo until one is chosen.
-`losos.danube.search` or `search =` in `~/.config/danube/settings.conf`
-picks another.
+The palette is the address bar. Ctrl+L (or Alt+D) in Danube asks derisk
+to show it, and what is typed there that reads as a web address
+(`example.com`, `localhost:8080`, a full URL) opens in the default
+browser, which is Danube: a second `danube URL` hands the URL to the
+running browser, which opens it in a new tab. Anything else the palette
+searches for with the desktop's search engine, chosen by the choice
+screen and Settings, Default apps ([choice screens](choice-screens.md)).
+Danube has no search setting of its own.
 
-Tabs, Back, Forward, Reload and Close Tab are also derisk global menus: in
-the top bar and in the command palette, where each tab is listed by its
-title. Danube registers them over derisk's agent socket
+The menus are derisk global menus, in the top bar and in the command
+palette, where "Tabs › Wikipedia" switches to that tab and "Close Tab ›
+Wikipedia" closes it:
+
+- **Page**: the address, "Secure" or "Not secure", and how many of
+  [system-wide ad blocking](adblock.md)'s filter sets are in force, as
+  lines the top bar shows and the palette leaves out; then Open Address
+  (the palette) and Copy Address.
+- **Tabs**: each by its title, New Tab, Next Tab, Previous Tab.
+- **Navigate**: Back, Forward, Reload, Stop.
+- **Close Tab**: each by its title.
+
+Danube registers them over derisk's agent socket
 (`$XDG_RUNTIME_DIR/derisk/agent.sock`), finding its window by app id
-(`org.losos.Danube`) and title.
+(`org.losos.Danube`) and title, and sends them again whenever a tab
+opens, closes or changes its title, address or security. Outside a derisk
+session there is no palette and no menus, and only the keyboard reaches
+the tabs.
 
-Keys: Ctrl+L (or Alt+D) the address bar, Ctrl+T a new tab, Ctrl+W close,
-Ctrl+Tab the next tab, Ctrl+R or F5 reload, Alt+Left and Alt+Right back and
-forward; a middle click on a link opens it in a tab behind. A second
-`danube URL` opens the URL in a new tab of the running browser.
+Keys: Ctrl+L (or Alt+D) the palette, Ctrl+T a new tab (and the palette
+for its address), Ctrl+W close, Ctrl+Tab and Ctrl+Shift+Tab the next and
+previous tab, Ctrl+R or F5 reload, Alt+Left and Alt+Right back and
+forward; a middle click on a link opens it in a tab behind.
 
 Downloads go to `~/Downloads`, never overwriting a file there, and a toast
 says when one finished.
@@ -155,8 +177,10 @@ allows. A phone's own kernel may not: see [what is not done](not-done.md).
 | Key | Meaning |
 | --- | --- |
 | `home` | What a new tab opens (an empty page by default) |
-| `search` | A derisk engine name or an https URL the query is appended to |
 | `javascript.jit` | `true` turns JavaScriptCore's JIT compilers on |
+
+There is no `search` key, and `losos.danube.search` is gone with the
+address bar: the palette searches with the desktop's engine.
 
 ## What it replaced
 
