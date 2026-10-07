@@ -27,6 +27,17 @@ module.exports = {
   // empty one for a site served from a custom domain's root.
   baseUrl: `${(process.env.DOCS_BASE_PATH || '').replace(/\/+$/, '')}/`,
   trailingSlash: false,
+  // DOCS_OFFLINE builds the copy the image ships for reading without a
+  // network: hash routes, so every page loads from one index.html opened as
+  // a file:// URL, with no server to map paths to files.
+  // offline-sections.js adds a file per page and heading for the desktop's
+  // error messages to open.
+  ...(process.env.DOCS_OFFLINE
+    ? {
+      future: { experimental_router: 'hash' },
+      clientModules: [require.resolve('./src/offline-anchor.js')],
+    }
+    : {}),
 
   onBrokenLinks: 'throw',
   // The pages are plain CommonMark, written to read the same on GitHub and
@@ -49,6 +60,7 @@ module.exports = {
         await fs.writeFile(`${outDir}/flasher/config.json`, `${JSON.stringify(config)}\n`);
       },
     }),
+    ...(process.env.DOCS_OFFLINE ? [require('./offline-sections.js')] : []),
   ],
 
   presets: [
@@ -78,8 +90,12 @@ module.exports = {
         title: 'LosOS Desktop',
         items: [
           // A page of its own outside the docs, so not a route Docusaurus
-          // knows; pathname:// links to it as a file.
-          { href: 'pathname:///flasher/', label: 'Flasher', position: 'left' },
+          // knows; pathname:// links to it as a file. Not in the offline
+          // copy, where it would name file:///flasher/, and flashing a phone
+          // is done from a PC's browser on the published site.
+          ...(process.env.DOCS_OFFLINE
+            ? []
+            : [{ href: 'pathname:///flasher/', label: 'Flasher', position: 'left' }]),
           ...(repository
             ? [
               { href: `${repository}/wiki`, label: 'Wiki', position: 'right' },

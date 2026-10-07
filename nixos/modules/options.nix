@@ -69,6 +69,16 @@ in
       };
     };
 
+    docs.url = mkOption {
+      type = types.nullOr types.str;
+      default = "https://losos-project.github.io/losos-desktop";
+      description = ''
+        The published documentation site, where derisk's error alerts open a
+        section the image's own copy lacks (docs.nix). `null` keeps them to
+        the copy on the machine.
+      '';
+    };
+
     update = {
       baseUrl = mkOption {
         type = types.str;

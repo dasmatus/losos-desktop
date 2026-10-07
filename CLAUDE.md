@@ -61,8 +61,8 @@ still takes time, so don't start one to check a module edit.
 - `nixos/home/pm.nix` is the flake's `homeModules.pm`: pm and its plugins
   installed and signed by a user's own Home Manager (`docs/pm.md`).
 - `nixos/pkgs/` is the overlay, and holds only what nixpkgs lacks: pm, its
-  plugins, `losos-installer`, `losos-security`, `losos-swap`, the pm
-  payload builder, and Halium's `libhybris`, `android-headers` and generic
+  plugins, `losos-installer`, `losos-security`, `losos-swap`, `losos-docs`
+  (`website/` built for reading offline), the pm payload builder, and Halium's `libhybris`, `android-headers` and generic
   system image (`halium-gsi`).
   It also replaces `gtk3`, `gtk4` and Qt 6's `qtbase` with builds carrying
   `patches/gtk3`, `patches/gtk4` and `patches/qtbase`, which make their apps
@@ -85,7 +85,9 @@ still takes time, so don't start one to check a module edit.
   active users (`/ping`, `docs/choice-screens.md`).
 - `website/` is the Docusaurus site that publishes `docs/` on GitHub Pages,
   with the web flasher (`website/static/flasher/`, `docs/web-flasher.md`) beside it;
-  `website/wiki.js` writes the same pages for the GitHub wiki. A new page in
+  `website/wiki.js` writes the same pages for the GitHub wiki, and
+  `DOCS_OFFLINE=1` builds the copy the image carries (`modules/docs.nix`),
+  which derisk's error dialogs open a section of (`docs/troubleshooting.md`). A new page in
   `docs/` goes in `website/sidebars.js` too, or both fail. Pages link each
   other as `page.md`, which GitHub, Docusaurus and the wiki all follow.
 - `tools/nix-cache-push` pushes built store paths into that cache.
