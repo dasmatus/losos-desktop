@@ -20,8 +20,8 @@ in
   #
   # flatpak's own polkit rule lets an active, local wheel member install,
   # update and remove apps for the whole system without a password. That is
-  # Bazaar's normal path: derisk has no polkit agent to ask anyone else, so a
-  # user outside wheel installs for themselves (`--user`) instead.
+  # Bazaar's normal path; anyone else is asked for an administrator's
+  # password by derisk's polkit agent, or installs for themselves (`--user`).
   services.flatpak.enable = true;
 
   # Flathub, added once at boot and kept by flatpak afterwards. The repo file

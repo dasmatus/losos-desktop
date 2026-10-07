@@ -19,7 +19,8 @@ Apps the image does not carry come from [Flathub](https://flathub.org) as
 Flatpaks, through the [Bazaar](https://github.com/bazaar-org/bazaar) store.
 derisk's own portal backend gives them its theme, screenshots and the
 wallpaper; GTK's covers the file chooser and the rest. The web browser is
-[Uranium](uranium.md), Chromium under the OS's own name.
+[Danube](danube.md), WPE WebKit inside an mcsapi window, and
+[ad blocking](adblock.md) from filter lists covers every app.
 
 The same OS also builds as one generic system image for Treble phones and
 tablets that take GSIs and run Linux 5.10 or newer, over

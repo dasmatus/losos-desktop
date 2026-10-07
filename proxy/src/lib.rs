@@ -1,6 +1,6 @@
 //! The decisions behind the GHCR proxy, compiled to WebAssembly.
 //!
-//! The proxy (`api/proxy.ts`) serves two things from one host, both out of this
+//! The proxy (`api/proxy.ts`) serves these from one host, all out of this
 //! project's GitHub Container Registry namespace:
 //!
 //! * **A Nix binary cache.** `nix copy --to file://...` writes a narinfo and a
@@ -14,12 +14,6 @@
 //!   the moving tag `<channel>-<arch>`. `/updates/<channel>/<arch>/<file>`
 //!   serves a file of the newest one, `SHA256SUMS` included, which is all a
 //!   `url-file` transfer asks of its source. That is the install side.
-//! * **A Flatpak remote.** CI pushes the Uranium Flatpak as an OCI image,
-//!   `flatpak:uranium-<arch>`, and flatpak reads an OCI remote
-//!   (`oci+https://...`) as an index of images, `/flatpak/index/static`, and
-//!   a registry the index names. The proxy builds the index from the images'
-//!   labels and is that registry too, for exactly those images' manifests
-//!   and blobs, so a Flatpak install never meets GHCR's token exchange.
 //! * **The web flasher's downloads.** The flasher (`website/static/flasher/`)
 //!   is a page on another origin, and a browser reads a cross-origin
 //!   response only when it says `Access-Control-Allow-Origin`, which GHCR's
@@ -28,10 +22,9 @@
 //!   proxy one byte range at a time instead of redirected, and only those.
 //! * **CI's build caches.** CI keeps its compiler caches in GHCR as
 //!   artifacts split into parts, `losos-ccache:<arch>` for the overlay's
-//!   patched GTK and Qt and `uranium-ccache:<arch>` for Uranium's Chromium
-//!   (ccache and the ThinLTO cache). `/build-cache/<name>/<arch>/<part>`
-//!   serves one part, so CI rounds and any other builder fetch them here
-//!   without a GHCR login, and with the same names CI pushes them under.
+//!   patched GTK and Qt. `/build-cache/<name>/<arch>/<part>` serves one
+//!   part, so CI rounds and any other builder fetch them here without a
+//!   GHCR login, and with the same names CI pushes them under.
 //! * **The active-user count.** `POST /ping` is what each signed-in user's
 //!   `losos-ping` timer sends once a day (`nixos/modules/ping.nix`): a
 //!   per-user id already hashed with the month, and the architecture. The
@@ -78,34 +71,13 @@ pub enum Route {
         /// How the layer's bytes reach the client.
         kind: Kind,
     },
-    /// The Flatpak remote's index, built from these images in the
-    /// namespace's `flatpak` repository: (tag, OCI architecture).
-    FlatpakIndex(&'static [(&'static str, &'static str)]),
-    /// A manifest or blob of an image in the namespace's `flatpak`
-    /// repository, by digest.
-    Registry {
-        /// `manifests` or `blobs`.
-        what: &'static str,
-        /// `sha256:` and 64 hex digits.
-        digest: String,
-    },
     /// Nothing here; the reason goes in the 404's body.
     Missing(&'static str),
 }
 
-/// The Flatpak images the remote lists: the tag CI pushes each
-/// architecture's under, and the name OCI gives the architecture, which is
-/// what flatpak asks the index for.
-const FLATPAK_IMAGES: &[(&str, &str)] =
-    &[("uranium-x86_64", "amd64"), ("uranium-aarch64", "arm64")];
-
-/// The image name the index gives the registry. One name for every image,
-/// since a request names a digest and the digest picks the image.
-const FLATPAK_NAME: &str = "uranium";
-
 /// The build caches `/build-cache/` serves: the name in the path and the
 /// repository under the namespace CI pushes it to.
-const BUILD_CACHES: &[(&str, &str)] = &[("losos", "losos-ccache"), ("uranium", "uranium-ccache")];
+const BUILD_CACHES: &[(&str, &str)] = &[("losos", "losos-ccache")];
 
 /// One part of a split cache, as CI's `split -d -a 2` names it.
 fn is_cache_part(s: &str) -> bool {
@@ -269,34 +241,16 @@ pub fn route(path: &str) -> Route {
                 kind: Kind::Redirect,
             }
         }
-        ["flatpak", "index", "static"] => Route::FlatpakIndex(FLATPAK_IMAGES),
-        [
-            "flatpak",
-            "v2",
-            name,
-            what @ ("manifests" | "blobs"),
-            digest,
-        ] => {
-            if *name != FLATPAK_NAME || !is_digest(digest) {
-                return Route::Missing("not an image of this remote");
-            }
-            Route::Registry {
-                what: if *what == "manifests" {
-                    "manifests"
-                } else {
-                    "blobs"
-                },
-                digest: (*digest).into(),
-            }
-        }
+        // `/flatpak/` was a Flatpak remote serving the Uranium Flatpak. It
+        // went with Uranium when Danube replaced it (docs/danube.md), and is
+        // not coming back.
         _ => Route::Missing("unknown path"),
     }
 }
 
 /// Render a [`Route`] as the one-line plan the host reads.
 ///
-/// `static <content-type>\n<body>`, `layer <repository> <tag> <title> <kind>`,
-/// `flatpak-index <name> <tag>:<arch>...`, `registry flatpak <what> <digest>`
+/// `static <content-type>\n<body>`, `layer <repository> <tag> <title> <kind>`
 /// or `missing <reason>`. Every field of a plan was validated above and
 /// contains no space.
 #[must_use]
@@ -317,14 +271,6 @@ pub fn plan(path: &str) -> String {
             };
             format!("layer {repository} {tag} {title} {kind}")
         }
-        Route::FlatpakIndex(images) => {
-            let mut plan = format!("flatpak-index {FLATPAK_NAME}");
-            for (tag, arch) in images {
-                let _ = write!(plan, " {tag}:{arch}");
-            }
-            plan
-        }
-        Route::Registry { what, digest } => format!("registry flatpak {what} {digest}"),
         Route::Missing(reason) => format!("missing {reason}"),
     }
 }
@@ -752,25 +698,8 @@ mod tests {
             "layer losos-ccache x86_64 ccache.tar.zst.part-00 redirect"
         );
         assert_eq!(
-            plan("/build-cache/uranium/aarch64/ccache.tar.zst.part-07"),
-            "layer uranium-ccache aarch64 ccache.tar.zst.part-07 redirect"
-        );
-    }
-
-    #[test]
-    fn the_flatpak_remote_is_an_index_and_its_images() {
-        assert_eq!(
-            plan("/flatpak/index/static"),
-            "flatpak-index uranium uranium-x86_64:amd64 uranium-aarch64:arm64"
-        );
-        let digest = format!("sha256:{}", "a".repeat(64));
-        assert_eq!(
-            plan(&format!("/flatpak/v2/uranium/manifests/{digest}")),
-            format!("registry flatpak manifests {digest}")
-        );
-        assert_eq!(
-            plan(&format!("/flatpak/v2/uranium/blobs/{digest}")),
-            format!("registry flatpak blobs {digest}")
+            plan("/build-cache/losos/aarch64/ccache.tar.zst.part-07"),
+            "layer losos-ccache aarch64 ccache.tar.zst.part-07 redirect"
         );
     }
 
@@ -797,13 +726,9 @@ mod tests {
             "/build-cache/losos/x86_64/ccache.tar.zst.part-0a",
             "/build-cache/losos/x86_64/../x86_64/ccache.tar.zst.part-00",
             "/build-cache/losos/x86_64",
-            "/flatpak/index",
-            "/flatpak/v2/uranium/manifests/latest",
-            "/flatpak/v2/uranium/tags/list",
-            "/flatpak/v2/nix-cache/blobs/sha256:0000",
-            &format!("/flatpak/v2/other/blobs/sha256:{}", "a".repeat(64)),
-            &format!("/flatpak/v2/uranium/blobs/sha256:{}", "g".repeat(64)),
-            &format!("/flatpak/v2/uranium/blobs/sha256:{}/x", "a".repeat(64)),
+            "/build-cache/uranium/x86_64/ccache.tar.zst.part-00",
+            "/flatpak/index/static",
+            &format!("/flatpak/v2/uranium/blobs/sha256:{}", "a".repeat(64)),
         ] {
             assert!(
                 plan(path).starts_with("missing "),

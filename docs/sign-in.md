@@ -40,7 +40,24 @@ a second conversation beside the field: touch the reader or type, and
 whichever PAM accepts first unlocks. derisk offers the reader only when that
 service file exists. polkit keeps NixOS's default, so a finger answers an
 administrator prompt. Fingerprints are enrolled from Settings with
-`fprintd-enroll`.
+`fprintd-enroll`, which fprintd lets a person do only after authenticating
+again; derisk's polkit agent asks, so no polkit rule waves it through.
+
+## polkit and run0
+
+`derisk session` is polkit's authentication agent for its logind session.
+When polkit wants someone to authenticate before it allows an action (run0,
+an app installed for every user, enrolling a fingerprint), the desktop dims
+under a dialog that says what is asked and who may answer, the person at the
+desktop when polkit accepts them, else a choice of administrators. The
+dialog relays what PAM's `polkit-1` stack asks through
+`polkit-agent-helper-1`, which NixOS runs from
+`/run/polkit/agent-helper.socket`, so it asks in that stack's order: the
+fingerprint reader first when the person enrolled a finger (until it gives
+up), then the password or the security key's PIN. Every key goes to the
+dialog while it is open, and input from agents can cancel it but not
+authenticate. run0 in a terminal uses the dialog too: it only falls back to
+asking on the terminal when the session has no agent.
 
 ## Verification codes
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Unpack one of CI's build caches into a directory: `losos` (the overlay's
-# patched GTK and Qt, losos-ccache in GHCR) or `uranium` (Chromium's ccache
-# and ThinLTO cache, uranium-ccache). Each is a zstd tarball split into
+# Unpack one of CI's build caches into a directory: `losos`, the overlay's
+# patched GTK and Qt, losos-ccache in GHCR. It is a zstd tarball split into
 # parts of up to 4 GB, ccache.tar.zst.part-00 and on.
 #
 # The proxy at LOSOS_PROXY_URL serves the parts at

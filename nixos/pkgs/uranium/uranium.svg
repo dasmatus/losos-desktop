@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <!-- Uranium: the Chromium logo's shape in greens. Drawn here, not traced
-       from Chromium's artwork. -->
-  <path fill="#7ed321" d="M32.00 18.50L58.79 18.50A30 30 0 0 1 30.30 61.95L43.69 38.75A13.5 13.5 0 0 0 32.00 18.50Z"/>
-  <path fill="#4caf2a" d="M43.69 38.75L30.30 61.95A30 30 0 0 1 6.91 15.55L20.31 38.75A13.5 13.5 0 0 0 43.69 38.75Z"/>
-  <path fill="#2e8b1f" d="M20.31 38.75L6.91 15.55A30 30 0 0 1 58.79 18.50L32.00 18.50A13.5 13.5 0 0 0 20.31 38.75Z"/>
-  <circle cx="32" cy="32" r="13.5" fill="#ffffff"/>
-  <circle cx="32" cy="32" r="10.5" fill="#1f6f14"/>
-</svg>

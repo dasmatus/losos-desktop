@@ -54,15 +54,11 @@
   mode (`nixos/modules/desktop.nix`). A second display stays dark and
   hotplug is not handled. Its lock screen (PAM service `derisk`) locks when asked and on logind's Lock,
   but nothing locks before sleep or on idle yet: that needs derisk to hold a
-  logind `sleep` delay inhibitor until its lock screen is up. derisk also has no polkit agent, no layer-shell or
+  logind `sleep` delay inhibitor until its lock screen is up. derisk also has no layer-shell or
   XWayland yet, and no UI for
-  Bluetooth or power profiles, so those are left off. `run0` from a terminal
-  still asks polkit on the terminal. The gnome-control-center patches above
+  Bluetooth or power profiles, so those are left off. The gnome-control-center patches above
   have no Settings app to go into any more.
-- **Flatpak installs need wheel.** flatpak's polkit rule lets an active,
-  local wheel member install for the whole system without a password, which
-  is how Bazaar installs. With no polkit agent in derisk, anyone else cannot
-  be asked, and installs only for themselves. derisk's portal backend has no
+- **derisk's portal has gaps.** derisk's portal backend has no
   area or color picker and does not set the lock screen's picture; it asks
   for consent through GTK's access dialog, not one of its own.
 - **The Halium GSI has not run on a device.** It evaluates for aarch64, and
@@ -148,3 +144,17 @@
   not been built, nor sysupdate seen writing to a disk that is not the one
   running. `nix build .#release` was not completed there either, for
   lack of disk space rather than an error.
+- **Danube is unfinished in places** ([Danube](danube.md)). A page's file
+  upload button opens nothing, since WebKit's file chooser request is not
+  answered yet, and a site's notifications are never shown, even when
+  allowed. There are no extensions until the extension runtime lands, no
+  bookmarks, history list or find in page, and no way to resume a
+  download. Its sandboxes need unprivileged user namespaces, and a phone's
+  own kernel may refuse them; Danube then stops rather than running a
+  page outside one, so on such a phone it does not open at all.
+  `--no-sandbox` skips only the outer one. It has run against WPE WebKit
+  in a session, not yet on a desktop or phone with derisk.
+- **Ad blocking is DNS-wide only for names.** A filter list's URL and
+  element rules apply in Danube alone; other browsers and apps get only
+  whole blocked domains ([System-wide ad blocking](adblock.md)), and a
+  program with its own DNS over HTTPS skips it entirely.
