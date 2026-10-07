@@ -55,8 +55,10 @@ impl Context {
         self.path(absolute).exists()
     }
 
-    /// Entries of a directory, sorted, or empty when it does not exist.
-    fn entries(&self, absolute: &str) -> Vec<String> {
+    /// Entries of a directory, sorted, or none when it does not exist. The
+    /// directory is read and sorted before this returns, so the order is
+    /// fixed however the caller walks it.
+    fn entries(&self, absolute: &str) -> impl Iterator<Item = String> {
         let mut found: Vec<String> = fs::read_dir(self.path(absolute))
             .map(|dir| {
                 dir.filter_map(|e| e.ok())
@@ -65,7 +67,7 @@ impl Context {
             })
             .unwrap_or_default();
         found.sort();
-        found
+        found.into_iter()
     }
 }
 
@@ -320,7 +322,8 @@ fn module_signing(ctx: &Context) -> Attr {
 
 /// An IOMMU, without which any DMA-capable device can read all of memory.
 fn iommu(ctx: &Context) -> Attr {
-    let groups = ctx.entries("/sys/class/iommu");
+    // Collected: the evidence joins them and asks whether there are any.
+    let groups: Vec<String> = ctx.entries("/sys/class/iommu").collect();
     let present = !groups.is_empty();
     attr(
         "Iommu",
