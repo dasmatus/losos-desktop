@@ -19,6 +19,7 @@
     ./services.nix
     ./pm.nix
     ./ping.nix
+    ./docs.nix
   ];
 
   nixpkgs.overlays = [ (import ../pkgs) ];
