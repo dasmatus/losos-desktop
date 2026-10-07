@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::ffi::CString;
 use std::io::{IoSlice, IoSliceMut};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
 use std::path::Path;
 use std::process::ExitCode;
 

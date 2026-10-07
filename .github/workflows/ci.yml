@@ -167,11 +167,17 @@ jobs:
           tools/build-cache-fetch losos ${{ matrix.arch }} /var/lib/losos-ccache "$CCACHE_REF"
           touch "$RUNNER_TEMP/ccache-restored"
 
+      # One derivation at a time: the runners have 16 GB, and WPE WebKit
+      # compiling on every core beside derisk's or pm's LTO link filled it,
+      # after which the machine swapped until it stopped answering and the
+      # service took the runner away ("received a shutdown signal", exit
+      # 143, on main and every pull request since #145). Each of those fits
+      # on its own, and each gets every core for itself anyway.
       - name: Build the packages
         id: build
         run: |
           set +e
-          timeout --signal=INT 300m nix build --impure -L --keep-going --no-link --stdin < "$RUNNER_TEMP/plan.txt" \
+          timeout --signal=INT 300m nix build --impure -L --keep-going --no-link --max-jobs 1 --stdin < "$RUNNER_TEMP/plan.txt" \
             2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           set -e
