@@ -86,7 +86,11 @@ in
         Target = {
           Type = "regular-file";
           Path = "/EFI/Linux";
-          PathRelativeTo = "esp";
+          # $BOOT: the XBOOTLDR partition where there is one, the ESP
+          # otherwise. A disk of LosOS's own has only the ESP; one shared
+          # with Windows keeps the UKIs on an XBOOTLDR partition, because
+          # Windows' ESP has no room for two (windows-installer.nix).
+          PathRelativeTo = "boot";
           # Every name a UKI of this OS can have on the ESP: the image's own
           # (uncounted), a fresh install (+tries left), one mid-assessment
           # (+left-done), and one already blessed (counter removed again).

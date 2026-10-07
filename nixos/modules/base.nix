@@ -9,6 +9,7 @@
   imports = [
     ./options.nix
     ./accounts.nix
+    ./sign-in.nix
     ./setup.nix
     ./network.nix
     ./desktop.nix
@@ -18,6 +19,7 @@
     ./services.nix
     ./pm.nix
     ./ping.nix
+    ./docs.nix
   ];
 
   nixpkgs.overlays = [ (import ../pkgs) ];

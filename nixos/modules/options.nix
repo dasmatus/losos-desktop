@@ -45,6 +45,27 @@ in
       '';
     };
 
+    signIn = {
+      passwordMaxAgeDays = mkOption {
+        type = types.ints.unsigned;
+        default = 365;
+        description = ''
+          Days a password lasts before the next login asks for a new one
+          (sign-in.nix). 0 means passwords never expire. derisk writes it
+          into each homed record, so changing it reaches existing accounts
+          at their next login.
+        '';
+      };
+
+      passwordWarnDays = mkOption {
+        type = types.ints.unsigned;
+        default = 14;
+        description = ''
+          Days before a password expires that logins start warning about it.
+        '';
+      };
+    };
+
     ping = {
       enable = mkOption {
         type = types.bool;
@@ -67,6 +88,16 @@ in
           nothing is sent and the choice screens stay hidden.
         '';
       };
+    };
+
+    docs.url = mkOption {
+      type = types.nullOr types.str;
+      default = "https://losos-project.github.io/losos-desktop";
+      description = ''
+        The published documentation site, where derisk's error alerts open a
+        section the image's own copy lacks (docs.nix). `null` keeps them to
+        the copy on the machine.
+      '';
     };
 
     update = {

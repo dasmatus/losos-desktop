@@ -25,6 +25,22 @@
   both. Secure Boot signing
   of the UKI is not done either; as in the pm tree, a key belongs to whoever
   owns the machine.
+- **The Windows installer has not run on Windows.** Its install was checked
+  into a disk image laid out like Windows', which then booted
+  ([The Windows installer](windows-installer.md)); the half that talks to
+  Windows (shrinking C:, the partition table IOCTLs, the ESP mount, firmware
+  variables, BitLocker) has only been compiled. Beyond that:
+  - **Secure Boot must be off**, for the reason above.
+  - **SmartScreen.** The `.exe` has no Authenticode signature, so Windows
+    warns before running it.
+  - **Windows' recovery partition.** Updates that grow it (as KB5034441
+    did) shrink C: to make room behind it; with LosOS there they cannot,
+    and fail as they do on any disk without free space after C:.
+  - **The boot order.** Some firmware, and some Windows updates, put
+    Windows Boot Manager first again. LosOS is then one pick in the
+    firmware's boot menu away, and nothing puts its entry back in front.
+  - **arm64.** The installer is built for x86_64 only, because Windows on
+    arm64 runs on laptops this OS has no kernel configuration for.
 - **The two gnome-control-center patches** in `nixos/pkgs/patches/`. Nothing
   upstream has them, so they stay. They are written against
   gnome-control-center 51.0, and nixpkgs carries 50.4, which moved the
