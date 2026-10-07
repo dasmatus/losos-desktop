@@ -21,8 +21,12 @@
 //! system, which is how the suite is tested without a TPM.
 
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::process::ExitCode;
 
+use miette::{IntoDiagnostic, WrapErr};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 use zbus::{connection, interface, zvariant::OwnedValue};
 
 use losos_security::attr::Attr;
@@ -77,7 +81,17 @@ fn report(attrs: &[Attr]) -> bool {
 }
 
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn main() -> miette::Result<ExitCode> {
+    // stderr, so `--json` output on stdout stays parseable; a service's
+    // stderr is the journal.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
+        .init();
+
     let args: Vec<String> = std::env::args().collect();
     let root = args
         .iter()
@@ -88,23 +102,16 @@ async fn main() -> ExitCode {
 
     if args.iter().any(|a| a == "--serve") {
         let security = Security { root };
-        let built = connection::Builder::system()
+        let _conn = connection::Builder::system()
             .and_then(|b| b.name("io.losos.Security1"))
-            .and_then(|b| b.serve_at("/io/losos/Security1", security));
-
-        let _conn = match built {
-            Ok(builder) => match builder.build().await {
-                Ok(conn) => conn,
-                Err(error) => {
-                    eprintln!("losos-security: cannot take io.losos.Security1: {error}");
-                    return ExitCode::FAILURE;
-                }
-            },
-            Err(error) => {
-                eprintln!("losos-security: cannot reach the system bus: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
+            .and_then(|b| b.serve_at("/io/losos/Security1", security))
+            .into_diagnostic()
+            .wrap_err("cannot reach the system bus")?
+            .build()
+            .await
+            .into_diagnostic()
+            .wrap_err("cannot take io.losos.Security1")?;
+        info!("serving io.losos.Security1");
 
         // Socket-activated and idle-exiting would be better, but a report that
         // is cheap to produce and rarely asked for is not worth the machinery.
@@ -114,35 +121,30 @@ async fn main() -> ExitCode {
         // disposition killing it -- which works, and leaves the connection to
         // be torn down by the kernel rather than by this process. Waiting for
         // either means `systemctl stop` is an ordinary exit.
-        let mut term = match tokio::signal::unix::signal(
-            tokio::signal::unix::SignalKind::terminate(),
-        ) {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("losos-security: cannot listen for SIGTERM: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .into_diagnostic()
+            .wrap_err("cannot listen for SIGTERM")?;
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
         }
-        return ExitCode::SUCCESS;
+        return Ok(ExitCode::SUCCESS);
     }
 
     let ctx = Context::new(&root);
     let attrs = checks::run(&ctx);
 
     if args.iter().any(|a| a == "--json") {
-        match serde_json::to_string_pretty(&attrs) {
-            Ok(text) => println!("{text}"),
-            Err(error) => {
-                eprintln!("losos-security: {error}");
-                return ExitCode::FAILURE;
-            }
-        }
-        return ExitCode::SUCCESS;
+        let text = serde_json::to_string_pretty(&attrs).into_diagnostic()?;
+        println!("{text}");
+        return Ok(ExitCode::SUCCESS);
     }
 
-    if report(&attrs) { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    // A failing check is a report, not an error: it exits 1 with no
+    // diagnostic, the report on stdout saying which check failed.
+    Ok(if report(&attrs) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }

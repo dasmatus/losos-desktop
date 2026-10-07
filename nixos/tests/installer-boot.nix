@@ -42,9 +42,9 @@ in
   testScript = ''
     machine.succeed("findmnt --kernel /iso")
     machine.succeed("findmnt --kernel /nix/store")
-    machine.wait_for_unit("losos-installer.service")
+    machine.wait_for_unit("derisk-installer.service")
     machine.succeed(
-        "systemctl show losos-installer.service --property=TTYPath --value "
+        "systemctl show derisk-installer.service --property=TTYPath --value "
         "| grep -qx /dev/tty1"
     )
   '';

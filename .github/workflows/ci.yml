@@ -343,6 +343,12 @@ jobs:
             echo "::warning::prebuild handed nothing over, so this build compiles whatever the cache lacks."
             exit 0
           fi
+          # Evaluation copies some inputs into the store itself (a `./file`
+          # literal, a `cargoLock.lockFile`, nixpkgs' programs.sqlite). What
+          # prebuild compiled refers to them, no substituter has them, and
+          # the handover leaves them out, so they come from evaluating this
+          # checkout before the references are realised.
+          nix path-info --impure --derivation .#release > /dev/null
           xargs -r nix-store --realise < prebuilt/references.txt > /dev/null
           if [ -s prebuilt/paths.txt ]; then
             zstd -dc prebuilt/paths.nar.zst | sudo "$(command -v nix-store)" --import > /dev/null
