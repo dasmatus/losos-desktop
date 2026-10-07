@@ -15,6 +15,7 @@ module.exports = {
         'systemd',
         'layout',
         'installer',
+        'windows-installer',
         'first-boot',
         'releases',
         'allocator',

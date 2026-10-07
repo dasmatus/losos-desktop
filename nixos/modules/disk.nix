@@ -77,12 +77,17 @@ in
   # recreated every FactoryReset=yes partition -- is in NixOS's initrd already.
 
   systemd.repart.partitions = {
+    # Matched, never made or resized here: a disk that booted has an ESP,
+    # and whatever made it chose its size. The image and the ISO's installer
+    # (installer.nix) make it 512M, room for several UKIs side by side so an
+    # A/B rollout never has to repartition. The Windows installer finds
+    # Windows' own, usually 100M with Windows' partitions right behind it,
+    # and puts the UKIs on an XBOOTLDR partition instead (update.nix). A
+    # 512M minimum here made repart refuse that whole disk on first boot,
+    # since it cannot grow a partition that has no free space after it.
     "10-esp" = {
       Type = "esp";
       Format = "vfat";
-      # Several UKIs side by side, so an A/B rollout never has to repartition.
-      SizeMinBytes = "512M";
-      SizeMaxBytes = "512M";
     };
 
     # Slot A: matches the /usr pair the image shipped with, and grows the data

@@ -45,9 +45,9 @@ still takes time, so don't start one to check a module edit.
 ## Layout
 
 - `nixos/modules/` has one file per concern: `boot`, `disk`, `update`,
-  `accounts`, `setup`, `desktop`, `services`, `hardware`, `installer`, `pm` and
-  a few more. `base.nix` imports what every target shares; `default.nix`
-  adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
+  `accounts`, `setup`, `desktop`, `services`, `hardware`, `installer`,
+  `windows-installer`, `pm` and a few more. `base.nix` imports what every
+  target shares; `default.nix` adds the PC half (UEFI, verity `/usr`, sysupdate, installer).
 - `nixos/halium/` is the Halium GSI, one image for every Treble phone that
   takes GSIs and runs Linux 5.10 or newer: `base.nix` plus NixOS's initrd as
   `init_boot` (or after the phone's own ramdisk in `boot`),
@@ -73,8 +73,9 @@ still takes time, so don't start one to check a module edit.
 - `components/` holds derisk, mcsapi and pm as git submodules. The flake
   builds them from there; `nixos/pkgs/{derisk,x2mcsapi,pm}.nix` keep only
   their `cargoHash` and build flags.
-- `src/` holds the three programs this repository writes. The overlay builds
-  them.
+- `src/` holds the programs this repository writes. The overlay builds
+  them; `losos-windows-installer` is also cross-built to a Windows `.exe` by
+  `modules/windows-installer.nix` (`docs/windows-installer.md`).
 - `plugins/` holds pm plugins, written in Rust and compiled to WebAssembly
   components. pm asks a plugin about a command only when no built-in
   fingerprint matched it.
