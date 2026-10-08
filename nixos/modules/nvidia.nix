@@ -24,6 +24,8 @@
 let
   base = config.boot.kernelPackages.nvidiaPackages.production;
 
+  vramDir = "/run/nvidia-suspend";
+
   # The userspace half, less what nothing in a desktop session loads. Every
   # PC downloads this with each update, so the parts for compute and for
   # other display servers come out: OpenCL and its ICD (an app that wants it
@@ -115,10 +117,34 @@ in
     options nvidia_drm modeset=1 fbdev=1
     # Suspend and hibernate through the kernel's own notifiers (open module,
     # 595 and later) instead of nvidia-sleep.sh units around
-    # systemd-suspend.service, keeping video memory across them in a file on
-    # /var/tmp, which is on disk, rather than in /tmp's RAM.
-    options nvidia NVreg_UseKernelSuspendNotifiers=1 NVreg_PreserveVideoMemoryAllocations=1 NVreg_TemporaryFilePath=/var/tmp
+    # systemd-suspend.service, keeping video memory across them in a file in
+    # the tmpfs below.
+    options nvidia NVreg_UseKernelSuspendNotifiers=1 NVreg_PreserveVideoMemoryAllocations=1 NVreg_TemporaryFilePath=${vramDir}
   '';
+
+  # Where the driver saves video memory over a suspend: the session's
+  # framebuffers and textures. Not /tmp or /var/tmp, which are on the root
+  # partition, unencrypted ext4 (docs/layout.md): this tmpfs keeps them in
+  # RAM, which suspend keeps powered, and hibernation writes into its image
+  # in the TPM-sealed swap with the rest of memory. Its size is a ceiling,
+  # not a reservation, and as large as memory, since the copy has to fit
+  # all of the card's used memory; tmpfs pages can go to that swap too.
+  # Mounted only on machines the NVIDIA rule matched.
+  systemd.mounts = [
+    {
+      what = "tmpfs";
+      where = vramDir;
+      type = "tmpfs";
+      options = "mode=0700,size=100%";
+      wantedBy = [ "sysinit.target" ];
+      before = [ "systemd-modules-load.service" ];
+      after = [ "losos-hardware.service" ];
+      unitConfig = {
+        DefaultDependencies = false;
+        ConditionPathExists = "/run/losos/hardware/flags/nvidia";
+      };
+    }
+  ];
 
   # GSP firmware: the open module runs the GPU's resource manager on the
   # card's GSP, from this firmware. It is NVIDIA's build for this driver
@@ -159,7 +185,7 @@ in
   '';
 
   losos.hardware.rules.nvidia-open = {
-    class = "graphics_card";
+    classes = [ "graphics_card" ];
     vendor = 4318; # 0x10de, NVIDIA
     devicesFile = supportedGpus;
     load = [

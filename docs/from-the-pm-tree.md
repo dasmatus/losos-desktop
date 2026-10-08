@@ -3,7 +3,7 @@
 | pm tree (removed) | NixOS | Notes |
 |---|---|---|
 | `recipes/10-systemd/linux`, `losos.config` | nixpkgs' kernel, `hardware.nix` | nixpkgs' `common-config.nix` already sets what systemd needs, `CONFIG_HIDRAW` included. zswap is built in and off, and `boot.zswap.enable` turns it on |
-| `recipes/10-systemd/nvidia-open` | `nvidia.nix`: nixpkgs' NVIDIA open module and userspace | chosen per machine at boot from nixos-facter's report; older cards keep nouveau and NVK ([Drivers and NVIDIA](drivers.md)) |
+| `recipes/10-systemd/nvidia-open` | `nvidia.nix`: nixpkgs' NVIDIA open module and userspace | chosen per machine at boot from nixos-facter's report; older cards keep nouveau and NVK ([Hardware and NVIDIA](drivers.md)) |
 | `recipes/00-*` through `30-gnome`, `manifest/`, `share/` | nixpkgs | every package the recipes built. Their build-system patches existed only for the CFI toolchain |
 | `recipes/30-gnome/gnome-control-center` patches | `nixos/pkgs/patches/gnome-control-center/` | kept and not applied, see [What is not done](not-done.md) |
 | `recipes/90-image/losos-image` (mkosi), `plugins/` | `nixos/modules/image.nix` (`image/repart.nix`) | the same `systemd-repart`; no fingerprint table to get past, so no plugins |

@@ -36,7 +36,7 @@ Everything the flake builds from, besides this repository:
   NVIDIA's binaries, which its licence lets the image and the binary cache
   redistribute unmodified. They are the image's only unfree package
   (`nixos/modules/nvidia.nix`), loaded only on a machine with a card the
-  driver supports ([Drivers and NVIDIA](drivers.md)). The open kernel module
+  driver supports ([Hardware and NVIDIA](drivers.md)). The open kernel module
   is built from NVIDIA's MIT/GPL source.
 - **derisk**, the `components/derisk` submodule
   (`github.com/losos-project/derisk`) at the commit this tree records

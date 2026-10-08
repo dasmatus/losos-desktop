@@ -1,7 +1,8 @@
-//! The plan for three machines: a laptop with an Intel iGPU and an RTX 3050,
-//! a desktop with a GTX 1060 (Pascal, which NVIDIA's current driver no longer
-//! supports), and a QEMU guest. The reports are in nixos-facter's shape, cut
-//! down to the fields hwinfo fills for a PCI display controller.
+//! The plan for three machines: a laptop with an Intel CPU and iGPU, an
+//! RTX 3050 and a Synaptics fingerprint reader; a desktop with an AMD CPU
+//! and a GTX 1060 (Pascal, which NVIDIA's current driver no longer
+//! supports); and a QEMU guest on an Intel host. The reports are in
+//! nixos-facter's shape, cut down to the fields the rules read.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -24,7 +25,7 @@ fn rules(dir: &Path) -> Vec<Rule> {
     let rules = serde_json::json!({
         "rules": [{
             "name": "nvidia-open",
-            "class": "graphics_card",
+            "classes": ["graphics_card"],
             "vendor": 4318,
             "devices_file": fixture("nvidia-open-devices.json"),
             "load": ["nvidia", "nvidia_modeset", "nvidia-drm", "nvidia_uvm"],
@@ -119,4 +120,59 @@ fn a_rule_whose_driver_did_not_load_has_failed() {
     assert_eq!(plan.failed(&sys_module).count(), 1);
     fs::create_dir_all(sys_module.join("nvidia_drm")).unwrap();
     assert_eq!(plan.failed(&sys_module).count(), 0);
+}
+
+/// The service rules hardware.nix writes: thermald on Intel CPUs outside a
+/// VM, fprintd with a reader libfprint drives, listed as vendor:device pairs
+/// and found under whichever class hwinfo filed it.
+fn service_rules(dir: &Path) -> Vec<Rule> {
+    let path = dir.join("services.json");
+    let readers = dir.join("readers.json");
+    fs::write(&readers, r#"["06CB:00BD", "27C6:5110"]"#).unwrap();
+    let rules = serde_json::json!({
+        "rules": [
+            {
+                "name": "intel-thermald",
+                "virtualisation": ["none"],
+                "cpu_vendor": "GenuineIntel",
+                "flags": ["intel-cpu"],
+            },
+            {
+                "name": "fingerprint",
+                "classes": ["fingerprint", "usb", "unknown"],
+                "devices_file": readers,
+                "flags": ["fingerprint"],
+            },
+            { "name": "matches-nothing" },
+        ]
+    });
+    fs::write(&path, rules.to_string()).unwrap();
+    read_rules(&path).unwrap()
+}
+
+fn rule_names(plan: &Plan) -> Vec<&str> {
+    plan.matched.iter().map(|m| m.rule.as_str()).collect()
+}
+
+#[test]
+fn services_follow_the_cpu_the_hypervisor_and_the_readers() {
+    let dir = tmp("services");
+    let rules = service_rules(&dir);
+
+    let laptop = Plan::new(&rules, &report("hybrid-ampere.json"));
+    assert_eq!(rule_names(&laptop), ["intel-thermald", "fingerprint"]);
+    // Listed under both usb and fingerprint, reported once.
+    assert_eq!(
+        laptop.matched[1].devices,
+        ["1-3 06cb:00bd Synaptics Prometheus MIS Touch Fingerprint Reader"]
+    );
+    assert_eq!(
+        laptop.flags().into_iter().collect::<Vec<_>>(),
+        ["fingerprint", "intel-cpu"]
+    );
+
+    // An AMD desktop without a reader: neither.
+    assert!(Plan::new(&rules, &report("pascal.json")).matched.is_empty());
+    // An Intel CPU, but inside a VM, where thermald has nothing to manage.
+    assert!(Plan::new(&rules, &report("qemu.json")).matched.is_empty());
 }

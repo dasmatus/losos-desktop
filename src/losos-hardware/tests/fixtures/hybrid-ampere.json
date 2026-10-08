@@ -92,6 +92,63 @@
         "device": "Storage 0",
         "sysfs_bus_id": "virtio1"
       }
+    ],
+    "usb": [
+      {
+        "index": 40,
+        "class_list": [
+          "fingerprint",
+          "usb"
+        ],
+        "bus_type": {
+          "hex": "0086",
+          "name": "USB",
+          "value": 134
+        },
+        "vendor": {
+          "hex": "06cb",
+          "name": "Synaptics, Inc.",
+          "value": 1739
+        },
+        "device": {
+          "hex": "00bd",
+          "value": 189
+        },
+        "model": "Synaptics Prometheus MIS Touch Fingerprint Reader",
+        "sysfs_bus_id": "1-3"
+      }
+    ],
+    "fingerprint": [
+      {
+        "index": 40,
+        "class_list": [
+          "fingerprint",
+          "usb"
+        ],
+        "bus_type": {
+          "hex": "0086",
+          "name": "USB",
+          "value": 134
+        },
+        "vendor": {
+          "hex": "06cb",
+          "name": "Synaptics, Inc.",
+          "value": 1739
+        },
+        "device": {
+          "hex": "00bd",
+          "value": 189
+        },
+        "model": "Synaptics Prometheus MIS Touch Fingerprint Reader",
+        "sysfs_bus_id": "1-3"
+      }
+    ],
+    "cpu": [
+      {
+        "vendor_name": "GenuineIntel",
+        "family": 6,
+        "model": 140
+      }
     ]
   }
 }

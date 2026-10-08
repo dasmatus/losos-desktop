@@ -43,6 +43,13 @@
         ],
         "module_alias": "pci:v000010DEd00001C03sv*sd*bc03sc00i00"
       }
+    ],
+    "cpu": [
+      {
+        "vendor_name": "AuthenticAMD",
+        "family": 25,
+        "model": 33
+      }
     ]
   }
 }

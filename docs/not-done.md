@@ -48,7 +48,7 @@
   through `systemctl start factory-reset.target` and the Varlink API, and the
   security report answers on the bus, but neither has a button in Settings.
 - **NVIDIA on real hardware.** The driver choice was tested in a VM with a
-  report that names an RTX 4090 ([Drivers and NVIDIA](drivers.md)); no
+  report that names an RTX 4090 ([Hardware and NVIDIA](drivers.md)); no
   NVIDIA card has run the image. Untested: the open module taking a card,
   derisk's compositor on it, explicit sync, suspend and hibernation,
   VA-API, hardened_malloc under NVIDIA's libraries, and laptops with two

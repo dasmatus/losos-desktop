@@ -22,15 +22,17 @@ let
       rules = lib.mapAttrsToList (name: rule: {
         inherit name;
         inherit (rule)
-          class
+          classes
           vendor
           devices
+          virtualisation
           load
           blacklist
           fallback
           flags
           ;
         devices_file = if rule.devicesFile == null then null else toString rule.devicesFile;
+        cpu_vendor = rule.cpuVendor;
       }) config.losos.hardware.rules;
     }
   );
@@ -41,34 +43,55 @@ in
   options.losos.hardware.rules = mkOption {
     default = { };
     description = ''
-      Choices a generic image can only make on the machine: for devices facter
-      lists under a class, from a vendor, and optionally only some device IDs,
-      which modules to load, which to keep off the device, what to load if the
-      chosen driver does not come up, and flags for units to test with
-      ConditionPathExists=/run/losos/hardware/flags/<flag>. Most hardware
-      needs no rule, since udev loads the one driver the kernel names for it.
+      Choices a generic image can only make on the machine. A rule matches on
+      any of three selectors, all of which must hold: a device facter lists
+      under one of `classes` (from `vendor`, and optionally only some IDs),
+      the hypervisor facter detected (`virtualisation`), and the CPU's vendor
+      (`cpuVendor`). When it matches, it loads modules, keeps others off the
+      device, names what to load if its driver does not come up, and sets
+      flags, which units that only make sense on that hardware test with
+      ConditionPathExists=/run/losos/hardware/flags/<flag>. Most drivers need
+      no rule, since udev loads the one the kernel names for a device.
     '';
     type = types.attrsOf (
       types.submodule {
         options = {
-          class = mkOption {
-            type = types.str;
-            example = "graphics_card";
-            description = "The class nixos-facter lists the device under in its report.";
+          classes = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            example = [ "graphics_card" ];
+            description = "The classes nixos-facter may list a matching device under.";
           };
           vendor = mkOption {
-            type = types.ints.u16;
-            description = "The PCI or USB vendor ID.";
+            type = types.nullOr types.ints.u16;
+            default = null;
+            description = "The PCI or USB vendor ID of a matching device.";
           };
           devices = mkOption {
-            type = types.nullOr (types.listOf types.ints.u16);
+            type = types.nullOr (types.listOf (types.either types.ints.u16 types.str));
             default = null;
-            description = "Device IDs that match; with devicesFile also null, any device of the vendor.";
+            description = ''
+              IDs that match: device IDs of `vendor`'s, as numbers or hex
+              strings, or "vvvv:dddd" pairs. With devicesFile also null, any
+              device in the classes from `vendor` matches.
+            '';
           };
           devicesFile = mkOption {
             type = types.nullOr types.path;
             default = null;
-            description = "A JSON array of device IDs, numbers or hex strings, read at boot, for lists that are build products.";
+            description = "The same as devices, as a JSON array in a file read at boot, for lists that are build products.";
+          };
+          virtualisation = mkOption {
+            type = types.nullOr (types.listOf types.str);
+            default = null;
+            example = [ "none" ];
+            description = "facter's virtualisation values that match; none is bare metal.";
+          };
+          cpuVendor = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            example = "GenuineIntel";
+            description = "The CPU vendor string that matches.";
           };
           load = mkOption {
             type = types.listOf types.str;
@@ -179,5 +202,43 @@ in
         ExecStart = "${lib.getExe pkgs.losos-hardware} fallback";
       };
     };
+
+    # Services that only make sense on some hardware are in every image and
+    # start only where facter found that hardware; the image cannot install
+    # a package per machine, but it can leave one idle. Each rule sets a flag
+    # its unit tests. A device plugged in after boot, such as a USB reader,
+    # counts from the next boot, when the probe sees it.
+
+    # fprintd with a reader libfprint drives, by the list NixOS's
+    # hardware.facter module keeps of the IDs this nixpkgs' libfprint
+    # supports. fprintd is started over D-Bus, by pam_fprintd and derisk's
+    # reader prompt; without a reader that start is refused at once, and
+    # both go on to the password.
+    losos.hardware.rules.fingerprint = {
+      # hwinfo files a reader under fingerprint when it knows the device, and
+      # under usb or unknown when it does not.
+      classes = [
+        "fingerprint"
+        "usb"
+        "unknown"
+      ];
+      devicesFile = pkgs.runCommand "libfprint-devices.json" {
+        nativeBuildInputs = [ pkgs.jq ];
+      } "jq keys ${pkgs.path}/nixos/modules/hardware/facter/fingerprint/devices.json > $out";
+      flags = [ "fingerprint" ];
+    };
+    systemd.services.fprintd.unitConfig.ConditionPathExists = "${dir}/flags/fingerprint";
+
+    # thermald, which keeps an Intel CPU under its thermal limits by stepping
+    # through gentler controls than the firmware's emergency throttling, so a
+    # laptop runs cooler and quieter under load. It manages nothing on AMD or
+    # in a VM.
+    losos.hardware.rules.intel-thermald = {
+      cpuVendor = "GenuineIntel";
+      virtualisation = [ "none" ];
+      flags = [ "intel-cpu" ];
+    };
+    services.thermald.enable = pkgs.stdenv.hostPlatform.isx86;
+    systemd.services.thermald.unitConfig.ConditionPathExists = "${dir}/flags/intel-cpu";
   };
 }

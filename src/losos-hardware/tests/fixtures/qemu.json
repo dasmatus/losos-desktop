@@ -53,6 +53,13 @@
         "device": "Storage 0",
         "sysfs_bus_id": "virtio1"
       }
+    ],
+    "cpu": [
+      {
+        "vendor_name": "GenuineIntel",
+        "family": 6,
+        "model": 85
+      }
     ]
   }
 }

@@ -1,13 +1,15 @@
-# Drivers and NVIDIA
+# Hardware and NVIDIA
 
 The image is one build for every PC, so it carries every driver nixpkgs'
-kernel builds and all of linux-firmware. For nearly all hardware that is the
-whole story: the kernel names a module for each device it finds, udev loads
-it, and a driver for hardware the machine lacks is never loaded. What udev
-cannot do is choose between two drivers that both claim a device. NVIDIA's
-GPUs are that case: nouveau and NVIDIA's own open kernel module both claim
-every NVIDIA display controller, and which of them should drive a card
-depends on which card it is.
+kernel builds, all of linux-firmware, and services some machines have no
+use for. For nearly all drivers that is the whole story: the kernel names a
+module for each device it finds, udev loads it, and a driver for hardware
+the machine lacks is never loaded. What udev cannot do is choose between two
+drivers that both claim a device, or start a service only where its hardware
+is. NVIDIA's GPUs are the first case: nouveau and NVIDIA's own open kernel
+module both claim every NVIDIA display controller, and which of them should
+drive a card depends on which card it is. fprintd, which is only worth
+starting with a fingerprint reader, is the second.
 
 ## Choosing at boot from facter's report
 
@@ -25,9 +27,10 @@ files kmod and systemd already read from `/run`:
 2. `losos-hardware plan` (`src/losos-hardware`) matches the report against
    the rules the configuration defines in `losos.hardware.rules`
    (`nixos/modules/hardware.nix`, readable at `/etc/losos/hardware-rules.json`).
-   A rule names a facter class, a vendor and optionally a list of device IDs,
-   and what to do when a device matches: modules to load, modules to keep off
-   the device, a fallback, and flags.
+   A rule matches on a device (facter classes, a vendor, optionally a list of
+   IDs), on the hypervisor facter detected, on the CPU's vendor, or on
+   several of these at once, and says what to do then: modules to load,
+   modules to keep off the device, a fallback, and flags.
 3. For every match it writes `blacklist` lines to
    `/run/modprobe.d/losos-hardware.conf`, so coldplug does not load a displaced
    driver; the wanted modules to `/run/modules-load.d/losos-hardware.conf`,
@@ -42,9 +45,36 @@ files kmod and systemd already read from `/run`:
 
 Every boot rather than once at install: a card swapped in gets its driver on
 the first boot it is there, and nothing has to keep a stored report in step
-with the hardware. A rule is the place for any other device two drivers
-compete for, or that needs a service only on the machines that have it; most
-hardware needs none.
+with the hardware. A USB device plugged in after boot counts from the next
+one.
+
+## Services that follow the hardware
+
+The image cannot install a package on one machine and not another, since
+every machine runs the same verified `/usr`, but it can leave one idle. A
+service that only makes sense on some hardware is in every image and tests
+its rule's flag with `ConditionPathExists=`:
+
+| Rule | Matches | Flag | Turns on |
+| --- | --- | --- | --- |
+| `nvidia-open` | an NVIDIA GPU the driver supports | `nvidia` | NVIDIA's modules, the tmpfs for video memory over suspend |
+| `fingerprint` | a reader in libfprint's list, under facter's `fingerprint`, `usb` or `unknown` | `fingerprint` | fprintd |
+| `intel-thermald` | an Intel CPU, on bare metal | `intel-cpu` | thermald (x86_64 only) |
+
+fprintd is started over D-Bus, by `pam_fprintd` and by derisk's reader
+prompt; on a machine without a reader that start is refused at once and both
+go on to the password. The reader list is the one NixOS's `hardware.facter`
+keeps, generated from the same nixpkgs' libfprint. thermald keeps an Intel
+CPU under its thermal limits with gentler steps than the firmware's
+emergency throttling.
+
+Bluetooth and power profiles are not on this list because the image leaves
+them off everywhere for now: derisk has no UI for either ([What is not
+done](not-done.md)). When it does, each is a rule and a condition here. The
+laptop check for hibernation is the Hibernation module's own
+(`losos-hibernate able`), which reads the same SMBIOS chassis type facter
+would. Phones are a different image ([Halium](halium.md)), so nothing here
+decides between a PC and a phone.
 
 ## NVIDIA
 
@@ -81,7 +111,11 @@ suspend it).
 
 `nvidia_drm` runs with `modeset=1 fbdev=1`, which the compositor's GBM
 scanout needs. Suspend and hibernation use the driver's kernel suspend
-notifiers, with video memory saved to `/var/tmp`. VA-API decodes on the card
+notifiers. The driver saves the card's used memory, the session's
+framebuffers among it, to a file in `/run/nvidia-suspend`, a tmpfs mounted
+only on machines the rule matched: in RAM, which suspend keeps powered,
+and in the hibernation image, which is in the TPM-sealed swap, rather than
+on the root partition, which is not encrypted ([Where the OS lives](layout.md)). VA-API decodes on the card
 through `nvidia-vaapi-driver`. Flatpak apps do not use these libraries: they
 take Flathub's NVIDIA GL extension of the same driver version.
 

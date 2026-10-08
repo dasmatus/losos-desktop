@@ -53,6 +53,14 @@
             assert done <= started, f"{unit} started before the plan was written"
         machine.fail("systemctl --failed --no-legend | grep .")
 
+    with subtest("services for hardware the VM lacks were left off"):
+        # thermald: the CPU is whatever the host's is, but inside a VM.
+        machine.succeed("systemctl show -P ConditionResult thermald.service | grep -qx no")
+        machine.fail("test -e /run/losos/hardware/flags/intel-cpu")
+        # fprintd: no reader, so a D-Bus start of it is refused.
+        machine.fail("systemctl start fprintd.service && systemctl is-active fprintd.service")
+        machine.fail("mountpoint -q /run/nvidia-suspend")
+
     # What udev would load for an RTX 4090, honouring blacklists as coldplug
     # does: a module name in the dry run's insmod lines.
     rtx = "pci:v000010DEd00002684sv00000000sd00000000bc03sc00i00"
@@ -91,5 +99,8 @@
         machine.fail("test -d /sys/module/nvidia_drm")
         machine.succeed("losos-hardware fallback")
         machine.succeed("test -d /sys/module/nouveau")
+        # Video memory is saved over suspend to RAM, not the root partition.
+        machine.succeed("systemctl start /run/nvidia-suspend")
+        machine.succeed("findmnt --types tmpfs /run/nvidia-suspend")
   '';
 }
