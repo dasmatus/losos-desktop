@@ -30,6 +30,7 @@ let
           blacklist
           fallback
           flags
+          reserve
           ;
         devices_file = if rule.devicesFile == null then null else toString rule.devicesFile;
         cpu_vendor = rule.cpuVendor;
@@ -113,6 +114,16 @@ in
             default = [ ];
             description = "Flags written to /run/losos/hardware/flags.";
           };
+          reserve = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = ''
+              Modules only this rule may have loaded, blacklisted at boot when
+              it does not match. Not a blacklist in boot.blacklistedKernelModules:
+              systemd-modules-load honours blacklists even for the modules it
+              loads by name, so the rule could never load them.
+            '';
+          };
         };
       }
     );
@@ -172,7 +183,9 @@ in
         RuntimeDirectory = "losos/hardware";
         RuntimeDirectoryPreserve = true;
         ExecStart = [
-          "${lib.getExe pkgs.nixos-facter} --hardware pci,usb,cpu --output ${dir}/facter.json"
+          # `-`: if the probe fails, the plan is made from no report, which
+          # matches nothing and still keeps every rule's reserved modules off.
+          "-${lib.getExe pkgs.nixos-facter} --hardware pci,usb,cpu --output ${dir}/facter.json"
           "${lib.getExe pkgs.losos-hardware} plan --rules ${rules} --report ${dir}/facter.json"
         ];
       };

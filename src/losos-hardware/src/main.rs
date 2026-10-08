@@ -45,16 +45,28 @@ fn main() -> miette::Result<()> {
             let rules = read_rules(&rules)
                 .into_diagnostic()
                 .wrap_err_with(|| format!("cannot read the rules in {}", rules.display()))?;
-            let report: serde_json::Value = std::fs::read(&report)
+            // A probe that failed still gets a plan, from an empty report, so
+            // the reserved modules stay blacklisted and the machine boots on
+            // the drivers udev picks; the unit runs facter with `-` for this.
+            let report: serde_json::Value = match std::fs::read(&report)
                 .into_diagnostic()
                 .and_then(|bytes| serde_json::from_slice(&bytes).into_diagnostic())
-                .wrap_err_with(|| format!("cannot read facter's report {}", report.display()))?;
+            {
+                Ok(report) => report,
+                Err(e) => {
+                    error!(report = %report.display(), error = ?e, "cannot read facter's report; matching nothing");
+                    serde_json::Value::Null
+                }
+            };
             let plan = Plan::new(&rules, &report);
             for m in &plan.matched {
                 info!(rule = %m.rule, devices = ?m.devices, load = ?m.load, blacklist = ?m.blacklist, "matched");
             }
             if plan.matched.is_empty() {
                 info!("no rule matched; every device keeps the driver udev picks");
+            }
+            if !plan.reserved.is_empty() {
+                info!(reserved = ?plan.reserved, "kept off: their rules did not match");
             }
             plan.write(&out)
                 .into_diagnostic()

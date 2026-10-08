@@ -34,10 +34,15 @@ files kmod and systemd already read from `/run`:
 3. For every match it writes `blacklist` lines to
    `/run/modprobe.d/losos-hardware.conf`, so coldplug does not load a displaced
    driver; the wanted modules to `/run/modules-load.d/losos-hardware.conf`,
-   which `systemd-modules-load` loads by name, past any blacklist; a file per
+   which `systemd-modules-load` loads; a file per
    flag under `/run/losos/hardware/flags/`, for units to test with
    `ConditionPathExists=`; and `/run/losos/hardware/plan.json`, saying what
-   matched which device.
+   matched which device. A rule that does not match blacklists the
+   modules it reserves, which only it may have loaded. That cannot be a
+   blacklist in the image's `/etc`: `systemd-modules-load` honours
+   blacklists even for modules it is asked to load by name, so nothing
+   could load them. If the probe fails, the plan is made from no report,
+   which matches nothing and still reserves.
 4. `losos-hardware-fallback.service` runs after `systemd-modules-load`. If a
    rule's module did not load, it loads the rule's fallback by name, so a
    driver that refuses a card leaves the machine with the driver it would
@@ -84,8 +89,9 @@ less OpenCL, OptiX, the CUDA debugger, Vulkan SC, the Wine DLLs and the Xorg
 GLX module, which nothing in the session loads (about 210 of 784 MB). It
 does what NixOS's `hardware.nvidia` module does except the two things that
 assume the machine: that module blacklists nouveau and loads `nvidia_uvm` at
-every boot. Here the NVIDIA modules are blacklisted instead, so udev never
-loads them uninvited, and nouveau keeps every card by default.
+every boot. Here the rule reserves NVIDIA's modules, so on every machine it
+does not match they are blacklisted for that boot and udev leaves every
+NVIDIA card to nouveau.
 
 The rule `nvidia-open` matches a `graphics_card` from vendor `0x10de` whose
 device ID is in the table of supported GPUs NVIDIA ships inside its

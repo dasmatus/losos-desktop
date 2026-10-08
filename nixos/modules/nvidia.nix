@@ -5,9 +5,10 @@
 # the machine: it blacklists nouveau and loads nvidia_uvm at every boot, which
 # would leave a machine with an older NVIDIA card without a driver and fail
 # systemd-modules-load on every machine with none. Here both drivers are in
-# the image, nouveau keeps every card by default, and the rule at the bottom
-# hands a card to NVIDIA's open kernel module at boot when nixos-facter's
-# report shows one the driver supports (hardware.nix, docs/drivers.md).
+# the image, and the rule at the bottom decides at boot from nixos-facter's
+# report: a card the driver supports goes to NVIDIA's open kernel module, and
+# everywhere else NVIDIA's modules are kept off and nouveau keeps every card
+# (hardware.nix, docs/drivers.md).
 #
 # The open module, not the closed one: NVIDIA's current branch supports only
 # Turing (GTX 16xx, RTX 20xx) and newer, all of which the open module drives,
@@ -98,18 +99,6 @@ in
     ];
 
   boot.extraModulePackages = [ base.open ];
-
-  # Nothing loads these by name unless the rule below matched, and the
-  # blacklist stops udev loading them for any NVIDIA card it finds, since
-  # their aliases claim every NVIDIA display controller, older ones included.
-  # A blacklist only covers aliases, so the rule's modules-load.d entry still
-  # loads them.
-  boot.blacklistedKernelModules = [
-    "nvidia"
-    "nvidia_drm"
-    "nvidia_modeset"
-    "nvidia_uvm"
-  ];
 
   boot.extraModprobeConfig = ''
     # KMS, and a framebuffer console on it, which the compositor's GBM scanout
@@ -204,5 +193,13 @@ in
     # If NVIDIA's module refuses the card, nouveau still drives it.
     fallback = [ "nouveau" ];
     flags = [ "nvidia" ];
+    # Their aliases claim every NVIDIA display controller, older ones too, so
+    # on every machine the rule does not match, udev must not load them.
+    reserve = [
+      "nvidia"
+      "nvidia_drm"
+      "nvidia_modeset"
+      "nvidia_uvm"
+    ];
   };
 }

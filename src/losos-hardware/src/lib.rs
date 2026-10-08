@@ -14,9 +14,10 @@
 //! and turns it into the files kmod and systemd already read from /run:
 //!
 //! - `modprobe.d/losos-hardware.conf` blacklists the drivers a matched rule
-//!   displaces, so udev's coldplug does not load them;
-//! - `modules-load.d/losos-hardware.conf` names the drivers it wants, which
-//!   systemd-modules-load loads by name, past any blacklist;
+//!   displaces, and those a rule that did not match reserves for itself, so
+//!   udev's coldplug loads neither;
+//! - `modules-load.d/losos-hardware.conf` names the drivers matched rules
+//!   want, which systemd-modules-load loads;
 //! - `losos/hardware/flags/<flag>` exists for each flag a rule sets, which
 //!   units that only make sense on that hardware test with
 //!   ConditionPathExists;
@@ -83,6 +84,14 @@ pub struct Rule {
     /// Flags for units to test.
     #[serde(default)]
     pub flags: Vec<String>,
+    /// Modules only this rule may have loaded: blacklisted when it did not
+    /// match. NVIDIA's modules claim every NVIDIA display controller by
+    /// alias, older cards too, so without this udev would load them beside
+    /// nouveau. It cannot be a blacklist in /etc: systemd-modules-load
+    /// honours blacklists even for the modules it loads by name, so a
+    /// blacklisted module could never be loaded by a rule.
+    #[serde(default)]
+    pub reserve: Vec<String>,
 }
 
 impl Rule {
@@ -223,34 +232,42 @@ pub struct Matched {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Plan {
     pub matched: Vec<Matched>,
+    /// Modules reserved by rules that did not match.
+    #[serde(default)]
+    pub reserved: Vec<String>,
 }
 
 impl Plan {
     /// Matches every rule against the report.
+    ///
+    /// A report that could not be read is `Value::Null`, which matches
+    /// nothing, so the plan still reserves what it reserves: without facter,
+    /// a machine boots on the drivers it would have had with no rules.
     pub fn new(rules: &[Rule], report: &Value) -> Self {
-        let matched = rules
-            .iter()
-            .filter_map(|rule| {
-                Some(Matched {
+        let mut plan = Self::default();
+        for rule in rules {
+            match rule.matches(report) {
+                Some(devices) => plan.matched.push(Matched {
                     rule: rule.name.clone(),
-                    devices: rule.matches(report)?,
+                    devices,
                     load: rule.load.clone(),
                     blacklist: rule.blacklist.clone(),
                     fallback: rule.fallback.clone(),
                     flags: rule.flags.clone(),
-                })
-            })
-            .collect();
-        Self { matched }
+                }),
+                None => plan.reserved.extend(rule.reserve.iter().cloned()),
+            }
+        }
+        plan
     }
 
-    /// The modprobe.d file: a blacklist line per displaced module.
+    /// The modprobe.d file: a blacklist line per displaced or reserved
+    /// module.
     pub fn modprobe_conf(&self) -> String {
         let mut text = String::from(HEADER);
-        for m in &self.matched {
-            for module in &m.blacklist {
-                text.push_str(&format!("blacklist {module}\n"));
-            }
+        let displaced = self.matched.iter().flat_map(|m| &m.blacklist);
+        for module in displaced.chain(&self.reserved) {
+            text.push_str(&format!("blacklist {module}\n"));
         }
         text
     }

@@ -4,8 +4,8 @@
 #
 # A VM has no NVIDIA card, so the last subtest feeds losos-hardware a report
 # that has one, an RTX 4090, and checks what follows: nouveau is kept off
-# the card, NVIDIA's module is asked for and, finding no GPU, refuses, and
-# the fallback brings nouveau back. That is the path a real card takes when
+# the card and NVIDIA's modules no longer are, NVIDIA's module is asked for
+# and, finding no GPU, refuses, and the fallback brings nouveau back. That is the path a real card takes when
 # the open module rejects it; the path where it accepts the card needs one.
 #
 # Only the two modules under test, not the whole image, so it boots the test
@@ -30,6 +30,8 @@
       # hardware.nix asserts zswap has a swap device, which this VM lacks
       # and which is not what it tests.
       boot.zswap.enable = lib.mkForce false;
+      # desktop.nix's, which /run/opengl-driver needs.
+      hardware.graphics.enable = true;
 
       environment.systemPackages = [
         pkgs.jq
@@ -93,7 +95,8 @@
         machine.succeed("losos-hardware plan --rules /etc/losos/hardware-rules.json --report /tmp/rtx.json")
         machine.succeed("test -e /run/losos/hardware/flags/nvidia")
         machine.succeed("modprobe --showconfig | grep -qx 'blacklist nouveau'")
-        assert drivers_for(rtx) == set(), drivers_for(rtx)
+        # Coldplug would now pick NVIDIA's module for it, and not nouveau.
+        assert "nvidia" in drivers_for(rtx) and "nouveau" not in drivers_for(rtx), drivers_for(rtx)
         # nvidia.ko finds no GPU here and refuses to load.
         machine.fail("systemctl restart systemd-modules-load.service")
         machine.fail("test -d /sys/module/nvidia_drm")

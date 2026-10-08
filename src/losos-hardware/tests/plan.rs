@@ -32,6 +32,7 @@ fn rules(dir: &Path) -> Vec<Rule> {
             "blacklist": ["nouveau", "nova_core"],
             "fallback": ["nouveau"],
             "flags": ["nvidia"],
+            "reserve": ["nvidia", "nvidia_modeset", "nvidia-drm", "nvidia_uvm"],
         }]
     });
     fs::write(&path, rules.to_string()).unwrap();
@@ -56,8 +57,12 @@ fn a_supported_nvidia_card_gets_the_open_driver() {
         ["0000:01:00.0 10de:25a2 nVidia GA107M [GeForce RTX 3050 Mobile]"]
     );
 
+    // The rule matched, so nothing it reserves is kept off.
+    assert!(plan.reserved.is_empty());
+
     plan.write(&dir).unwrap();
     let modprobe = fs::read_to_string(dir.join("modprobe.d/losos-hardware.conf")).unwrap();
+    assert!(!modprobe.contains("blacklist nvidia"));
     assert!(modprobe.contains("blacklist nouveau\n"));
     assert!(modprobe.contains("blacklist nova_core\n"));
     let load = fs::read_to_string(dir.join("modules-load.d/losos-hardware.conf")).unwrap();
@@ -74,7 +79,11 @@ fn an_unsupported_nvidia_card_keeps_nouveau() {
 
     plan.write(&dir).unwrap();
     let modprobe = fs::read_to_string(dir.join("modprobe.d/losos-hardware.conf")).unwrap();
-    assert!(!modprobe.contains("blacklist"));
+    // nouveau is free to take it, and NVIDIA's modules, which also claim it
+    // by alias, are kept off.
+    assert!(!modprobe.contains("blacklist nouveau"));
+    assert!(modprobe.contains("blacklist nvidia\n"));
+    assert!(modprobe.contains("blacklist nvidia-drm\n"));
     let load = fs::read_to_string(dir.join("modules-load.d/losos-hardware.conf")).unwrap();
     assert!(load.lines().all(|l| l.starts_with('#')));
     assert!(!dir.join("losos/hardware/flags/nvidia").exists());
@@ -105,7 +114,7 @@ fn a_second_run_replaces_the_first() {
         .unwrap();
     assert!(!dir.join("losos/hardware/flags/nvidia").exists());
     let modprobe = fs::read_to_string(dir.join("modprobe.d/losos-hardware.conf")).unwrap();
-    assert!(!modprobe.contains("blacklist"));
+    assert!(!modprobe.contains("blacklist nouveau"));
 }
 
 #[test]
@@ -175,4 +184,15 @@ fn services_follow_the_cpu_the_hypervisor_and_the_readers() {
     assert!(Plan::new(&rules, &report("pascal.json")).matched.is_empty());
     // An Intel CPU, but inside a VM, where thermald has nothing to manage.
     assert!(Plan::new(&rules, &report("qemu.json")).matched.is_empty());
+}
+
+#[test]
+fn without_a_report_the_reserved_modules_stay_off() {
+    let dir = tmp("noreport");
+    let plan = Plan::new(&rules(&dir), &serde_json::Value::Null);
+    assert!(plan.matched.is_empty());
+    assert_eq!(
+        plan.reserved,
+        ["nvidia", "nvidia_modeset", "nvidia-drm", "nvidia_uvm"]
+    );
 }
