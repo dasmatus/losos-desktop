@@ -1,6 +1,10 @@
-# Boot the installer from its actual ISO under UEFI, including the initrd
+# Boot the installer from its actual ISO under UEFI, or with `bios` under a
+# legacy BIOS through GRUB's El Torito image (iso.nix), including the initrd
 # mounts and the service that owns tty1.
-{ self }:
+{
+  self,
+  bios ? false,
+}:
 
 let
   # The test driver talks to a guest only through the backdoor shell that
@@ -22,7 +26,7 @@ let
     }).config.system.build.isoImage;
 in
 {
-  name = "losos-desktop-installer-boot";
+  name = "losos-desktop-installer-boot${if bios then "-bios" else ""}";
 
   nodes.machine =
     { ... }:
@@ -30,7 +34,7 @@ in
       virtualisation = {
         directBoot.enable = false;
         mountHostNixStore = false;
-        useEFIBoot = true;
+        useEFIBoot = !bios;
         qemu.options = [
           "-cdrom ${installerIso}"
           "-boot order=d"
@@ -40,6 +44,7 @@ in
     };
 
   testScript = ''
+    machine.${if bios then "fail" else "succeed"}("test -d /sys/firmware/efi")
     machine.succeed("findmnt --kernel /iso")
     machine.succeed("findmnt --kernel /nix/store")
     machine.wait_for_unit("derisk-installer.service")

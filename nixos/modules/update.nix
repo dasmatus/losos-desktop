@@ -11,7 +11,9 @@
 # systemd-bless-boot removes the counter once boot-complete.target is reached;
 # an entry that never gets blessed runs out of tries and systemd-boot falls
 # back to the older one by itself. The older UKI's usrhash still names the
-# older /usr, which is still there.
+# older /usr, which is still there. On a BIOS PC, GRUB does the same from
+# grubenv, and losos-grub-bless leaves the names as systemd-boot would
+# (bios.nix, which also adds the transfers GRUB starts a version from).
 { config, lib, ... }:
 
 let

@@ -67,7 +67,7 @@
       subprocess.run([
         "${nodes.machine.virtualisation.qemu.package}/bin/qemu-img", "create",
         "-f", "qcow2", "-F", "raw",
-        "-b", "${nodes.machine.system.build.image}/${nodes.machine.image.filePath}",
+        "-b", "${nodes.machine.system.build.disk}/${nodes.machine.image.filePath}",
         tmp.name, "32G",
       ], check=True)
       os.environ["NIX_DISK_IMAGE"] = tmp.name
