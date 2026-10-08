@@ -21,7 +21,6 @@ let
       "javascript.jit" = lib.boolToString cfg.jit;
     }
     // lib.optionalAttrs (cfg.home != null) { home = cfg.home; }
-    // lib.optionalAttrs (cfg.search != null) { search = cfg.search; }
   );
 in
 {
@@ -31,21 +30,10 @@ in
       default = null;
       example = "https://start.example/";
       description = ''
-        What a new tab opens. Null keeps Danube's default, an empty page
-        with the address bar focused.
-      '';
-    };
-
-    search = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "https://search.example/?q=";
-      description = ''
-        The address bar's search: one of derisk's engine names
-        (`duckduckgo`, `google`, `bing`, `startpage`, `brave`, `ecosia`,
-        `qwant`, `mojeek`) or an https URL the query is appended to. Null
-        follows the desktop's choice (Settings, Default apps), and
-        DuckDuckGo until one is made.
+        What a new tab opens. Null keeps Danube's default, an empty page.
+        There is no `search` option: Danube has no address bar, derisk's
+        command palette is it, and the palette searches with the engine
+        chosen in Settings, Default apps (docs/danube.md, "The window").
       '';
     };
 

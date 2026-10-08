@@ -1,8 +1,20 @@
-//! Danube's tabs and navigation as derisk global menus, the way every
-//! derisk app puts its menus in the top bar and the command palette: one
-//! line of JSON per request on derisk's agent socket
+//! Danube's page, tabs and navigation as derisk global menus, the way
+//! every derisk app puts its menus in the top bar and the command palette:
+//! one line of JSON per request on derisk's agent socket
 //! (`$XDG_RUNTIME_DIR/derisk/agent.sock`), `register_menu` for the window,
-//! and `{"event":"menu","item":...}` lines back when one is picked.
+//! and `{"event":"menu","item":...}` lines back when one is picked. The
+//! window has no toolbar of its own: what a browser's would show (the
+//! address, whether the page is secure, the ad blocking in force) is the
+//! Page menu, and the address bar is the palette itself, which Danube
+//! asks derisk to show (`dispatch` of the `palette` action) for Ctrl+L.
+//! The palette's own Tabs and Extensions headings come from the second
+//! thing Danube registers, `register_palette`: its tabs (and, once there
+//! are any, its extensions) as data for derisk's bundled browser palette
+//! plugin, which turns them into palette rows and sends what is picked
+//! back as `{"event":"palette","source":"danube","command":{...}}`: a tab
+//! to activate or close, a new tab, or an address typed in the palette to
+//! open. Registering again replaces the data, and derisk drops it when
+//! the connection closes.
 //!
 //! derisk names windows by its own ids, so Danube finds its window in
 //! derisk's `state` by app id and title. The window sends an [`Update`]
@@ -28,17 +40,53 @@ pub const APP_ID: &str = "org.losos.Danube";
 const PREFIX: &str = "danube.";
 
 /// What the menus are built from: the window's title, which pairs it with
-/// derisk's window, and its tabs.
+/// derisk's window, its tabs, and how many content blocker rule sets are
+/// in force. `palette` counts the times the window asked for derisk's
+/// palette (Ctrl+L); it only ever grows, so a count seen once is not
+/// acted on again, and updates that coalesce in the channel lose nothing.
 #[derive(Default)]
 pub struct Update {
     pub title: String,
     pub tabs: Vec<Tab>,
     pub active: Option<TabId>,
+    pub filters: usize,
+    pub palette: u64,
 }
 
-/// The menus for a window showing `tabs`, `active` the one in front.
-pub fn menus(tabs: &[Tab], active: Option<TabId>) -> Value {
+/// The menus for a window showing `tabs`, `active` the one in front, with
+/// `filters` content blocker rule sets loaded.
+pub fn menus(tabs: &[Tab], active: Option<TabId>, filters: usize) -> Value {
     let current = active.and_then(|id| tabs.iter().find(|t| t.id == id));
+    // The Page menu says what a toolbar would: disabled items, which the
+    // top bar shows and the palette leaves out, then what can be done.
+    let address = match current {
+        Some(t) if !t.uri.is_empty() && t.uri != "about:blank" => t.uri.clone(),
+        _ => "New tab".to_owned(),
+    };
+    let security = current.map(|t| {
+        if t.secure {
+            "Secure"
+        } else if t.uri.starts_with("http://") {
+            "Not secure"
+        } else {
+            ""
+        }
+    });
+    let blocking = match filters {
+        0 => "No filter lists compiled yet".to_owned(),
+        1 => "Ad blocking: 1 filter set".to_owned(),
+        n => format!("Ad blocking: {n} filter sets"),
+    };
+    let mut page = vec![
+        json!({"kind": "item", "id": format!("{PREFIX}info.address"), "label": address, "enabled": false}),
+    ];
+    if let Some(security) = security.filter(|s| !s.is_empty()) {
+        page.push(json!({"kind": "item", "id": format!("{PREFIX}info.security"), "label": security, "enabled": false}));
+    }
+    page.push(json!({"kind": "item", "id": format!("{PREFIX}info.blocking"), "label": blocking, "enabled": false}));
+    page.push(json!({"kind": "separator"}));
+    page.push(json!({"kind": "item", "id": ADDRESS, "label": "Open Address\u{2026}", "shortcut": "Ctrl+L"}));
+    page.push(json!({"kind": "item", "id": format!("{PREFIX}copy"), "label": "Copy Address", "enabled": current.is_some_and(|t| !t.uri.is_empty())}));
     let mut switch = vec![
         json!({"kind": "item", "id": format!("{PREFIX}new"), "label": "New Tab", "shortcut": "Ctrl+T"}),
         json!({"kind": "separator"}),
@@ -54,21 +102,47 @@ pub fn menus(tabs: &[Tab], active: Option<TabId>) -> Value {
             .push(json!({"kind": "item", "id": format!("{PREFIX}tab.{}", tab.id), "label": title}));
         close.push(json!({"kind": "item", "id": format!("{PREFIX}close.{}", tab.id), "label": format!("Close {title}")}));
     }
+    // Next and previous, so the palette cycles tabs as Ctrl+Tab does.
+    switch.push(json!({"kind": "separator"}));
+    switch.push(json!({"kind": "item", "id": format!("{PREFIX}next"), "label": "Next Tab", "shortcut": "Ctrl+Tab", "enabled": tabs.len() > 1}));
+    switch.push(json!({"kind": "item", "id": format!("{PREFIX}previous"), "label": "Previous Tab", "shortcut": "Ctrl+Shift+Tab", "enabled": tabs.len() > 1}));
     let can = |f: fn(&Tab) -> bool| current.is_some_and(f);
     let navigate = vec![
         json!({"kind": "item", "id": format!("{PREFIX}back"), "label": "Back", "shortcut": "Alt+Left", "enabled": can(|t| t.can_go_back)}),
         json!({"kind": "item", "id": format!("{PREFIX}forward"), "label": "Forward", "shortcut": "Alt+Right", "enabled": can(|t| t.can_go_forward)}),
         json!({"kind": "item", "id": format!("{PREFIX}reload"), "label": "Reload", "shortcut": "Ctrl+R"}),
+        json!({"kind": "item", "id": format!("{PREFIX}stop"), "label": "Stop", "enabled": can(|t| t.loading)}),
     ];
     json!([
+        {"title": "Page", "entries": page},
         {"title": "Tabs", "entries": switch},
         {"title": "Navigate", "entries": navigate},
         {"title": "Close Tab", "entries": close},
     ])
 }
 
-/// The command for a picked item; `None` for one Danube did not register.
-pub fn command(item: &str, active: Option<TabId>) -> Option<Command> {
+/// The tab after (or before) `tab` in the strip's order, wrapping round;
+/// `None` when it is the only one or unknown.
+pub fn neighbour(tabs: &[Tab], tab: TabId, forward: bool) -> Option<TabId> {
+    let at = tabs.iter().position(|t| t.id == tab)?;
+    if tabs.len() < 2 {
+        return None;
+    }
+    let next = if forward {
+        (at + 1) % tabs.len()
+    } else {
+        (at + tabs.len() - 1) % tabs.len()
+    };
+    Some(tabs[next].id)
+}
+
+/// The item that opens derisk's palette, handled here rather than by
+/// WebKit: the palette is the address bar.
+const ADDRESS: &str = "danube.address";
+
+/// The command for a picked item; `None` for one Danube did not register,
+/// and for [`ADDRESS`] and the Page menu's information lines.
+pub fn command(item: &str, tabs: &[Tab], active: Option<TabId>) -> Option<Command> {
     let rest = item.strip_prefix(PREFIX)?;
     let id = |s: &str| s.parse::<TabId>().ok();
     Some(match rest.split_once('.') {
@@ -79,10 +153,54 @@ pub fn command(item: &str, active: Option<TabId>) -> Option<Command> {
                 uri: None,
                 activate: true,
             },
+            "next" => Command::Activate(neighbour(tabs, active?, true)?),
+            "previous" => Command::Activate(neighbour(tabs, active?, false)?),
             "back" => Command::Back(active?),
             "forward" => Command::Forward(active?),
             "reload" => Command::Reload(active?),
+            "stop" => Command::Stop(active?),
+            "copy" => Command::CopyAddress(active?),
             _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+/// What the palette's browser plugin gets: the tabs as derisk's
+/// `register_palette` schema has them, and the extensions, none until the
+/// extension runtime exists.
+pub fn palette_data(tabs: &[Tab], active: Option<TabId>) -> Value {
+    let tabs: Vec<Value> = tabs
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.id.to_string(),
+                "title": t.title,
+                "url": t.uri,
+                "active": Some(t.id) == active,
+            })
+        })
+        .collect();
+    json!({"tabs": tabs, "extensions": []})
+}
+
+/// The command for what was picked under the palette's Tabs and
+/// Extensions headings; `None` for one Danube cannot do yet (the
+/// extension commands, until the runtime exists) or does not know.
+pub fn palette_command(command: &Value) -> Option<Command> {
+    let id = || command["id"].as_str()?.parse::<TabId>().ok();
+    Some(match command["op"].as_str()? {
+        "activate_tab" => Command::Activate(id()?),
+        "close_tab" => Command::Close(id()?),
+        "new_tab" => Command::NewTab {
+            uri: None,
+            activate: true,
+        },
+        // derisk has already made an http(s) URL of the typed text (https://
+        // for a bare host, http:// for localhost); a search is derisk's own.
+        "open" => Command::NewTab {
+            uri: Some(command["url"].as_str()?.to_owned()),
+            activate: true,
         },
         _ => return None,
     })
@@ -95,6 +213,16 @@ fn socket() -> Option<PathBuf> {
 enum Asked {
     State,
     Register,
+    /// The palette data registered; a refusal is an older derisk without
+    /// the browser plugin, which keeps its menus.
+    RegisterPalette,
+    /// The palette shown; its answer says nothing Danube acts on.
+    Palette,
+}
+
+/// The request that shows derisk's command palette.
+fn show_palette() -> Value {
+    json!({"method": "dispatch", "actions": [{"action": "palette", "visible": true}]})
 }
 
 /// Keeps derisk's menus in step with the tabs until the window is gone.
@@ -166,6 +294,10 @@ fn talk(
 ) -> Result<(), Stopped> {
     let mut asked: VecDeque<Asked> = VecDeque::new();
     let mut registered: Option<(u64, Value)> = None;
+    // The palette data derisk holds; sent again only when it changes.
+    let mut registered_palette: Option<Value> = None;
+    // Palette requests already passed on; the window only counts up.
+    let mut palette = current.palette;
     let send =
         |stream: &mut UnixStream, request: Value, what: Asked, asked: &mut VecDeque<Asked>| {
             let mut line = request.to_string().into_bytes();
@@ -175,6 +307,20 @@ fn talk(
         };
     loop {
         take(updates, current)?;
+        if current.palette > palette {
+            palette = current.palette;
+            if !send(stream, show_palette(), Asked::Palette, &mut asked) {
+                return Ok(());
+            }
+        }
+        let data = palette_data(&current.tabs, current.active);
+        if registered_palette.as_ref() != Some(&data) {
+            let request = json!({"method": "register_palette", "source": "danube", "data": data});
+            if !send(stream, request, Asked::RegisterPalette, &mut asked) {
+                return Ok(());
+            }
+            registered_palette = Some(data);
+        }
         if asked.is_empty() && !send(stream, json!({"method": "state"}), Asked::State, &mut asked) {
             return Ok(());
         }
@@ -187,17 +333,27 @@ fn talk(
             continue;
         };
         if message["event"] == "menu" {
-            if let Some(command) = message["item"]
-                .as_str()
-                .and_then(|item| command(item, current.active))
-            {
+            let item = message["item"].as_str().unwrap_or_default();
+            if item == ADDRESS {
+                if !send(stream, show_palette(), Asked::Palette, &mut asked) {
+                    return Ok(());
+                }
+            } else if let Some(command) = command(item, &current.tabs, current.active) {
                 commands.send(command);
+            }
+            continue;
+        }
+        if message["event"] == "palette" && message["source"] == "danube" {
+            if let Some(command) = palette_command(&message["command"]) {
+                commands.send(command);
+            } else {
+                warn!(command = %message["command"], "a palette command Danube cannot do");
             }
             continue;
         }
         match asked.pop_front() {
             Some(Asked::State) if message["ok"] == true => {
-                let menus = menus(&current.tabs, current.active);
+                let menus = menus(&current.tabs, current.active, current.filters);
                 let window = message["result"]["windows"].as_array().and_then(|windows| {
                     windows
                         .iter()
@@ -226,6 +382,11 @@ fn talk(
                 warn!(error = %message["error"], "derisk refused the menus");
                 registered = None;
             }
+            Some(Asked::RegisterPalette) if message["ok"] != true => {
+                // Not sent again until the tabs change: the menus still
+                // list them, so an older derisk loses nothing but rows.
+                warn!(error = %message["error"], "derisk refused the palette data");
+            }
             _ => {}
         }
     }
@@ -240,22 +401,118 @@ mod tests {
         let tabs = vec![Tab {
             id: 4,
             title: "Example".into(),
+            uri: "http://example.com/".into(),
             can_go_back: true,
             ..Tab::default()
         }];
-        let menus = menus(&tabs, Some(4));
-        assert_eq!(menus[0]["entries"][2]["id"], "danube.tab.4");
-        assert_eq!(menus[1]["entries"][0]["enabled"], true);
-        assert_eq!(menus[2]["entries"][0]["label"], "Close Example");
+        let menus = menus(&tabs, Some(4), 3);
+        // Page: the address, security and blocking as disabled lines, then
+        // the actions.
+        assert_eq!(menus[0]["title"], "Page");
+        assert_eq!(menus[0]["entries"][0]["label"], "http://example.com/");
+        assert_eq!(menus[0]["entries"][0]["enabled"], false);
+        assert_eq!(menus[0]["entries"][1]["label"], "Not secure");
+        assert_eq!(
+            menus[0]["entries"][2]["label"],
+            "Ad blocking: 3 filter sets"
+        );
+        assert_eq!(menus[0]["entries"][4]["id"], ADDRESS);
+        assert_eq!(menus[0]["entries"][5]["id"], "danube.copy");
+        assert_eq!(menus[1]["entries"][2]["id"], "danube.tab.4");
+        assert_eq!(menus[1]["entries"][4]["id"], "danube.next");
+        assert_eq!(menus[1]["entries"][4]["enabled"], false);
+        assert_eq!(menus[2]["entries"][0]["enabled"], true);
+        assert_eq!(menus[2]["entries"][3]["enabled"], false, "nothing loads");
+        assert_eq!(menus[3]["entries"][0]["label"], "Close Example");
+        assert!(command(ADDRESS, &tabs, Some(4)).is_none());
+        assert!(command("danube.info.address", &tabs, Some(4)).is_none());
         assert!(matches!(
-            command("danube.close.4", None),
+            command("danube.copy", &tabs, Some(4)),
+            Some(Command::CopyAddress(4))
+        ));
+        let empty = super::menus(&[], None, 0);
+        assert_eq!(empty[0]["entries"][0]["label"], "New tab");
+        assert_eq!(
+            empty[0]["entries"][1]["label"],
+            "No filter lists compiled yet"
+        );
+        assert!(matches!(
+            command("danube.close.4", &tabs, None),
             Some(Command::Close(4))
         ));
         assert!(matches!(
-            command("danube.back", Some(4)),
+            command("danube.back", &tabs, Some(4)),
             Some(Command::Back(4))
         ));
-        assert!(command("danube.back", None).is_none());
-        assert!(command("other.tab.4", None).is_none());
+        assert!(command("danube.back", &tabs, None).is_none());
+        assert!(command("other.tab.4", &tabs, None).is_none());
+        assert!(command("danube.next", &tabs, Some(4)).is_none());
+        let two = vec![
+            Tab {
+                id: 4,
+                ..Tab::default()
+            },
+            Tab {
+                id: 7,
+                ..Tab::default()
+            },
+        ];
+        assert!(matches!(
+            command("danube.next", &two, Some(7)),
+            Some(Command::Activate(4))
+        ));
+        assert!(matches!(
+            command("danube.previous", &two, Some(4)),
+            Some(Command::Activate(7))
+        ));
+    }
+
+    #[test]
+    fn palette_data_and_commands() {
+        let tabs = vec![
+            Tab {
+                id: 4,
+                title: "Example".into(),
+                uri: "https://example.com/".into(),
+                ..Tab::default()
+            },
+            Tab {
+                id: 7,
+                ..Tab::default()
+            },
+        ];
+        let data = palette_data(&tabs, Some(7));
+        assert_eq!(
+            data,
+            json!({
+                "tabs": [
+                    {"id": "4", "title": "Example", "url": "https://example.com/", "active": false},
+                    {"id": "7", "title": "", "url": "", "active": true},
+                ],
+                "extensions": [],
+            })
+        );
+        assert!(matches!(
+            palette_command(&json!({"op": "activate_tab", "id": "4"})),
+            Some(Command::Activate(4))
+        ));
+        assert!(matches!(
+            palette_command(&json!({"op": "close_tab", "id": "7"})),
+            Some(Command::Close(7))
+        ));
+        assert!(matches!(
+            palette_command(&json!({"op": "new_tab"})),
+            Some(Command::NewTab {
+                uri: None,
+                activate: true
+            })
+        ));
+        assert!(matches!(
+            palette_command(&json!({"op": "open", "url": "https://example.org/"})),
+            Some(Command::NewTab { uri: Some(url), activate: true }) if url == "https://example.org/"
+        ));
+        assert!(palette_command(&json!({"op": "activate_tab", "id": "x"})).is_none());
+        assert!(palette_command(&json!({"op": "open"})).is_none());
+        assert!(palette_command(&json!({"op": "enable_extension", "id": "bitwarden"})).is_none());
     }
 }

@@ -1,8 +1,11 @@
-//! The window: tabs, the address bar and the page, drawn with mcsapi's
-//! components in the desktop's theme. On a desktop the tabs run along the
-//! top above the toolbar; on a phone (the window's short side under
-//! 600 px) the address bar sits at the bottom, under the thumb, and the
-//! tabs are a switcher behind a button that shows their count.
+//! The window: the page, and nothing of a browser's chrome. No toolbar,
+//! address bar or tab strip: Danube is the web view, and derisk's command
+//! palette and top-bar menus are its address bar and tabs, built from
+//! what derisk.rs registers. Ctrl+L asks derisk for the palette, and the
+//! window's title names the active tab. What the window still draws is
+//! drawn with mcsapi's components in the desktop's theme: a progress
+//! line while a page loads, a permission request's bar, a crashed page's
+//! notice, the link under the pointer, and toasts.
 //!
 //! The page is WebKit's last frame for the active tab, painted as a
 //! texture; input over it goes back to WebKit (input.rs).
@@ -14,11 +17,10 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use eframe::egui::{self, Key, Modifiers};
 use mcsapi_components::{
-    toast, Alert, Badge, BadgeVariant, Button, ButtonSize, ButtonVariant, Checkbox, Input,
-    Progress, Toaster, Tokens,
+    toast, Alert, Button, ButtonSize, ButtonVariant, Checkbox, Progress, Toaster, Tokens,
 };
 
-use crate::config::{self, Settings};
+use crate::config;
 use crate::derisk::Update;
 use crate::input;
 use crate::shared::{Command, Commands, Event, PermissionAsk, Tab, TabId};
@@ -36,14 +38,10 @@ pub struct Window {
     state: State,
     /// The last update did not fit the channel; send it again.
     derisk_behind: bool,
-    settings: Settings,
+    /// Times Ctrl+L asked for derisk's palette, carried in each update.
+    palette: u64,
     /// Captive portal sign-in: one page, no tabs.
     captive: bool,
-    /// What is typed in the address bar while it has focus.
-    typing: Option<String>,
-    address_id: egui::Id,
-    /// The page took the last click, so keys go to it.
-    page_focused: bool,
     /// A button went down over the page and is still held.
     dragging: bool,
     touch_active: bool,
@@ -52,7 +50,6 @@ pub struct Window {
     phone: Option<bool>,
     focused: bool,
     title: String,
-    switcher: bool,
     remember: bool,
     theme: ThemeWatch,
 }
@@ -60,14 +57,14 @@ pub struct Window {
 /// The window's picture of WebKit, kept from its events.
 #[derive(Default)]
 struct State {
-    /// In tab-strip order.
+    /// In opening order, which derisk's menus list them in.
     tabs: Vec<Tab>,
     active: Option<TabId>,
     /// The last frame each tab rendered.
     frames: HashMap<TabId, Arc<egui::ColorImage>>,
     hovered_link: Option<String>,
     permissions: VecDeque<PermissionAsk>,
-    /// How many content blocker rule sets are in force, for the shield.
+    /// How many content blocker rule sets are in force, for the Page menu.
     filters: usize,
     /// The window's title, as sent to derisk.
     title: String,
@@ -124,10 +121,7 @@ impl State {
                 self.permissions.retain(|p| p.id != id);
                 return false;
             }
-            Event::Filters(n) => {
-                self.filters = n;
-                return false;
-            }
+            Event::Filters(n) => self.filters = n,
             // Handled by the window itself before they get here.
             Event::Copied(_) | Event::Notice(_) | Event::Quit => return false,
         }
@@ -192,7 +186,6 @@ impl Window {
         commands: Commands,
         events: Receiver<Event>,
         updates: Sender<Update>,
-        settings: Settings,
         captive: bool,
     ) -> Self {
         Self {
@@ -201,11 +194,8 @@ impl Window {
             updates,
             state: State::default(),
             derisk_behind: false,
-            settings,
+            palette: 0,
             captive,
-            typing: None,
-            address_id: egui::Id::new("danube-address"),
-            page_focused: true,
             dragging: false,
             touch_active: false,
             textures: HashMap::new(),
@@ -213,7 +203,6 @@ impl Window {
             phone: None,
             focused: true,
             title: String::new(),
-            switcher: false,
             remember: false,
             theme: ThemeWatch::new(),
         }
@@ -250,8 +239,21 @@ impl Window {
             title: self.state.title.clone(),
             tabs: self.state.tabs.clone(),
             active: self.state.active,
+            filters: self.state.filters,
+            palette: self.palette,
         };
         self.derisk_behind = self.updates.try_send(update).is_err();
+    }
+
+    /// Asks derisk for its command palette, the address bar. The captive
+    /// portal window has no derisk thread, and its page is the one it was
+    /// opened for.
+    fn open_palette(&mut self) {
+        if self.captive {
+            return;
+        }
+        self.palette += 1;
+        self.tell_derisk();
     }
 
     /// Browser shortcuts, taken before the page sees the keys.
@@ -260,16 +262,16 @@ impl Window {
         let alt = |key| egui::KeyboardShortcut::new(Modifiers::ALT, key);
         let pressed = |shortcut| ctx.input_mut(|i| i.consume_shortcut(&shortcut));
         if pressed(ctrl(Key::L)) || pressed(alt(Key::D)) {
-            ctx.memory_mut(|m| m.request_focus(self.address_id));
-            self.page_focused = false;
+            self.open_palette();
         }
         if !self.captive && pressed(ctrl(Key::T)) {
+            // The new tab is empty, and the palette is where its address
+            // is typed.
             self.send(Command::NewTab {
                 uri: None,
                 activate: true,
             });
-            ctx.memory_mut(|m| m.request_focus(self.address_id));
-            self.page_focused = false;
+            self.open_palette();
         }
         let Some(tab) = active else { return };
         if !self.captive && pressed(ctrl(Key::W)) {
@@ -284,247 +286,20 @@ impl Window {
         if pressed(alt(Key::ArrowRight)) {
             self.send(Command::Forward(tab.id));
         }
-        if !self.captive && pressed(ctrl(Key::Tab)) && !tabs.is_empty() {
-            let at = tabs.iter().position(|t| t.id == tab.id).unwrap_or(0);
-            self.send(Command::Activate(tabs[(at + 1) % tabs.len()].id));
-        }
-    }
-
-    fn address_bar(&mut self, ui: &mut egui::Ui, tab: Option<&Tab>, tokens: &Tokens) {
-        let Some(tab) = tab else { return };
-        if !tab.uri.is_empty() {
-            let (text, color) = if tab.secure {
-                ("Secure", tokens.muted_foreground)
-            } else if tab.uri.starts_with("http://") {
-                ("Not secure", tokens.destructive)
-            } else {
-                ("", tokens.muted_foreground)
-            };
-            if !text.is_empty() {
-                ui.label(egui::RichText::new(text).small().color(color))
-                    .on_hover_text(config::host(&tab.uri));
-            }
-        }
-        let has_focus = ui.memory(|m| m.has_focus(self.address_id));
-        let mut text = match (&self.typing, has_focus) {
-            (Some(t), true) => t.clone(),
-            _ => tab.uri.clone(),
-        };
-        let response = ui.add(Input::new(&mut text).placeholder("Search or enter address"));
-        // The field's id, for Ctrl+L to focus it; stable while the toolbar's
-        // layout is.
-        self.address_id = response.id;
-        if response.has_focus() {
-            self.page_focused = false;
-            self.typing = Some(text.clone());
-        }
-        if response.lost_focus() {
-            if ui.input(|i| i.key_pressed(Key::Enter)) {
-                if let Some(uri) = config::address(&text, &self.settings.search) {
-                    self.send(Command::Load(tab.id, uri));
-                }
-                self.page_focused = true;
-            }
-            self.typing = None;
-        }
-    }
-
-    fn nav_buttons(&self, ui: &mut egui::Ui, tab: Option<&Tab>) {
-        let Some(tab) = tab else { return };
-        let icon = |text: &str| {
-            Button::new(text)
-                .variant(ButtonVariant::Ghost)
-                .size(ButtonSize::Icon)
-        };
-        if ui
-            .add(icon("⬅").enabled(tab.can_go_back))
-            .on_hover_text("Back (Alt+Left)")
-            .clicked()
-        {
-            self.send(Command::Back(tab.id));
-        }
-        if ui
-            .add(icon("➡").enabled(tab.can_go_forward))
-            .on_hover_text("Forward (Alt+Right)")
-            .clicked()
-        {
-            self.send(Command::Forward(tab.id));
-        }
-        if tab.loading {
-            if ui.add(icon("✕")).on_hover_text("Stop").clicked() {
-                self.send(Command::Stop(tab.id));
-            }
-        } else if ui.add(icon("⟳")).on_hover_text("Reload (Ctrl+R)").clicked() {
-            self.send(Command::Reload(tab.id));
-        }
-    }
-
-    fn shield(&self, ui: &mut egui::Ui, filters: usize) {
-        if self.captive {
+        if self.captive || tabs.is_empty() {
             return;
         }
-        let (text, variant, hover) = if filters > 0 {
-            (
-                "Ad blocking",
-                BadgeVariant::Secondary,
-                format!("{filters} filter sets from losos-adblock are in force"),
-            )
-        } else {
-            (
-                "No filters",
-                BadgeVariant::Outline,
-                "losos-adblock has compiled no filter lists yet; its DNS blocking still applies"
-                    .to_owned(),
-            )
-        };
-        ui.add(Badge::new(text).variant(variant))
-            .on_hover_text(hover);
-    }
-
-    fn tab_strip(
-        &mut self,
-        ui: &mut egui::Ui,
-        tabs: &[Tab],
-        active: Option<TabId>,
-        tokens: &Tokens,
-    ) {
-        ui.horizontal(|ui| {
-            egui::ScrollArea::horizontal()
-                .id_salt("tabs")
-                .show(ui, |ui| {
-                    ui.horizontal_top(|ui| {
-                        for tab in tabs {
-                            let selected = Some(tab.id) == active;
-                            let fill = if selected {
-                                tokens.card
-                            } else {
-                                tokens.background
-                            };
-                            egui::Frame::new()
-                                .fill(fill)
-                                .corner_radius(tokens.control_radius())
-                                .inner_margin(egui::Margin::symmetric(8, 4))
-                                .show(ui, |ui| {
-                                    // Every tab the same size, or egui centres
-                                    // each against the row height so far and the
-                                    // strip comes out stepped.
-                                    ui.set_width(160.0);
-                                    ui.set_height(20.0);
-                                    ui.horizontal_centered(|ui| {
-                                        let title = tab_title(tab);
-                                        let label = ui.add(
-                                            egui::Label::new(egui::RichText::new(&title).color(
-                                                if selected {
-                                                    tokens.foreground
-                                                } else {
-                                                    tokens.muted_foreground
-                                                },
-                                            ))
-                                            .truncate()
-                                            .sense(egui::Sense::click()),
-                                        );
-                                        if label.on_hover_text(&title).clicked() {
-                                            self.send(Command::Activate(tab.id));
-                                        }
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                let close = Button::new("×")
-                                                    .variant(ButtonVariant::Ghost)
-                                                    .size(ButtonSize::Sm);
-                                                if ui
-                                                    .add(close)
-                                                    .on_hover_text("Close tab (Ctrl+W)")
-                                                    .clicked()
-                                                {
-                                                    self.send(Command::Close(tab.id));
-                                                }
-                                            },
-                                        );
-                                    });
-                                });
-                        }
-                        let new = Button::new("+")
-                            .variant(ButtonVariant::Ghost)
-                            .size(ButtonSize::Sm);
-                        if ui.add(new).on_hover_text("New tab (Ctrl+T)").clicked() {
-                            self.send(Command::NewTab {
-                                uri: None,
-                                activate: true,
-                            });
-                        }
-                    });
-                });
-        });
-    }
-
-    /// The phone's tab switcher, in place of the page.
-    fn switcher(
-        &mut self,
-        ui: &mut egui::Ui,
-        tabs: &[Tab],
-        active: Option<TabId>,
-        tokens: &Tokens,
-    ) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for tab in tabs {
-                let selected = Some(tab.id) == active;
-                egui::Frame::new()
-                    .fill(if selected {
-                        tokens.card
-                    } else {
-                        tokens.background
-                    })
-                    .stroke(tokens.border_stroke())
-                    .corner_radius(tokens.card_radius())
-                    .inner_margin(12)
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let open = ui.add(
-                                egui::Label::new(egui::RichText::new(tab_title(tab)).strong())
-                                    .truncate()
-                                    .sense(egui::Sense::click()),
-                            );
-                            if open.clicked() {
-                                self.send(Command::Activate(tab.id));
-                                self.switcher = false;
-                            }
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui
-                                        .add(
-                                            Button::new("×")
-                                                .variant(ButtonVariant::Ghost)
-                                                .size(ButtonSize::Icon),
-                                        )
-                                        .clicked()
-                                    {
-                                        self.send(Command::Close(tab.id));
-                                    }
-                                },
-                            );
-                        });
-                        ui.label(
-                            egui::RichText::new(config::host(&tab.uri))
-                                .small()
-                                .color(tokens.muted_foreground),
-                        );
-                    });
-                ui.add_space(6.0);
+        let ctrl_shift =
+            |key| egui::KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, key);
+        if pressed(ctrl_shift(Key::Tab)) {
+            if let Some(next) = crate::derisk::neighbour(tabs, tab.id, false) {
+                self.send(Command::Activate(next));
             }
-            if ui
-                .add(Button::new("New tab").variant(ButtonVariant::Outline))
-                .clicked()
-            {
-                self.send(Command::NewTab {
-                    uri: None,
-                    activate: true,
-                });
-                self.switcher = false;
+        } else if pressed(ctrl(Key::Tab)) {
+            if let Some(next) = crate::derisk::neighbour(tabs, tab.id, true) {
+                self.send(Command::Activate(next));
             }
-        });
+        }
     }
 
     /// The prompt for the oldest pending permission request.
@@ -639,17 +414,15 @@ impl Window {
             return;
         }
 
-        if response.clicked() || response.drag_started() {
-            self.page_focused = true;
-            ctx.memory_mut(|m| m.surrender_focus(self.address_id));
-        }
         if ctx.input(|i| i.pointer.any_pressed()) && response.hovered() {
             self.dragging = true;
         }
         if !ctx.input(|i| i.pointer.any_down()) {
             self.dragging = false;
         }
-        let keys = self.page_focused && !ctx.egui_wants_keyboard_input();
+        // Keys go to the page unless a component of the window's own (the
+        // permission bar's checkbox, say) has the keyboard.
+        let keys = !ctx.egui_wants_keyboard_input();
         let events = ctx.input(|i| i.events.clone());
         let hovered = response.hovered() || self.dragging;
         let events: Vec<egui::Event> = events
@@ -730,7 +503,6 @@ impl eframe::App for Window {
         let tabs = self.state.tabs.clone();
         let active = self.state.active;
         let frame = active.and_then(|id| self.state.frames.get(&id).cloned());
-        let filters = self.state.filters;
         let permission = self.state.permissions.front().cloned();
         self.textures
             .retain(|id, _| tabs.iter().any(|t| t.id == *id));
@@ -770,42 +542,14 @@ impl eframe::App for Window {
         let bar = egui::Frame::new()
             .fill(tokens.background)
             .inner_margin(egui::Margin::symmetric(8, 6));
-        let toolbar = |this: &mut Self, ui: &mut egui::Ui| {
-            ui.horizontal(|ui| {
-                this.nav_buttons(ui, tab.as_ref());
-                if phone && !this.captive {
-                    let count = Button::new(tabs.len().to_string())
-                        .variant(ButtonVariant::Outline)
-                        .size(ButtonSize::Icon);
-                    if ui.add(count).on_hover_text("Tabs").clicked() {
-                        this.switcher = !this.switcher;
-                    }
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    this.shield(ui, filters);
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        this.address_bar(ui, tab.as_ref(), &tokens);
-                    });
-                });
-            });
-            if let Some(t) = &tab {
-                if t.loading {
+        // A loading page's only sign, a line along the top edge: the
+        // window has no toolbar to put a spinner in.
+        if let Some(t) = tab.as_ref().filter(|t| t.loading) {
+            egui::Panel::top("progress")
+                .frame(egui::Frame::new().fill(tokens.background))
+                .show(ui, |ui| {
                     ui.add(Progress::new(t.progress as f32).width(ui.available_width()));
-                }
-            }
-        };
-
-        if phone {
-            egui::Panel::bottom("toolbar")
-                .frame(bar)
-                .show(ui, |ui| toolbar(self, ui));
-        } else {
-            egui::Panel::top("toolbar").frame(bar).show(ui, |ui| {
-                if !self.captive {
-                    self.tab_strip(ui, &tabs, active, &tokens);
-                }
-                toolbar(self, ui);
-            });
+                });
         }
         if let Some(ask) = &permission {
             egui::Panel::top("permission")
@@ -815,11 +559,7 @@ impl eframe::App for Window {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(tokens.background))
             .show(ui, |ui| {
-                if phone && self.switcher {
-                    self.switcher(ui, &tabs, active, &tokens);
-                } else {
-                    self.page(ui, tab.as_ref(), frame, &tokens);
-                }
+                self.page(ui, tab.as_ref(), frame, &tokens);
             });
         Toaster::show(&ctx);
     }
