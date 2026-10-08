@@ -48,8 +48,8 @@ module.exports = () => ({
     const sections = path.join(outDir, 'sections');
     for (const file of fs.readdirSync(docs).filter((f) => f.endsWith('.md'))) {
       const id = file.replace(/\.md$/, '');
-      // The index page is the site's root route.
-      const route = id === 'index' ? '/' : `/${id}`;
+      // The site's root is the landing page; index.md is the overview.
+      const route = id === 'index' ? '/overview' : `/${id}`;
       redirect(path.join(sections, `${id}.html`), `../index.html#${route}`);
       for (const anchor of headings(fs.readFileSync(path.join(docs, file), 'utf8'))) {
         redirect(path.join(sections, id, `${anchor}.html`), `../../index.html#${route}#${anchor}`);

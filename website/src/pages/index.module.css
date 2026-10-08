@@ -1,0 +1,277 @@
+/* The landing page in the OS's own colours: derisk's dark navy and lime
+   accent, the same as the screenshots and diagrams in docs/images. The hero
+   stays dark in either colour mode; the rest follows the site's. */
+
+.hero {
+  --losos-bg: #0f1524;
+  --losos-card: #172033;
+  --losos-line: #3b4a63;
+  --losos-text: #e5e7eb;
+  --losos-muted: #9aa8bc;
+  --losos-lime: #a3e635;
+  background:
+    radial-gradient(1200px 500px at 85% 0%, rgba(163, 230, 53, 0.1), transparent 60%),
+    linear-gradient(180deg, #111a2e 0%, var(--losos-bg) 100%);
+  color: var(--losos-text);
+  padding: 4rem 1rem 3.5rem;
+}
+
+.heroInner {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 3rem;
+  align-items: center;
+}
+
+.kicker {
+  color: var(--losos-lime);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.5rem;
+}
+
+.title {
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  line-height: 1.05;
+  margin-bottom: 1rem;
+  color: #fff;
+}
+
+.lead {
+  font-size: 1.15rem;
+  color: var(--losos-muted);
+  max-width: 34rem;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.75rem;
+}
+
+.primary,
+.secondary {
+  border-radius: 8px;
+  padding: 0.6rem 1.1rem;
+  font-weight: 600;
+  text-decoration: none;
+  border: 1.5px solid var(--losos-lime);
+}
+
+.primary {
+  background: var(--losos-lime);
+  color: #111827;
+}
+
+.secondary {
+  color: var(--losos-lime);
+}
+
+.primary:hover {
+  color: #111827;
+  text-decoration: none;
+  filter: brightness(1.08);
+}
+
+.secondary:hover {
+  color: #111827;
+  background: var(--losos-lime);
+  text-decoration: none;
+}
+
+.heroShot {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--losos-line);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1rem 4rem;
+}
+
+.section {
+  margin-top: 3.5rem;
+}
+
+.sectionTitle {
+  font-size: 1.6rem;
+  margin-bottom: 1.25rem;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem;
+  border-radius: 10px;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  background: var(--ifm-card-background-color);
+  color: inherit;
+  transition: border-color 0.15s;
+}
+
+.card:hover {
+  border-color: #84cc16;
+  text-decoration: none;
+  color: inherit;
+}
+
+.card h3 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+.card p {
+  color: var(--ifm-color-emphasis-700);
+  flex: 1;
+  margin-bottom: 0.75rem;
+}
+
+.more {
+  font-weight: 600;
+  color: var(--ifm-link-color);
+}
+
+.ways {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  counter-reset: way;
+}
+
+.ways li {
+  counter-increment: way;
+  margin: 0;
+}
+
+.way {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  height: 100%;
+  padding: 1rem 1.1rem 1rem 3.4rem;
+  position: relative;
+  border-radius: 10px;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  color: inherit;
+}
+
+.way::before {
+  content: counter(way);
+  position: absolute;
+  left: 1rem;
+  top: 1rem;
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 50%;
+  background: #a3e635;
+  color: #111827;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+}
+
+.way:hover {
+  border-color: #84cc16;
+  text-decoration: none;
+  color: inherit;
+}
+
+.way span {
+  color: var(--ifm-color-emphasis-700);
+}
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.shot,
+.diagram {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  color: inherit;
+  font-weight: 600;
+}
+
+.shot img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  /* Some are strips of two or three pages: shown whole, on the OS's navy. */
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  background: #0f1524;
+}
+
+.shot:hover,
+.diagram:hover {
+  text-decoration: none;
+  color: var(--ifm-link-color);
+}
+
+.diagrams {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 1.25rem;
+}
+
+.diagram img {
+  width: 100%;
+  border-radius: 12px;
+}
+
+.index {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1.5rem;
+}
+
+.group h3 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ifm-color-emphasis-600);
+  margin-bottom: 0.5rem;
+}
+
+.group ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.group li {
+  margin: 0.3rem 0;
+}
+
+@media (max-width: 900px) {
+  .heroInner {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .hero {
+    padding-top: 2.5rem;
+  }
+
+  .diagrams {
+    grid-template-columns: 1fr;
+  }
+}

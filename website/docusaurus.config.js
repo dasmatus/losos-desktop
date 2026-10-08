@@ -8,6 +8,7 @@
 // renamed repository publishes to its own Pages site unchanged. Without them,
 // as in `npm start`, it serves at the root of localhost.
 
+const path = require('node:path');
 const { themes } = require('prism-react-renderer');
 
 const repository =
@@ -45,7 +46,22 @@ module.exports = {
   markdown: {
     format: 'md',
     hooks: { onBrokenMarkdownLinks: 'throw' },
+    // The site's root is the landing page (src/pages/index.js), so the
+    // overview that docs/index.md is moves to /overview. Front matter in the
+    // file would do the same but shows as a table on GitHub, so it is added
+    // here; the wiki still makes the same file its Home.
+    parseFrontMatter: async (params) => {
+      const result = await params.defaultParseFrontMatter(params);
+      if (path.resolve(params.filePath) === path.join(__dirname, '..', 'docs', 'index.md')) {
+        result.frontMatter.slug = '/overview';
+      }
+      return result;
+    },
   },
+
+  // Read by the landing page, which leaves out what the offline copy has no
+  // use for.
+  customFields: { offline: Boolean(process.env.DOCS_OFFLINE) },
 
   // The web flasher (static/flasher/) is plain files, and the one thing it
   // needs from the build is where the proxy is, which CI has as the
@@ -60,6 +76,10 @@ module.exports = {
         await fs.writeFile(`${outDir}/flasher/config.json`, `${JSON.stringify(config)}\n`);
       },
     }),
+    // Every page by its sidebar category and title, for the landing page's
+    // index, so a page added to sidebars.js shows up there with nothing else
+    // to change.
+    require('./landing-data.js'),
     ...(process.env.DOCS_OFFLINE ? [require('./offline-sections.js')] : []),
   ],
 
