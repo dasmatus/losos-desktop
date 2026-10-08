@@ -10,6 +10,7 @@
     ./bios.nix
     ./hardware.nix
     ./nvidia.nix
+    ./libvirt.nix
     ./allocator.nix
     ./image.nix
     ./disk.nix
