@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "system": "x86_64-linux",
+  "virtualisation": "none",
+  "hardware": {
+    "graphics_card": [
+      {
+        "index": 30,
+        "class_list": [
+          "graphics_card",
+          "pci"
+        ],
+        "bus_type": {
+          "hex": "0004",
+          "name": "PCI",
+          "value": 4
+        },
+        "base_class": {
+          "hex": "0003",
+          "name": "Display controller",
+          "value": 3
+        },
+        "sub_class": {
+          "hex": "0000",
+          "name": "VGA compatible controller",
+          "value": 0
+        },
+        "vendor": {
+          "hex": "10de",
+          "name": "nVidia Corporation",
+          "value": 4318
+        },
+        "device": {
+          "hex": "1c03",
+          "value": 7171
+        },
+        "model": "nVidia GP106 [GeForce GTX 1060 6GB]",
+        "sysfs_id": "/devices/pci0000:00/0000:01:00.0",
+        "sysfs_bus_id": "0000:01:00.0",
+        "driver_modules": [
+          "nouveau",
+          "nvidia"
+        ],
+        "module_alias": "pci:v000010DEd00001C03sv*sd*bc03sc00i00"
+      }
+    ],
+    "cpu": [
+      {
+        "vendor_name": "AuthenticAMD",
+        "family": 25,
+        "model": 33
+      }
+    ]
+  }
+}
