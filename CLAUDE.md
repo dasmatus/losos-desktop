@@ -92,6 +92,8 @@ still takes time, so don't start one to check a module edit.
   which derisk's error dialogs open a section of (`docs/troubleshooting.md`). A new page in
   `docs/` goes in `website/sidebars.js` too, or both fail. Pages link each
   other as `page.md`, which GitHub, Docusaurus and the wiki all follow.
+  Pictures live in `docs/images/` and pages show them as `images/<file>`;
+  the diagrams there are hand-written SVG in the OS's dark theme.
 - `tools/nix-cache-push` pushes built store paths into that cache.
 - `tools/nix-fetch-sources` preloads fixed-output inputs in CI; copied outputs
   are hash-checked and can include bootstrap tools as well as source archives.

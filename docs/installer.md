@@ -21,6 +21,8 @@ network, which networkd then runs DHCP on too. Of the firmware NixOS would add, 
 `linux-firmware` is on the medium, because most Wi-Fi cards do not start
 without it.
 
+![The installer's Disk page, listing the one disk it may install to, and the Erase this disk? page, which names the disk once more behind an Erase and install button](images/installer-pages.png)
+
 The installer is `derisk installer` on tty1, a logind session run as root,
 with a root shell on tty2 for anything it does not cover. It draws the same
 pages first-boot setup is made of, so it works with a mouse, a touchscreen or
@@ -49,6 +51,8 @@ behind an "Erase and install" button before anything is touched. Then:
 3. The machine reboots into the installed system, whose first boot creates
    root, `/home` and swap from `disk.nix`, the path an image written
    with `dd` takes.
+
+![derisk installer talks JSON lines to losos-installer serve, which runs systemd-repart, then systemd-sysupdate from the channel or a LOSOS-RELEASE disk, then reboots; the disk ends with the ESP, BIOS boot and slot A written, slot B laid out empty, and root, home and swap left to the first boot](images/installer.svg)
 
 So an install is an update into an empty slot: what lands on the disk is
 what the channel serves at the time, not a copy of the OS on the medium that

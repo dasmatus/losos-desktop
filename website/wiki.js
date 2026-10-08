@@ -59,7 +59,20 @@ for (const old of fs.readdirSync(out).filter((f) => f.endsWith('.md'))) {
   fs.unlinkSync(path.join(out, old));
 }
 
+// Pictures live in docs/images and go to the wiki as files beside its pages,
+// where the pages' relative `images/...` links find them, replaced whole like
+// the pages. A link to a picture that is not there fails here, as Docusaurus
+// fails the site's build on one.
+const images = path.join(docs, 'images');
+fs.rmSync(path.join(out, 'images'), { recursive: true, force: true });
+if (fs.existsSync(images)) fs.cpSync(images, path.join(out, 'images'), { recursive: true });
+
 for (const [id, page] of pages) {
+  for (const [, file] of page.body.matchAll(/\]\((images\/[^)\s]+)\)/g)) {
+    if (!fs.existsSync(path.join(docs, file))) {
+      throw new Error(`docs/${id}.md shows docs/${file}, which does not exist`);
+    }
+  }
   const body = page.body.replace(
     /\]\(([\w-]+)\.md(#[^)]*)?\)/g,
     (_, target, anchor) => `](${link(target)}${anchor || ''})`,

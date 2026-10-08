@@ -15,6 +15,8 @@ Which systemd component does which job:
 | Network | `systemd-networkd`, `systemd-resolved`, `systemd-timesyncd` |
 | Memory | `systemd-oomd`, zswap in front of a RAM-sized encrypted swap partition, and GrapheneOS's hardened_malloc as every process's allocator on PCs |
 
+![A machine's life: the installer lays out the disk with systemd-repart and fills slot A with systemd-sysupdate; first boot creates slot B, root, home and swap; derisk setup creates the first account with homectl; homed opens each person's home at login; sysupdate writes the idle slot and boot counting keeps or gives up the new version; a factory reset empties root and home](images/systemd.svg)
+
 The places a
 non-systemd component remains are the places systemd has no equivalent, or
 NixOS requires one:

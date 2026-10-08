@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" width="900" height="400" role="img">
+<title>How Danube is put together</title>
+<desc>WebKit runs on the main thread under GLib's loop, the window on a second thread under winit's; two bounded crossbeam channels join them, commands one way and events and frames the other. Each web process runs in its own sandbox from danube-sandbox. Danube registers its tabs and menus with derisk over the agent socket, and derisk's palette and top bar send picked commands back. The whole browser runs in a Hakoniwa container.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.b { font-weight: 600; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; }
+.ms { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs><marker id="h38bdf8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/></marker><marker id="t38bdf8" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#38bdf8"/></marker><marker id="ha3e635" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a3e635"/></marker><marker id="ta3e635" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#a3e635"/></marker><marker id="ha78bfa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker><marker id="ta78bfa" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#a78bfa"/></marker><marker id="hfbbf24" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker><marker id="tfbbf24" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#fbbf24"/></marker></defs>
+<rect width="900" height="400" rx="12" fill="#0f1524"/>
+<text x="25" y="34" class="t">A web view, and derisk around it</text>
+<text x="25" y="55" class="s">Nothing is locked: the two threads only pass messages.</text>
+<rect x="25" y="80" width="520" height="300" rx="8" fill="#0f1524" stroke="#3b4a63" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="40" y="102" class="s">danube, inside its Hakoniwa sandbox</text>
+<rect x="45" y="120" width="200" height="110" rx="8" fill="#132a3a" stroke="#38bdf8" stroke-width="1.5"/>
+<text x="145.0" y="154.0" class="b" text-anchor="middle">Main thread</text>
+<text x="145.0" y="171.0" class="s" text-anchor="middle">GLib main loop</text>
+<text x="145.0" y="188.0" class="s" text-anchor="middle">WPE WebKit (engine.rs)</text>
+<text x="145.0" y="205.0" class="s" text-anchor="middle">bindgen bindings (ffi.rs)</text>
+<rect x="335" y="120" width="190" height="110" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="430.0" y="154.0" class="b" text-anchor="middle">Window thread</text>
+<text x="430.0" y="171.0" class="s" text-anchor="middle">winit, egui (ui.rs)</text>
+<text x="430.0" y="188.0" class="s" text-anchor="middle">mcsapi components</text>
+<text x="430.0" y="205.0" class="s" text-anchor="middle">derisk's theme</text>
+<path d="M333,155 L247,155" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<text x="290" y="147" class="s" text-anchor="middle">commands</text>
+<path d="M247,195 L333,195" fill="none" stroke="#38bdf8" stroke-width="1.6" marker-end="url(#h38bdf8)"/>
+<text x="290" y="187" class="s" text-anchor="middle">events</text>
+<text x="290" y="252" class="s" text-anchor="middle">two bounded channels</text>
+<rect x="45" y="285" width="65" height="70" rx="8" fill="#231f3d" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="77.5" y="317.0" class="s" text-anchor="middle">web</text>
+<text x="77.5" y="332.0" class="s" text-anchor="middle">process</text>
+<rect x="120" y="285" width="65" height="70" rx="8" fill="#231f3d" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="152.5" y="317.0" class="s" text-anchor="middle">web</text>
+<text x="152.5" y="332.0" class="s" text-anchor="middle">process</text>
+<rect x="195" y="285" width="65" height="70" rx="8" fill="#231f3d" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="227.5" y="317.0" class="s" text-anchor="middle">web</text>
+<text x="227.5" y="332.0" class="s" text-anchor="middle">process</text>
+<text x="270" y="312" class="s">one sandbox each,</text>
+<text x="270" y="328" class="s">built by danube-sandbox</text>
+<text x="270" y="344" class="s">from WebKit's bwrap arguments</text>
+<path d="M150,232 L150,283" fill="none" stroke="#a78bfa" stroke-width="1.6" marker-end="url(#ha78bfa)"/>
+<rect x="665" y="120" width="210" height="110" rx="8" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="770.0" y="154.0" class="b" text-anchor="middle">derisk</text>
+<text x="770.0" y="171.0" class="s" text-anchor="middle">the palette: address, tabs</text>
+<text x="770.0" y="188.0" class="s" text-anchor="middle">the top bar: Page, Tabs,</text>
+<text x="770.0" y="205.0" class="s" text-anchor="middle">Navigate, Close Tab</text>
+<path d="M527,150 L663,150" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<text x="595" y="142" class="s" text-anchor="middle">tabs, menus</text>
+<path d="M663,200 L527,200" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<text x="595" y="222" class="s" text-anchor="middle">picked commands</text>
+<text x="595" y="179" class="ms" text-anchor="middle">agent.sock</text>
+</svg>

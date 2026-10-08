@@ -25,6 +25,8 @@ WebKit content blocker rule sets, which [Danube](danube.md) loads into
 every page. Rules the DNS half already applies are left out, so WebKit
 does not compile them twice.
 
+![A daily timer compiles the filter lists into a domain list and WebKit rule sets; every app's lookups go through systemd-resolved to the forwarder, which answers 0.0.0.0 or :: for a blocked name and passes the rest to the network's DNS; Danube loads the rule sets for paths and page elements](images/adblock.svg)
+
 ## Lists
 
 `losos.adblock.lists` names them, by https URL or absolute path; the

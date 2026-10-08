@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 535" width="900" height="535" role="img">
+<title>How a phone boots the Halium GSI</title>
+<desc>The phone keeps its own kernel, vendor_boot and super. LosOS writes init_boot (or appends its ramdisk to boot), an empty vbmeta and userdata. The bootloader unpacks the phone's ramdisk and then LosOS's systemd initrd, which loads the first-stage modules and mounts userdata as the root. After switch-root, super's vendor partitions are mapped and mounted, their modules loaded, Halium's system image is loop-mounted from the store, and Android's init runs the vendor HALs in an LXC container beside the derisk desktop.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.b { font-weight: 600; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; }
+.ms { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs><marker id="h9aa8bc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9aa8bc"/></marker><marker id="t9aa8bc" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#9aa8bc"/></marker></defs>
+<rect width="900" height="535" rx="12" fill="#0f1524"/>
+<text x="25" y="34" class="t">One image, every phone</text>
+<text x="25" y="55" class="s">The phone keeps its own kernel and drivers; LosOS brings the ramdisk and the root filesystem.</text>
+<text x="25" y="92" class="b">The phone's partitions</text>
+<rect x="25" y="105" width="275" height="48" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="39" y="125.5" class="m">boot</text>
+<text x="39" y="141.5" class="s">the phone's kernel</text>
+<rect x="25" y="163" width="275" height="48" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="39" y="183.5" class="m">vendor_boot</text>
+<text x="39" y="199.5" class="s">its first drivers, its ramdisk</text>
+<rect x="25" y="221" width="275" height="48" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="39" y="241.5" class="m">init_boot</text>
+<text x="39" y="257.5" class="s">NixOS's systemd initrd</text>
+<rect x="25" y="279" width="275" height="48" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="39" y="299.5" class="m">vbmeta</text>
+<text x="39" y="315.5" class="s">empty, verification off</text>
+<rect x="25" y="337" width="275" height="48" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="39" y="357.5" class="m">super</text>
+<text x="39" y="373.5" class="s">vendor, odm, vendor_dlkm, system_dlkm</text>
+<rect x="25" y="395" width="275" height="48" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="39" y="415.5" class="m">userdata</text>
+<text x="39" y="431.5" class="s">the root filesystem: NixOS, /nix</text>
+<rect x="25" y="459" width="22" height="14" rx="3" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="55" y="470" class="s">written by LosOS</text>
+<rect x="186.6" y="459" width="22" height="14" rx="3" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="216.6" y="470" class="s">the phone's own</text>
+<text x="25" y="498" class="s">A phone without init_boot keeps kernel and ramdisk in boot;</text>
+<text x="25" y="514" class="s">the flasher appends LosOS's ramdisk to the phone's own there.</text>
+<text x="330" y="92" class="b">Starting up</text>
+<rect x="330" y="105" width="545" height="44" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="374" y="123.5" class="b">The bootloader</text>
+<text x="374" y="139.5" class="s">loads the phone's kernel, unpacks its ramdisk, then LosOS's over it</text>
+<circle cx="352" cy="127" r="11" fill="#38bdf8"/>
+<text x="352" y="131.5" class="b" text-anchor="middle" style="fill:#0f1524">1</text>
+<rect x="330" y="158" width="545" height="44" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="374" y="176.5" class="b">The initrd</text>
+<text x="374" y="192.5" class="s">loads the storage drivers modules.load lists, mounts userdata as /</text>
+<circle cx="352" cy="180" r="11" fill="#38bdf8"/>
+<text x="352" y="184.5" class="b" text-anchor="middle" style="fill:#0f1524">2</text>
+<path d="M352,149 L352,157" fill="none" stroke="#9aa8bc" stroke-width="1.6"/>
+<rect x="330" y="211" width="545" height="44" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="374" y="229.5" class="b">losos-gsi-super</text>
+<text x="374" y="245.5" class="s">maps super's partitions; /vendor, /odm and the dlkm ones mount</text>
+<circle cx="352" cy="233" r="11" fill="#38bdf8"/>
+<text x="352" y="237.5" class="b" text-anchor="middle" style="fill:#0f1524">3</text>
+<path d="M352,202 L352,210" fill="none" stroke="#9aa8bc" stroke-width="1.6"/>
+<rect x="330" y="264" width="545" height="44" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="374" y="282.5" class="b">losos-gsi-modules</text>
+<text x="374" y="298.5" class="s">firmware from /vendor; modules from system_dlkm, then vendor</text>
+<circle cx="352" cy="286" r="11" fill="#38bdf8"/>
+<text x="352" y="290.5" class="b" text-anchor="middle" style="fill:#0f1524">4</text>
+<path d="M352,255 L352,263" fill="none" stroke="#9aa8bc" stroke-width="1.6"/>
+<rect x="330" y="317" width="545" height="44" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="374" y="335.5" class="b">Halium's system image</text>
+<text x="374" y="351.5" class="s">from the Nix store, loop-mounted at /android/system</text>
+<circle cx="352" cy="339" r="11" fill="#38bdf8"/>
+<text x="352" y="343.5" class="b" text-anchor="middle" style="fill:#0f1524">5</text>
+<path d="M352,308 L352,316" fill="none" stroke="#9aa8bc" stroke-width="1.6"/>
+<rect x="330" y="370" width="545" height="44" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="374" y="388.5" class="b">losos-android.service</text>
+<text x="374" y="404.5" class="s">Android's init in LXC: the vendor HALs, sharing /dev</text>
+<circle cx="352" cy="392" r="11" fill="#38bdf8"/>
+<text x="352" y="396.5" class="b" text-anchor="middle" style="fill:#0f1524">6</text>
+<path d="M352,361 L352,369" fill="none" stroke="#9aa8bc" stroke-width="1.6"/>
+<rect x="330" y="423" width="545" height="44" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="374" y="441.5" class="b">derisk</text>
+<text x="374" y="457.5" class="s">the desktop; libhybris draws through the vendor's EGL</text>
+<circle cx="352" cy="445" r="11" fill="#38bdf8"/>
+<text x="352" y="449.5" class="b" text-anchor="middle" style="fill:#0f1524">7</text>
+<path d="M352,414 L352,422" fill="none" stroke="#9aa8bc" stroke-width="1.6"/>
+</svg>

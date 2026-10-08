@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" width="900" height="330" role="img">
+<title>What the Windows installer does to the disk</title>
+<desc>Before: the ESP, MSR, C: and Recovery. The installer shrinks C: and adds a 512 MB XBOOTLDR partition with the UKI and slot A's verity and /usr partitions in the freed space, and puts systemd-boot on the ESP. LosOS's first boot then creates slot B, root, home and swap in the rest. Recovery stays where it was.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.b { font-weight: 600; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; }
+.ms { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs></defs>
+<rect width="900" height="330" rx="12" fill="#0f1524"/>
+<text x="25" y="34" class="t">LosOS beside Windows</text>
+<text x="25" y="55" class="s">Windows' partitions are never touched again after C: shrinks.</text>
+<text x="25" y="118" class="b">Before</text>
+<rect x="135" y="85" width="106" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="188.0" y="118" class="b" text-anchor="middle">ESP</text>
+<rect x="245" y="85" width="36" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="263.0" y="118" class="s" text-anchor="middle">MSR</text>
+<rect x="285" y="85" width="511" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="540.5" y="110" class="b" text-anchor="middle">C:</text>
+<text x="540.5" y="127" class="s" text-anchor="middle">Windows</text>
+<rect x="800" y="85" width="76" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="838.0" y="118" class="b" text-anchor="middle">Recovery</text>
+<text x="25" y="194" class="b">The installer</text>
+<rect x="135" y="161" width="106" height="56" rx="5" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="188.0" y="186" class="b" text-anchor="middle">ESP</text>
+<text x="188.0" y="203" class="s" text-anchor="middle">+ systemd-boot</text>
+<rect x="245" y="161" width="36" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="263.0" y="194" class="s" text-anchor="middle">MSR</text>
+<rect x="285" y="161" width="176" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="373.0" y="186" class="b" text-anchor="middle">C:</text>
+<text x="373.0" y="203" class="s" text-anchor="middle">shrunk</text>
+<rect x="465" y="161" width="96" height="56" rx="5" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="513.0" y="186" class="b" text-anchor="middle">LosOS boot</text>
+<text x="513.0" y="203" class="s" text-anchor="middle">XBOOTLDR</text>
+<rect x="565" y="161" width="66" height="56" rx="5" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="598.0" y="194" text-anchor="middle">verity A</text>
+<rect x="635" y="161" width="86" height="56" rx="5" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="678.0" y="194" class="b" text-anchor="middle">usr A</text>
+<rect x="725" y="161" width="71" height="56" rx="5" fill="#0f1524" stroke="#3b4a63" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="760.5" y="194" class="s" text-anchor="middle">free</text>
+<rect x="800" y="161" width="76" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="838.0" y="194" class="b" text-anchor="middle">Recovery</text>
+<text x="25" y="270" class="b">First boot</text>
+<rect x="135" y="237" width="106" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="188.0" y="270" class="b" text-anchor="middle">ESP</text>
+<rect x="245" y="237" width="36" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="263.0" y="270" class="s" text-anchor="middle">MSR</text>
+<rect x="285" y="237" width="176" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="373.0" y="270" class="b" text-anchor="middle">C:</text>
+<rect x="465" y="237" width="96" height="56" rx="5" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="513.0" y="270" class="b" text-anchor="middle">LosOS boot</text>
+<rect x="565" y="237" width="66" height="56" rx="5" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="598.0" y="270" text-anchor="middle">verity A</text>
+<rect x="635" y="237" width="86" height="56" rx="5" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="678.0" y="270" class="b" text-anchor="middle">usr A</text>
+<rect x="725" y="237" width="71" height="56" rx="5" fill="#132a3a" stroke="#38bdf8" stroke-width="1.5"/>
+<text x="760.5" y="256" class="s" text-anchor="middle">slot B,</text>
+<text x="760.5" y="270" class="s" text-anchor="middle">root, home,</text>
+<text x="760.5" y="284" class="s" text-anchor="middle">swap</text>
+<rect x="800" y="237" width="76" height="56" rx="5" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="838.0" y="270" class="b" text-anchor="middle">Recovery</text>
+<rect x="135" y="305" width="22" height="14" rx="3" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="165" y="316" class="s">written by the installer</text>
+<rect x="349.4" y="305" width="22" height="14" rx="3" fill="#132a3a" stroke="#38bdf8" stroke-width="1.5"/>
+<text x="379.4" y="316" class="s">created on the first boot</text>
+<rect x="570.4" y="305" width="22" height="14" rx="3" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="600.4" y="316" class="s">changed on Windows' ESP</text>
+</svg>

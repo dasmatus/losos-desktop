@@ -11,6 +11,8 @@ login screen then takes the seat. The keyboard layout switches live as it is
 picked, and the display manager hands localed's saved layout to the login
 screen and the session as xkbcommon's defaults.
 
+![First-boot setup's Time zone, Network and Your account pages](images/first-boot-pages.png)
+
 It runs on every boot and exits at once when `userdbctl` lists a regular
 user, so a machine switched off halfway through asks again. If derisk cannot
 draw at all, homed's console wizard asks for the user instead. homed's own

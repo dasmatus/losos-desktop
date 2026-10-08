@@ -12,6 +12,8 @@ BIOS   firmware -> MBR: GRUB's boot.img -> BIOS boot partition: GRUB's core
               -> the newest UKI's kernel, initrd and command line
 ```
 
+![UEFI firmware starts systemd-boot, which starts the UKI; a legacy BIOS starts GRUB from the MBR and the BIOS boot partition, which starts the UKI's kernel, initrd and command line from files beside it. Both reach the same systemd initrd and the /usr slot usrhash= names](images/boot-loaders.svg)
+
 Both start the same initrd and the same system, find the same versions on
 the ESP, count the tries of a new one, and fall back to the older one, so the
 two `/usr` slots and rollback work the same under either.
@@ -82,6 +84,8 @@ keeps the same count in `grubenv`:
   `losos_entry` and the tries its name gives in `losos_left`.
 - Every boot of it lowers `losos_left` by one, before GRUB starts it.
 - At zero, GRUB passes over it and starts the next-newest version instead.
+
+![A new UKI arrives with +3-0 in its name, three tries; each start uses one; reaching boot-complete.target blesses it, and running out of tries starts the older version and renames the new one +0-3](images/boot-counting.svg)
 
 `losos-grub-bless.service` is the userspace half, ordered after
 `boot-complete.target` like `systemd-bless-boot.service`, and it runs only

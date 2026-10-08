@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 360" width="900" height="360" role="img">
+<title>The two halves of system-wide ad blocking</title>
+<desc>A daily timer fetches the filter lists and compiles them into a domain list and WebKit content blocker rule sets. Every app's name lookups go through systemd-resolved to the losos-adblock forwarder, which answers 0.0.0.0 or :: for a blocked domain and passes everything else to the network's own DNS servers. Danube loads the rule sets for what needs a URL or a page.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.b { font-weight: 600; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; }
+.ms { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs><marker id="h9aa8bc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#9aa8bc"/></marker><marker id="t9aa8bc" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#9aa8bc"/></marker><marker id="ha3e635" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a3e635"/></marker><marker id="ta3e635" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#a3e635"/></marker><marker id="ha78bfa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a78bfa"/></marker><marker id="ta78bfa" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#a78bfa"/></marker><marker id="hfb7185" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fb7185"/></marker><marker id="tfb7185" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#fb7185"/></marker><marker id="hfbbf24" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker><marker id="tfbbf24" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#fbbf24"/></marker></defs>
+<rect width="900" height="360" rx="12" fill="#0f1524"/>
+<text x="25" y="34" class="t">One set of lists, two places it applies</text>
+<text x="25" y="55" class="s">DNS covers every app but only whole domains; the browser's rule sets cover paths and page elements.</text>
+<rect x="25" y="95" width="190" height="92" rx="8" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="120.0" y="121.5" class="b" text-anchor="middle">Filter lists</text>
+<text x="120.0" y="137.5" class="s" text-anchor="middle">EasyList, EasyPrivacy,</text>
+<text x="120.0" y="153.5" class="s" text-anchor="middle">AdGuard DNS, Peter Lowe's</text>
+<text x="120.0" y="169.5" class="s" text-anchor="middle">+ your own</text>
+<rect x="25" y="220" width="190" height="62" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="120.0" y="247.0" class="b" text-anchor="middle">losos-adblock-update</text>
+<text x="120.0" y="264.0" class="s" text-anchor="middle">timer: at boot, then daily</text>
+<path d="M120,187 L120,218" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<rect x="290" y="110" width="180" height="50" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="380.0" y="131.5" class="m" text-anchor="middle">dns.list</text>
+<text x="380.0" y="147.5" class="s" text-anchor="middle">~195,000 domains</text>
+<rect x="290" y="240" width="180" height="50" rx="8" fill="#231f3d" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="380.0" y="261.5" class="b" text-anchor="middle">WebKit rule sets</text>
+<text x="380.0" y="277.5" class="s" text-anchor="middle">~5 MB of JSON</text>
+<path d="M215,240 L250,240 L250,135 L288,135" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<text x="256" y="190" class="s">compile</text>
+<path d="M215,260 L288,260" fill="none" stroke="#a78bfa" stroke-width="1.6" marker-end="url(#ha78bfa)"/>
+<rect x="540" y="85" width="150" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="615.0" y="109.5" class="b" text-anchor="middle">Any app</text>
+<rect x="540" y="140" width="150" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="615.0" y="164.5" class="b" text-anchor="middle">systemd-resolved</text>
+<rect x="540" y="195" width="150" height="50" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="615.0" y="216.5" class="b" text-anchor="middle">the forwarder</text>
+<text x="615.0" y="232.5" class="ms" text-anchor="middle">127.0.0.153:53</text>
+<path d="M615,125 L615,138" fill="none" stroke="#9aa8bc" stroke-width="1.6" marker-end="url(#h9aa8bc)"/>
+<path d="M615,180 L615,193" fill="none" stroke="#9aa8bc" stroke-width="1.6" marker-end="url(#h9aa8bc)"/>
+<path d="M470,135 L505,135 L505,220 L538,220" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<rect x="735" y="160" width="145" height="50" rx="8" fill="#2e1a24" stroke="#fb7185" stroke-width="1.5"/>
+<text x="807.5" y="181.5" class="b" text-anchor="middle">blocked</text>
+<text x="807.5" y="197.5" class="ms" text-anchor="middle">0.0.0.0 or ::</text>
+<rect x="735" y="225" width="145" height="50" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="807.5" y="246.5" class="b" text-anchor="middle">everything else</text>
+<text x="807.5" y="262.5" class="s" text-anchor="middle">the network's DNS</text>
+<path d="M690,212 L712,212 L712,185 L733,185" fill="none" stroke="#fb7185" stroke-width="1.6" marker-end="url(#hfb7185)"/>
+<path d="M690,228 L712,228 L712,250 L733,250" fill="none" stroke="#9aa8bc" stroke-width="1.6" marker-end="url(#h9aa8bc)"/>
+<rect x="540" y="285" width="150" height="50" rx="8" fill="#231f3d" stroke="#a78bfa" stroke-width="1.5"/>
+<text x="615.0" y="306.5" class="b" text-anchor="middle">Danube</text>
+<text x="615.0" y="322.5" class="s" text-anchor="middle">every page</text>
+<path d="M470,265 L505,265 L505,310 L538,310" fill="none" stroke="#a78bfa" stroke-width="1.6" marker-end="url(#ha78bfa)"/>
+<text x="705" y="306" class="s">blocks paths and</text>
+<text x="705" y="322" class="s">page elements</text>
+</svg>

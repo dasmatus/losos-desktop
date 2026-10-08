@@ -56,6 +56,8 @@ compile in CI anyway, so neither costs a cache hit. What links against them
 keeps nixpkgs' stdenv, since changing it for every package would mean
 nothing substituting from cache.nixos.org at all.
 
+![A GTK4 dialog on a phone-sized screen, its search field focused and derisk's on-screen keyboard open beneath it](images/gtk-phone-keyboard.png)
+
 The on-screen keyboard is derisk's. GTK3, GTK4 and Qt 6 all speak Wayland's
 `text-input-unstable-v3` without patches, so the keyboard can follow text
 focus once derisk's compositor offers that protocol.

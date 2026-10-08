@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300" role="img">
+<title>How the active-user count reaches the choice screens</title>
+<desc>A daily user timer posts a monthly-changing id and the architecture to the proxy's /ping. The proxy adds the id to HyperLogLogs in Redis, by month, architecture and, for the EU, by day. It answers with the region and whether the browser and search choice screens are on, which the timer writes to policy.conf; derisk then opens Settings, Default apps at login.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.b { font-weight: 600; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; }
+.ms { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs><marker id="ha3e635" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a3e635"/></marker><marker id="ta3e635" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#a3e635"/></marker><marker id="hfbbf24" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker><marker id="tfbbf24" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#fbbf24"/></marker></defs>
+<rect width="900" height="300" rx="12" fill="#0f1524"/>
+<text x="25" y="34" class="t">A count, and what it turns on</text>
+<text x="25" y="55" class="s">Only a monthly id and the architecture leave the machine; the address is never stored.</text>
+<rect x="25" y="95" width="180" height="80" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="115.0" y="122.5" class="b" text-anchor="middle">losos-ping</text>
+<text x="115.0" y="139.5" class="s" text-anchor="middle">a user timer, daily</text>
+<text x="115.0" y="156.5" class="s" text-anchor="middle">Settings, Privacy turns it off</text>
+<rect x="345" y="95" width="165" height="80" rx="8" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="427.5" y="122.5" class="b" text-anchor="middle">proxy /ping</text>
+<text x="427.5" y="139.5" class="s" text-anchor="middle">reads the country</text>
+<text x="427.5" y="156.5" class="s" text-anchor="middle">header, not the address</text>
+<rect x="600" y="95" width="275" height="80" rx="8" fill="#132a3a" stroke="#38bdf8" stroke-width="1.5"/>
+<text x="737.5" y="122.5" class="b" text-anchor="middle">Redis HyperLogLogs</text>
+<text x="737.5" y="139.5" class="ms" text-anchor="middle">actives:&lt;YYYY-MM&gt;[:&lt;arch&gt;|:eu]</text>
+<text x="737.5" y="156.5" class="ms" text-anchor="middle">actives:&lt;YYYY-MM-DD&gt;:eu</text>
+<path d="M205,120 L343,120" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<text x="274" y="112" class="s" text-anchor="middle">id, arch</text>
+<path d="M510,135 L598,135" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<text x="554" y="127" class="s" text-anchor="middle">PFADD</text>
+<path d="M343,155 L207,155" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<text x="274" y="172" class="s" text-anchor="middle">which screens</text>
+<rect x="25" y="215" width="180" height="56" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="115.0" y="239.0" class="m" text-anchor="middle">policy.conf</text>
+<text x="115.0" y="256.0" class="ms" text-anchor="middle">~/.local/state/derisk</text>
+<rect x="345" y="215" width="265" height="56" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="477.5" y="239.0" class="b" text-anchor="middle">derisk at login</text>
+<text x="477.5" y="256.0" class="s" text-anchor="middle">opens Settings, Default apps</text>
+<path d="M115,175 L115,213" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<path d="M205,243 L343,243" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<text x="655" y="225" class="ms">id = SHA-256(secret, month)</text>
+<text x="655" y="245" class="s">new every month, so months</text>
+<text x="655" y="261" class="s">cannot be linked</text>
+</svg>

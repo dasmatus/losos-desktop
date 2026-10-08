@@ -75,6 +75,8 @@ root, home, swap                                           first boot
 Recovery             Windows' own, left where it was
 ```
 
+![The disk before, after the installer and after the first boot: C: shrinks; the installer adds LosOS boot, verity A and usr A and puts systemd-boot on Windows' ESP; the first boot fills the rest with slot B, root, home and swap; Recovery stays where it was](images/windows-installer.svg)
+
 Windows makes its ESP 100 MB, with its own partitions right behind it, so
 it cannot grow and has no room for two UKIs of about 45 MB each. The UKIs
 therefore go on an XBOOTLDR partition, which systemd-boot reads beside the

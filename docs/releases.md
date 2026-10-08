@@ -25,6 +25,8 @@ and nothing else: GitHub rejects release assets of 2 GiB or more, which
 `/usr` and the disk image are not far from, and the installers are what a
 person downloads by hand.
 
+![CI pushes store paths, releases and compiler caches to GHCR; the proxy redirects Nix, sysupdate and CI to GHCR's storage and streams the GSI's files to the web flasher; the nightly GitHub release carries only the installers](images/binary-cache.svg)
+
 The `/usr` halves are cut out of the finished disk image at the offsets repart
 reported, not built a second time, so the bytes sysupdate installs are the
 bytes the image boots. Each name carries its partition's UUID, which sysupdate
