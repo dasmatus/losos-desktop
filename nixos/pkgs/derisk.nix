@@ -38,7 +38,7 @@ rustPlatform.buildRustPackage {
     src = lib.cleanSource ../../components/derisk;
   };
 
-  cargoHash = "sha256-hKOyRNU45EzzxyJT5bV1SwdjIg43tUaWj4CEF+Oo300=";
+  cargoHash = "sha256-IMPIybHZzqccfinVzIRdDdJstKu6qFiKUkTQ2hwm8EI=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is

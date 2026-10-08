@@ -108,14 +108,11 @@ in
   # NixOS includes pam_systemd_home in this service.
   security.pam.services.derisk = { };
 
-  # Do not implement pre-sleep locking from a system oneshot: `loginctl
-  # lock-sessions` only emits logind's Lock signal and returns immediately, so
-  # ordering this Before=sleep.target does not guarantee the lock screen is
-  # actually active before suspend.
-  #
-  # Reliable pre-sleep locking must be implemented by the session compositor
-  # itself using a logind `sleep` delay inhibitor, locking, and only then
-  # releasing the inhibitor.
+  # Locking on idle and before sleep is derisk's: it runs swayidle, which
+  # holds logind's sleep delay inhibitor until derisk says its lock screen
+  # is up (derisk's README, "Idle"). A system oneshot running `loginctl
+  # lock-sessions` Before=sleep.target could not do that, since logind's
+  # Lock signal returns before anything is drawn.
 
   # derisk's Files, Settings, Text Editor, System Monitor and Calculator are
   # built into the derisk binary, which replaces GNOME's Files. A terminal is
@@ -129,6 +126,8 @@ in
     pkgs.derisk
     pkgs.foot
     pkgs.papirus-icon-theme
+    # derisk starts it to learn when nobody uses the session (above).
+    pkgs.swayidle
   ];
 
   # What GNOME's module used to switch on, kept where something in the session
@@ -141,7 +140,10 @@ in
   # and which apps have windows. GTK's does the rest, the file chooser and
   # the access dialog derisk's own portals ask through among them. Which
   # backend gets which portal is derisk's derisk-portals.conf, taken from the
-  # package rather than restated here.
+  # package rather than restated here. Screen sharing is
+  # xdg-desktop-portal-wlr's, over the compositor's capture protocols; it
+  # asks which screen or window through `derisk choose`, a dialog in the
+  # session, named by the config below for XDG_CURRENT_DESKTOP=derisk.
   #
   # Left off, because nothing in derisk has a UI for them yet: Bluetooth,
   # power profiles and geoclue.
@@ -162,9 +164,17 @@ in
     extraPortals = [
       pkgs.derisk
       pkgs.xdg-desktop-portal-gtk
+      pkgs.xdg-desktop-portal-wlr
     ];
     configPackages = [ pkgs.derisk ];
   };
+  # The store path, not a bare name: the portal is a user service started by
+  # D-Bus, and its PATH is not the session's.
+  environment.etc."xdg/xdg-desktop-portal-wlr/derisk".text = ''
+    [screencast]
+    chooser_type=dmenu
+    chooser_cmd=${pkgs.derisk}/bin/derisk choose
+  '';
 
   # Let systemd-oomd act on a desktop session before the kernel OOM killer
   # does. oomd watches cgroup pressure and kills the worst-behaved application
