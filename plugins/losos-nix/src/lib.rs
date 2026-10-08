@@ -342,11 +342,10 @@ fn locked(reference: &str) -> bool {
 }
 
 /// The value of every `--override-input <name> <reference>` in `args`.
-fn overrides<'a>(args: &[&'a str]) -> Vec<&'a str> {
+fn overrides<'a>(args: &[&'a str]) -> impl Iterator<Item = &'a str> {
     args.windows(3)
         .filter(|w| w[0] == "--override-input")
         .map(|w| w[2])
-        .collect()
 }
 
 /// Classify the new `nix` command line.
@@ -402,7 +401,8 @@ fn decide_nix(args: &[&str]) -> Decision {
     if args.iter().any(|a| a.starts_with('<'))
         || installables
             .iter()
-            .chain(overrides(args).iter())
+            .copied()
+            .chain(overrides(args))
             .any(|r| !locked(r))
     {
         return Decision::Refuse(UNLOCKED);
