@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 360" width="920" height="360" role="img">
+<title>How a laptop hibernates and resumes</title>
+<desc>Three steps left to right. Every boot: losos-hibernate-swap formats the swap partition as LUKS2 with a new random key, seals the key to the TPM's PCRs 4, 7 and 12, and forgets it. Hibernating: systemd-sleep asks systemd-boot to boot the same UKI once, writes the image to the encrypted swap and records where it is in the HibernateLocation EFI variable. Resuming: the same UKI boots, the initrd's resume generator reads the variable, the TPM unseals the key because PCRs 4, 7 and 12 match, and the kernel restores the image. A different boot chain gets no key, and the machine boots afresh.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs><marker id="ha3e635" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a3e635"/></marker></defs>
+<rect width="920" height="360" rx="12" fill="#0f1524"/>
+<rect x="25" y="30" width="260" height="250" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="45" y="62" class="t">Every boot</text>
+<text x="45" y="98">Format swap as LUKS2</text>
+<text x="45" y="118" class="s">with a new random key</text>
+<text x="45" y="152">Seal the key to the TPM</text>
+<text x="45" y="172" class="s">PCR 4: boot loader and UKI</text>
+<text x="45" y="192" class="s">PCR 7, 12: Secure Boot, overrides</text>
+<text x="45" y="226">Forget the key, swapon</text>
+<text x="45" y="262" class="m">losos-hibernate-swap</text>
+<rect x="330" y="30" width="260" height="250" rx="8" fill="#2a2414" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="350" y="62" class="t">Hibernate</text>
+<text x="350" y="98">Boot this UKI next, once</text>
+<text x="350" y="118" class="s">bootctl set-oneshot @current</text>
+<text x="350" y="152">Write the image to swap</text>
+<text x="350" y="172" class="s">encrypted by the sealed key</text>
+<text x="350" y="206">Record where it is</text>
+<text x="350" y="226" class="s">HibernateLocation, autoSwap</text>
+<text x="350" y="262" class="m">systemd-sleep</text>
+<rect x="635" y="30" width="260" height="250" rx="8" fill="#1a2433" stroke="#60a5fa" stroke-width="1.5"/>
+<text x="655" y="62" class="t">Resume</text>
+<text x="655" y="98">Same UKI, same PCRs</text>
+<text x="655" y="118" class="s">so the TPM unseals the key</text>
+<text x="655" y="152">Open swap-luks in the initrd</text>
+<text x="655" y="172" class="s">headless: never a prompt</text>
+<text x="655" y="206">The kernel restores the image</text>
+<text x="655" y="226" class="s">same boot ID, same session</text>
+<text x="655" y="262" class="m">systemd-hibernate-resume</text>
+<line x1="287" y1="155" x2="326" y2="155" stroke="#a3e635" stroke-width="2" marker-end="url(#ha3e635)"/>
+<line x1="592" y1="155" x2="631" y2="155" stroke="#a3e635" stroke-width="2" marker-end="url(#ha3e635)"/>
+<text x="460" y="318" text-anchor="middle" class="s">Another boot chain gets no key: the initrd gives up on the image, and the next boot seals a new one.</text>
+</svg>

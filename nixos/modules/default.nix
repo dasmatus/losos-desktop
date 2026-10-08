@@ -12,6 +12,7 @@
     ./allocator.nix
     ./image.nix
     ./disk.nix
+    ./hibernate.nix
     ./update.nix
     ./installer.nix
     ./windows-installer.nix

@@ -13,6 +13,10 @@
   are skipped in the nix build (the list is in `nixos/pkgs/pm.nix`).
 - **A complete image build.** CI builds release images within its runner time
   budget; local image builds may take longer.
+- **Hibernation needs UEFI and a TPM.** A BIOS PC, or a laptop without a
+  TPM, suspends and never hibernates, and a firmware update between
+  hibernating and resuming loses the hibernated session
+  ([Hibernation](hibernation.md)).
 - **No stable channel.** CI publishes `nightly` from `main` and nothing else.
   A `stable` release needs a second release output built with
   `losos.channel = "stable"`, and the flake has only the one.

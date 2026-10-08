@@ -264,6 +264,8 @@
           boot = pkgs.testers.runNixOSTest (import ./nixos/tests/boot.nix { inherit self; });
           # The same image on a legacy BIOS, started by GRUB (bios.nix).
           boot-bios = pkgs.testers.runNixOSTest (import ./nixos/tests/boot-bios.nix { inherit self; });
+          # A laptop with a TPM hibernating and resuming (hibernate.nix).
+          hibernate = pkgs.testers.runNixOSTest (import ./nixos/tests/hibernate.nix { inherit self; });
           installer-boot = pkgs.testers.runNixOSTest (
             import ./nixos/tests/installer-boot.nix { inherit self; }
           );
