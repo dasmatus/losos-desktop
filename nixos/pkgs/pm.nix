@@ -31,12 +31,12 @@ let
     name = "pm-plugins";
     inherit src;
     sourceRoot = "${src.name}/plugins";
-    hash = "sha256-fSunFckO17JITyvPJRURq597MNeqfSrah+3bhtZbfac=";
+    hash = "sha256-8MDkHBc1awhH+q2hTctgJ2T0IWqaPnowqyoYgm53cKU=";
   };
 in
 rustPlatform.buildRustPackage {
   pname = "pm";
-  version = "0.1.0-unstable-2026-10-07";
+  version = "0.1.0-unstable-2026-10-08";
 
   inherit src;
 

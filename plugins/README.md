@@ -204,20 +204,22 @@ never a path.
 
 ```sh
 rustup target add wasm32-unknown-unknown
-just plugins                     # all seven, into dist/
+just plugins                     # all eight, into dist/
 just plugins losos-mkosi         # one
 just plugins sysupdate           # one of pm's, from $PM_ROOT/plugins
 ```
 
-Seven: this tree's four, and three of pm's own — `sysext`, `sysupdate` and
-`systemd` — built from the pm checkout at `PM_ROOT` (by default `../pm`, which
-should be the commit `nixos/pkgs/pm.nix` pins) rather than copied here to
-drift. They read the sysupdate transfers and sysext definitions `nixos/`
-ships and name the systemd tools a recipe calls. pm's `zig` is left out: nothing here
+Eight: this tree's four, and four of pm's own — `libvirt`, `sysext`,
+`sysupdate` and `systemd` — built from the pm checkout at `PM_ROOT` (by default
+`../pm`, which should be the commit `nixos/pkgs/pm.nix` pins) rather than copied
+here to drift. Three read the sysupdate transfers and sysext definitions
+`nixos/` ships and name the systemd tools a recipe calls; `libvirt` boots a
+package's own kernel through the libvirt the image runs (`docs/pm.md`, "Virtual
+machines"). pm's `zig` is left out: nothing here
 builds with it. pm consults plugins in file-name order and takes the first
 verdict, so where `losos-image` and pm's `sysext` both name a tool
 (`systemd-repart`, `mkfs.erofs`), `losos-image` answers. The NixOS image carries all
-seven, unsigned, in `/run/current-system/sw/share/pm/plugins`
+eight, unsigned, in `/run/current-system/sw/share/pm/plugins`
 (`nixos/pkgs/pm-plugins.nix`).
 
 pm loads plugins only from `~/.config/pm/plugins`, and only ones signed by a

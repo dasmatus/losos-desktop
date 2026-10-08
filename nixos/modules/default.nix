@@ -9,6 +9,7 @@
     ./boot.nix
     ./bios.nix
     ./hardware.nix
+    ./libvirt.nix
     ./allocator.nix
     ./image.nix
     ./disk.nix
