@@ -59,15 +59,15 @@
   login `derisk session --execute`; each takes the seat from logind and
   scans out through DRM/KMS on the first connected display, at its preferred
   mode (`nixos/modules/desktop.nix`). A second display stays dark and
-  hotplug is not handled. Its lock screen (PAM service `derisk`) locks when asked and on logind's Lock,
-  but nothing locks before sleep or on idle yet: that needs derisk to hold a
-  logind `sleep` delay inhibitor until its lock screen is up. derisk also has no layer-shell or
-  XWayland yet, and no UI for
+  hotplug is not handled. derisk has no XWayland yet, and no UI for
   Bluetooth or power profiles, so those are left off. The gnome-control-center patches above
   have no Settings app to go into any more.
 - **derisk's portal has gaps.** derisk's portal backend has no
   area or color picker and does not set the lock screen's picture; it asks
-  for consent through GTK's access dialog, not one of its own.
+  for consent through GTK's access dialog, not one of its own. Screen
+  sharing (xdg-desktop-portal-wlr) copies frames into shared memory, not
+  dma-bufs, and a shared window is cut out of the screen, so anything
+  covering it is shared too.
 - **The Halium GSI has not run on a device.** It evaluates for aarch64, and
   an x86_64 build of the same boot path booted under QEMU (see the pull
   request that made it the one target). No arm64 build has been flashed, no
