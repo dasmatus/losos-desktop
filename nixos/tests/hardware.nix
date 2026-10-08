@@ -5,8 +5,9 @@
 # A VM has no NVIDIA card, so the last subtest feeds losos-hardware a report
 # that has one, an RTX 4090, and checks what follows: nouveau is kept off
 # the card and NVIDIA's modules no longer are, NVIDIA's module is asked for
-# and, finding no GPU, refuses, and the fallback brings nouveau back. That is the path a real card takes when
-# the open module rejects it; the path where it accepts the card needs one.
+# and, finding no GPU, refuses, and the fallback brings nouveau back. That is
+# the path a real card takes when the open module rejects it; the path where
+# it accepts the card needs one.
 #
 # Only the two modules under test, not the whole image, so it boots the test
 # driver's kernel quickly and runs without KVM too.
@@ -97,8 +98,11 @@
         machine.succeed("modprobe --showconfig | grep -qx 'blacklist nouveau'")
         # Coldplug would now pick NVIDIA's module for it, and not nouveau.
         assert "nvidia" in drivers_for(rtx) and "nouveau" not in drivers_for(rtx), drivers_for(rtx)
-        # nvidia.ko finds no GPU here and refuses to load.
-        machine.fail("systemctl restart systemd-modules-load.service")
+        # systemd-modules-load asks for nvidia, which finds no GPU here and
+        # refuses to load with ENODEV; modules-load counts that as a module
+        # with nothing to drive, not a failure, so only the fallback notices.
+        machine.succeed("systemctl restart systemd-modules-load.service")
+        machine.succeed("journalctl -k -b | grep -q 'NVRM: No NVIDIA GPU found'")
         machine.fail("test -d /sys/module/nvidia_drm")
         machine.succeed("losos-hardware fallback")
         machine.succeed("test -d /sys/module/nouveau")
