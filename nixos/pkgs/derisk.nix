@@ -38,7 +38,7 @@ rustPlatform.buildRustPackage {
     src = lib.cleanSource ../../components/derisk;
   };
 
-  cargoHash = "sha256-/gAvUxW/c2V+lyzYKe/cjUFED2Kic97Z5pYBJlzhq5I=";
+  cargoHash = "sha256-VOe8f2nUQA+fqNz68CItaokxSW9t+eXVyh8zci6oFCU=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is
@@ -52,8 +52,8 @@ rustPlatform.buildRustPackage {
   ];
   buildFeatures = [ "derisk/host" ] ++ lib.optional withHardenedMalloc "derisk/hardened-malloc";
 
-  # build.rs compiles the command palette's plugins (plugins/ in the same
-  # workspace and Cargo.lock, so the vendored crates cover them) for
+  # build.rs compiles the palette's and the overview's plugins (plugins/ in
+  # the same workspace and Cargo.lock, so the vendored crates cover them) for
   # wasm32-unknown-unknown. nixpkgs' rustc carries that target's std but links
   # it with `lld` from PATH rather than a bundled rust-lld.
   nativeBuildInputs = [
