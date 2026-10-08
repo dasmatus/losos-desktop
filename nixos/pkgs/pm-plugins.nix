@@ -1,5 +1,5 @@
-# pm's plugins as WebAssembly components: the same seven `just plugins` builds
-# for the pm tree -- this repository's four and the three from pm's own tree
+# pm's plugins as WebAssembly components: the same eight `just plugins` builds
+# for the pm tree -- this repository's four and the four from pm's own tree
 # that this OS needs (plugins/Justfile says which and why).
 #
 # Installed under share/pm/plugins and deliberately nowhere pm loads from. pm
@@ -46,6 +46,7 @@ let
     "losos-systemd"
   ];
   fromPm = [
+    "libvirt"
     "sysext"
     "sysupdate"
     "systemd"

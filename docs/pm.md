@@ -2,9 +2,9 @@
 
 ## pm's plugins
 
-`nixos/pkgs/pm-plugins.nix` builds the same seven components `just plugins`
-builds for the pm tree, this repository's four and pm's own `sysext`,
-`sysupdate` and `systemd`, and the image carries them in
+`nixos/pkgs/pm-plugins.nix` builds the same eight components `just plugins`
+builds for the pm tree, this repository's four and pm's own `libvirt`,
+`sysext`, `sysupdate` and `systemd`, and the image carries them in
 `/run/current-system/sw/share/pm/plugins`. pm loads plugins only from a user's
 own `~/.config/pm/plugins`, and only signed by a key that user trusts, so the
 image offers them and trusts them for no one:
@@ -24,7 +24,7 @@ itself has no Nix and its users are systemd-homed records), the flake's
 {
   imports = [ losos-desktop.homeModules.pm ];
   programs.pm.enable = true;
-  # All seven by default; or name the ones you want:
+  # All eight by default; or name the ones you want:
   # programs.pm.plugins = [ "losos-nix" "systemd" ];
 }
 ```
@@ -112,3 +112,44 @@ evaluate `.#pm-payloads.<name>`, and the builder, run against nixpkgs' own
 cached static packages, produced a static `hello` and refused `gnugrep`. No pm
 build has run the steps above, and CI does not build any payload, so the first
 one of each package compiles its whole static closure.
+
+## Virtual machines
+
+The image runs libvirt (`nixos/modules/libvirt.nix`): QEMU for the machine's
+own architecture, with KVM where the CPU has it, managed by libvirtd, which
+starts on its socket the first time something connects and exits two minutes
+after the last machine stops. virt-manager and `virsh` use it as on any
+distribution. Administrators, the `wheel` members first-boot setup makes, may
+use `qemu:///system` without being asked; everyone else gets
+`qemu:///session`, where machines run as themselves.
+
+pm boots a package that ships its own kernel (`kernel(...)` in its recipe, see
+pm's README) in a virtual machine. On its own it starts QEMU itself, as you.
+With pm's `libvirt` plugin installed and signed (as above; it is one of the
+eight), it asks libvirt instead:
+
+```
+pm run hello.cpkg          # through libvirt, when the plugin is installed
+pm run --qemu hello.cpkg   # QEMU directly, as you, asking no plugin
+```
+
+The plugin is a WebAssembly component like the rest, and it can reach nothing
+itself: it writes a transient domain definition and names one program,
+`virsh`, which `pm plugins` lists under `launchers:`, and pm runs
+`virsh create --console --autodestroy` with it. virsh connects where it always
+does: `LIBVIRT_DEFAULT_URI` when set, `qemu:///system` for an administrator,
+`qemu:///session` for everyone else. Under `qemu:///system` QEMU runs as
+libvirt's own user rather than as you, in its own cgroup and mount namespace
+with QEMU's seccomp sandbox on, and libvirt hands it the kernel, the
+initramfs and the two serial sockets for the life of the machine.
+`virsh list` and virt-manager show the machine as `pm-vm-<random>`, titled
+`pm run: <program>`, while it runs. It is destroyed when virsh's connection
+closes, and pm stops virsh when pm dies, so a killed pm takes its machine with
+it, and Ctrl-C stops it and gives the terminal back. The guest is what it is
+under QEMU: the package and the libraries its programs link, no network device
+and no disk. Only x86-64 boots a package's kernel.
+
+The real boot through the plugin (a distribution kernel running a probe
+through `qemu:///system`, QEMU as libvirt's own user, under TCG) passed on an
+Ubuntu host with libvirt 10.0, as did the same boot with pm's own QEMU. Neither
+the module nor the plugin has run on this image yet.
