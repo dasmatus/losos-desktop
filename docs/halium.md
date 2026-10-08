@@ -30,6 +30,8 @@ it:
 
 ## How a device boots it
 
+![The phone's partitions beside its start-up: LosOS writes init_boot, vbmeta and userdata and keeps boot, vendor_boot and super; the bootloader, the initrd, losos-gsi-super, losos-gsi-modules, Halium's system image, Android's init in LXC, and then derisk](images/halium.svg)
+
 1. The bootloader loads the device's kernel and unpacks the device's own
    ramdisk (`vendor_boot`'s, or `boot`'s on a device without `init_boot`),
    then this one, NixOS's systemd initrd, over it.

@@ -28,6 +28,8 @@ fetches. It serves these from this project's GHCR namespace:
   GHCR's storage ([Web flasher](web-flasher.md)). Every read the proxy answers
   says `Access-Control-Allow-Origin: *`.
 
+![CI pushes store paths, releases and compiler caches to GHCR; the proxy redirects Nix, sysupdate and CI to GHCR's storage and streams the GSI's files to the web flasher; the nightly GitHub release carries only the installers](images/binary-cache.svg)
+
 To use it for a build:
 
 ```

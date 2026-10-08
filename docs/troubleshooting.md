@@ -7,6 +7,8 @@ only partly wrong, has the accent color instead. "Copy details" copies the
 whole report as plain text, for a bug report; "Learn more" opens the section
 of this page the error names; "OK" or Escape closes it.
 
+![An error dialog: "Could not apply the theme" in red, the cause "no theme named pastel", what to do about it, the code mcsapi_theme::not_found, and the Copy details, Learn more and OK buttons](images/error-dialog.png)
+
 Those sections are read from the copy of this documentation the image
 carries, `/run/current-system/sw/share/doc/losos` (`nixos/modules/docs.nix`),
 so they open without a network, and from the published site when the copy
@@ -26,6 +28,8 @@ outside your home directory, usually belong to root. Files opens a file by
 handing it to `xdg-open`, so a file it could not open at all means
 `xdg-open` itself did not start; a file that opens in the wrong application,
 or in none, is `xdg-open`'s choice.
+
+![Files showing "Could not open folder" with its cause, "Not a directory (os error 20)", and Learn more, Copy details and Dismiss](images/error-files.png)
 
 ## The editor could not open or save a file
 
@@ -52,6 +56,8 @@ out and that setting keeps its default; the warning names the first one. The
 next Save writes the file again from what Settings shows, without the
 skipped lines.
 
+![Settings warning in its accent color: "Skipped 1 invalid line(s): line 1: ignored desktop.gaps = lots", and that those settings keep their defaults until the lines are fixed](images/error-settings.png)
+
 ## The default browser did not change
 
 The browser you pick under Default apps is written to
@@ -71,6 +77,8 @@ installer](installer.md) describes each step. Nothing is written before
 "Erase and install"; after it, a failed install leaves the disk without a
 working system, and the install can be run again from the start. tty2 has a
 root shell for looking around first.
+
+![The installer's "The install failed" page: partitioning and mounting done, "Downloading and writing the system" failed with systemd-sysupdate's exit status, and Show details open on a log ending in "SSL peer certificate or SSH remote key was not OK"](images/installer-failed.png)
 
 ## Setup could not finish
 

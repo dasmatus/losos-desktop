@@ -6,6 +6,8 @@ gatekeeper has to show users in the EEA a choice screen for the browser and
 the search engine (Art. 6(3)). derisk has both screens and keeps them
 hidden. What turns them on is a count of active users, so the OS has one.
 
+![losos-ping posts a monthly id and the architecture to the proxy's /ping, which adds the id to HyperLogLogs in Redis and answers which choice screens are on; the answer goes to policy.conf, and derisk opens Settings, Default apps at login](images/choice-screens.svg)
+
 **What is sent.** `nixos/modules/ping.nix` gives every signed-in user a
 systemd user timer, `losos-ping`, that runs a few minutes into each session
 and then daily. It POSTs two lines to `$LOSOS_PROXY_URL/ping`: `id`, the
@@ -36,6 +38,8 @@ and nothing chosen yet, derisk opens Settings on its Default apps page at
 login, and the page stays in Settings after. Both screens list their
 options in a new random order each time, with none preselected; the browser
 screen offers the installed browsers and installs others from Flathub.
+
+![Settings' Default apps page opened at login: a Browser list and a Search engine list, each in random order with nothing chosen](images/choice-screens-default-apps.png)
 
 To set it up, add a Redis database to the Vercel project from the
 Marketplace (Upstash), which sets `KV_REST_API_URL` and `KV_REST_API_TOKEN`

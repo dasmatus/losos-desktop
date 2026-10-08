@@ -11,6 +11,8 @@ partition in [the disk layout](layout.md)): a person is a
 systemd-homed record whose home area is a LUKS volume, so only something that
 yields the volume's key can log them in.
 
+![derisk's login screen asking for a password, and the same screen after a wrong one, relaying PAM's "Sorry, try again"](images/sign-in-login-screen.png)
+
 | Method | Login screen | Lock screen | polkit, run0 |
 | --- | --- | --- | --- |
 | Password | yes | yes | yes |

@@ -51,6 +51,8 @@ WebKitGTK patches. It builds only the WPEPlatform API (headless and Wayland
 platforms) and nothing upstream substitutes it, so CI compiles it once per
 architecture and keeps it in the project's cache.
 
+![Danube's main thread runs WebKit under GLib's loop and its window thread runs winit and egui; two bounded channels carry commands one way and events and frames the other; each web process has its own sandbox; tabs and menus go to derisk over the agent socket and picked commands come back](images/danube.svg)
+
 ## The window
 
 The window is the page, and nothing else: no toolbar, no address bar, no
@@ -72,6 +74,8 @@ tab. Anything else the palette searches for with the desktop's search
 engine, chosen by the choice screen and Settings, Default apps
 ([choice screens](choice-screens.md)). Danube has no search setting of
 its own.
+
+![derisk's command palette with "losos desktop" typed: matching apps first, then "Search the web for losos desktop" with the chosen engine](images/choice-screens-palette-search.png)
 
 The palette's Tabs and Extensions headings are derisk's bundled browser
 palette plugin (a WebAssembly plugin of the palette, like its other

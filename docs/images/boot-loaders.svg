@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 310" width="900" height="310" role="img">
+<title>How a PC starts LosOS, under UEFI and under a legacy BIOS</title>
+<desc>UEFI firmware starts systemd-boot from the ESP, which starts the newest UKI. A legacy BIOS starts GRUB from the MBR and the BIOS boot partition, which starts the same UKI's kernel, initrd and command line from files beside it. Both reach the same systemd initrd, which mounts the /usr slot named by usrhash= with dm-verity.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.b { font-weight: 600; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; }
+.ms { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs><marker id="h38bdf8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/></marker><marker id="t38bdf8" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#38bdf8"/></marker><marker id="ha3e635" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a3e635"/></marker><marker id="ta3e635" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#a3e635"/></marker><marker id="hfbbf24" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker><marker id="tfbbf24" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#fbbf24"/></marker></defs>
+<rect width="900" height="310" rx="12" fill="#0f1524"/>
+<text x="25" y="34" class="t">Two loaders, one system</text>
+<text x="25" y="55" class="s">Both find the same versions on the ESP, count the tries of a new one, and fall back to the older one.</text>
+<text x="25" y="92" class="b" style="fill:#a3e635">UEFI</text>
+<text x="25" y="190" class="b" style="fill:#fbbf24">Legacy BIOS (x86_64)</text>
+<rect x="25" y="100" width="120" height="58" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="85.0" y="125.0" class="b" text-anchor="middle">Firmware</text>
+<text x="85.0" y="142.0" class="s" text-anchor="middle">UEFI</text>
+<rect x="175" y="100" width="160" height="58" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="255.0" y="125.0" class="b" text-anchor="middle">systemd-boot</text>
+<text x="255.0" y="142.0" class="s" text-anchor="middle">on the ESP</text>
+<rect x="365" y="100" width="200" height="58" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="465.0" y="125.0" class="b" text-anchor="middle">The UKI</text>
+<text x="465.0" y="142.0" class="ms" text-anchor="middle">losos-desktop_&lt;v&gt;.efi</text>
+<rect x="25" y="198" width="120" height="58" rx="8" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="85.0" y="223.0" class="b" text-anchor="middle">Firmware</text>
+<text x="85.0" y="240.0" class="s" text-anchor="middle">BIOS or CSM</text>
+<rect x="175" y="198" width="160" height="58" rx="8" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="255.0" y="223.0" class="b" text-anchor="middle">GRUB</text>
+<text x="255.0" y="240.0" class="s" text-anchor="middle">MBR + BIOS boot part.</text>
+<rect x="365" y="198" width="200" height="58" rx="8" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="465.0" y="223.0" class="b" text-anchor="middle">Kernel, initrd, cmdline</text>
+<text x="465.0" y="240.0" class="ms" text-anchor="middle">&lt;v&gt;.linux  .initrd  .grub</text>
+<path d="M145,129.0 L173,129.0" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<path d="M335,129.0 L363,129.0" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<path d="M145,227.0 L173,227.0" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<path d="M335,227.0 L363,227.0" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<rect x="615" y="146.0" width="120" height="64" rx="8" fill="#132a3a" stroke="#38bdf8" stroke-width="1.5"/>
+<text x="675.0" y="174.0" class="b" text-anchor="middle">systemd</text>
+<text x="675.0" y="191.0" class="b" text-anchor="middle">initrd</text>
+<path d="M565,129.0 L590,129.0 L590,168.0 L613,168.0" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<path d="M565,227.0 L590,227.0 L590,188.0 L613,188.0" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<rect x="765" y="146.0" width="110" height="64" rx="8" fill="#132a3a" stroke="#38bdf8" stroke-width="1.5"/>
+<text x="820.0" y="167.5" class="b" text-anchor="middle">/usr slot</text>
+<text x="820.0" y="182.5" class="s" text-anchor="middle">verity, by</text>
+<text x="820.0" y="197.5" class="ms" text-anchor="middle">usrhash=</text>
+<path d="M735,178.0 L763,178.0" fill="none" stroke="#38bdf8" stroke-width="1.6" marker-end="url(#h38bdf8)"/>
+<text x="365" y="288" class="s">GRUB cannot run a UKI, so each release carries the UKI's parts as files of their own.</text>
+</svg>

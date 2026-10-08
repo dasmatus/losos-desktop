@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420" role="img">
+<title>From CI to every machine: GHCR, the proxy and what reads through it</title>
+<desc>CI pushes store paths, releases and compiler caches to GHCR. The proxy, a Vercel edge function, answers Nix, systemd-sysupdate, the web flasher and CI itself: it redirects to GHCR storage for NARs, updates and build caches, and streams the GSI files to the flasher, which cannot read GHCR across origins. The publish job also puts the installers on the nightly GitHub release.</desc>
+<style>
+text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
+.b { font-weight: 600; }
+.t { font-weight: 600; font-size: 17px; }
+.s { fill: #9aa8bc; font-size: 13px; }
+.m { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 13px; }
+.ms { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace; font-size: 12.5px; fill: #9aa8bc; }
+</style>
+<defs><marker id="h38bdf8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#38bdf8"/></marker><marker id="t38bdf8" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#38bdf8"/></marker><marker id="ha3e635" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#a3e635"/></marker><marker id="ta3e635" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#a3e635"/></marker><marker id="hfbbf24" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#fbbf24"/></marker><marker id="tfbbf24" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10,0 L0,5 L10,10 z" fill="#fbbf24"/></marker></defs>
+<rect width="900" height="420" rx="12" fill="#0f1524"/>
+<text x="25" y="34" class="t">Where releases and caches live</text>
+<text x="25" y="55" class="s">GHCR stores everything; the proxy turns it into what Nix, sysupdate and a browser can read.</text>
+<rect x="25" y="90" width="160" height="250" rx="8" fill="#1d2a1c" stroke="#a3e635" stroke-width="1.5"/>
+<text x="105" y="114" class="b" text-anchor="middle">CI (ci.yml)</text>
+<rect x="38" y="128" width="134" height="42" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="105.0" y="146.0" class="m" text-anchor="middle">prebuild</text>
+<text x="105.0" y="161.0" class="s" text-anchor="middle">GTK, Qt, WebKit</text>
+<rect x="38" y="179" width="134" height="42" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="105.0" y="197.0" class="m" text-anchor="middle">flake</text>
+<text x="105.0" y="212.0" class="s" text-anchor="middle">.#release</text>
+<rect x="38" y="230" width="134" height="42" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="105.0" y="248.0" class="m" text-anchor="middle">push</text>
+<text x="105.0" y="263.0" class="s" text-anchor="middle">oras, signed paths</text>
+<rect x="38" y="281" width="134" height="42" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="105.0" y="299.0" class="m" text-anchor="middle">publish</text>
+<text x="105.0" y="314.0" class="s" text-anchor="middle">the nightly tag</text>
+<rect x="230" y="90" width="195" height="250" rx="8" fill="#132a3a" stroke="#38bdf8" stroke-width="1.5"/>
+<text x="327.5" y="114" class="b" text-anchor="middle">GHCR</text>
+<rect x="243" y="135" width="169" height="50" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="327.5" y="156.5" class="ms" text-anchor="middle">nix-cache:&lt;hash&gt;</text>
+<text x="327.5" y="172.5" class="s" text-anchor="middle">narinfo + NAR</text>
+<rect x="243" y="201" width="169" height="50" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="327.5" y="222.5" class="ms" text-anchor="middle">images:nightly-&lt;arch&gt;</text>
+<text x="327.5" y="238.5" class="s" text-anchor="middle">a release, per arch</text>
+<rect x="243" y="267" width="169" height="50" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="327.5" y="288.5" class="ms" text-anchor="middle">losos-ccache:&lt;arch&gt;</text>
+<text x="327.5" y="304.5" class="s" text-anchor="middle">ccache, 4 GB parts</text>
+<path d="M185,215 L228,215" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<text x="206" y="207" class="s" text-anchor="middle">push</text>
+<rect x="470" y="90" width="175" height="250" rx="8" fill="#2d2614" stroke="#fbbf24" stroke-width="1.5"/>
+<text x="557.5" y="114" class="b" text-anchor="middle">proxy/</text>
+<text x="557.5" y="131" class="s" text-anchor="middle">Vercel, Rust in Wasm</text>
+<rect x="482" y="145" width="151" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="557.5" y="162.0" class="ms" text-anchor="middle">/&lt;hash&gt;.narinfo</text>
+<text x="557.5" y="177.0" class="s" text-anchor="middle">redirects NARs</text>
+<rect x="482" y="193" width="151" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="557.5" y="210.0" class="ms" text-anchor="middle">/updates/…</text>
+<text x="557.5" y="225.0" class="s" text-anchor="middle">redirects</text>
+<rect x="482" y="241" width="151" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="557.5" y="258.0" class="ms" text-anchor="middle">/flasher/…</text>
+<text x="557.5" y="273.0" class="s" text-anchor="middle">streams, CORS</text>
+<rect x="482" y="289" width="151" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="557.5" y="306.0" class="ms" text-anchor="middle">/build-cache/…</text>
+<text x="557.5" y="321.0" class="s" text-anchor="middle">redirects</text>
+<path d="M425,215 L468,215" fill="none" stroke="#38bdf8" stroke-width="1.6" marker-end="url(#h38bdf8)"/>
+<text x="446.5" y="207" class="s" text-anchor="middle">reads</text>
+<rect x="695" y="145" width="185" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="787.5" y="162.0" class="b" text-anchor="middle">Nix</text>
+<text x="787.5" y="177.0" class="s" text-anchor="middle">substituter</text>
+<path d="M633,165 L693,165" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<rect x="695" y="193" width="185" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="787.5" y="210.0" class="b" text-anchor="middle">systemd-sysupdate</text>
+<text x="787.5" y="225.0" class="s" text-anchor="middle">every installed PC</text>
+<path d="M633,213 L693,213" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<rect x="695" y="241" width="185" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="787.5" y="258.0" class="b" text-anchor="middle">The web flasher</text>
+<text x="787.5" y="273.0" class="s" text-anchor="middle">a browser, WebUSB</text>
+<path d="M633,261 L693,261" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<rect x="695" y="289" width="185" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5"/>
+<text x="787.5" y="306.0" class="b" text-anchor="middle">CI prebuild</text>
+<text x="787.5" y="321.0" class="s" text-anchor="middle">tools/build-cache-fetch</text>
+<path d="M633,309 L693,309" fill="none" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#hfbbf24)"/>
+<rect x="25" y="362" width="400" height="40" rx="8" fill="#172033" stroke="#3b4a63" stroke-width="1.5" stroke-dasharray="5 4"/>
+<text x="225.0" y="386.5" class="s" text-anchor="middle">The nightly GitHub release: the installers only</text>
+<path d="M105,340 L105,360" fill="none" stroke="#a3e635" stroke-width="1.6" marker-end="url(#ha3e635)"/>
+<text x="470" y="380" class="s">A redirect sends the client to GHCR's storage,</text>
+<text x="470" y="396" class="s">so those bytes never pass through the proxy.</text>
+</svg>

@@ -4,6 +4,8 @@ Every app draws its icons from the icon theme derisk's theme names
 (Papirus-Dark or Papirus by default; Settings, Appearance), not from one it
 ships or names in code. Two halves make that hold.
 
+![derisk's command palette listing apps with Papirus-Dark icons, from Files and Settings to the terminal](images/icon-theme-palette.png)
+
 derisk hands the name to every toolkit, through the channel each already
 reads (`src/theme.rs` in derisk):
 
