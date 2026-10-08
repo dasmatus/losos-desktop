@@ -144,7 +144,8 @@ in
   # The swap partition losos-swap describes is encrypted with a fresh random
   # key every boot rather than exposing raw swap blocks on disk. The label is
   # fixed by losos-swap. nofail, so a boot that finds no swap partition does
-  # not wait for one.
+  # not wait for one. A laptop that hibernates seals its key to the TPM
+  # instead, and hibernate.nix skips this line there.
   environment.etc.crypttab.text = ''
     swap /dev/disk/by-partlabel/losos-swap /dev/urandom swap,nofail
   '';
