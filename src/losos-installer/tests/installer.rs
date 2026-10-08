@@ -295,6 +295,7 @@ fn an_install_is_refused_for_a_disk_not_offered() {
         work: PathBuf::from("/nonexistent"),
         source: None,
         local_source: None,
+        bios_boot: None,
     };
     let input = "{\"method\":\"install\",\"disk\":\"/dev/not-a-disk\"}\nbogus\n";
     let (tx, rx) = std::sync::mpsc::channel();
@@ -341,6 +342,7 @@ fn hello_names_a_release_disk_only_when_it_holds_a_release() {
         work: PathBuf::from("/nonexistent"),
         source: Some("https://proxy.example/".into()),
         local_source: Some(dir.0.join("release")),
+        bios_boot: None,
     };
     assert!(serve::hello(&config).get("release").is_none());
     dir.write("release/SHA256SUMS", "");

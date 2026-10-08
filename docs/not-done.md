@@ -101,7 +101,12 @@
   joins networks afterwards: derisk's Settings has no Wi-Fi page yet.
 - **systemd-boot updates.** `systemd-boot-update.service` copies a new
   bootloader from `/usr/lib/systemd/boot`, which NixOS does not have. The
-  bootloader on the ESP is the one the image shipped.
+  bootloader on the ESP is the one the image shipped. The same goes for GRUB
+  on a BIOS PC: an update never rewrites the MBR or the BIOS boot partition.
+- **Two LosOS disks in one BIOS PC.** A BIOS boot finds root by its
+  partition label, `root-x86-64`, as no EFI variable names the disk
+  ([Boot loaders](boot-loaders.md)). With two LosOS disks in one machine,
+  the kernel may mount the other disk's root.
 - **sysext.** Extensions merge into `/usr`, which here holds little but the
   Nix store, so an extension can add a program and cannot replace one.
 - **Android apps.** `nixos/modules/atl.nix` has two options, both off by

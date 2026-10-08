@@ -16,7 +16,7 @@ use miette::miette;
 use tracing_subscriber::EnvFilter;
 
 const USAGE: &str = "usage: losos-installer serve --repart-definitions DIR --sysupdate-definitions DIR \
-[--esp DIR] [--medium DIR] [--work DIR] [--source URL] [--local-source DIR] [--name NAME]";
+[--esp DIR] [--medium DIR] [--work DIR] [--source URL] [--local-source DIR] [--bios-boot PROGRAM] [--name NAME]";
 
 fn parse(mut args: impl Iterator<Item = String>) -> miette::Result<Config> {
     if args.next().as_deref() != Some("serve") {
@@ -33,6 +33,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> miette::Result<Config> {
         work: PathBuf::from("/run/losos-installer"),
         source: None,
         local_source: None,
+        bios_boot: None,
     };
     while let Some(flag) = args.next() {
         let value = args
@@ -46,6 +47,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> miette::Result<Config> {
             "--work" => config.work = PathBuf::from(value),
             "--source" => config.source = Some(value),
             "--local-source" => config.local_source = Some(PathBuf::from(value)),
+            "--bios-boot" => config.bios_boot = Some(PathBuf::from(value)),
             "--name" => config.name = value,
             _ => return Err(miette!(help = USAGE, "unknown argument {flag}")),
         }

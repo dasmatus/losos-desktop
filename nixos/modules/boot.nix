@@ -1,6 +1,7 @@
 # How it boots. Every stage is systemd, as in docs/boot.md:
 #
 #   firmware -> systemd-boot -> UKI (systemd-stub) -> kernel
+#     (a legacy BIOS: MBR -> GRUB -> the UKI's kernel and initrd, bios.nix)
 #     -> systemd in the initrd: repart, veritysetup, gpt-auto root
 #     -> switch-root -> systemd: sysusers, tmpfiles, homed, networkd ...
 #
@@ -21,6 +22,9 @@
     # There is no bootloader to install. systemd-boot is copied into the ESP
     # when the image is assembled (image.nix), and nothing on the running
     # system ever rewrites it -- the same as an image-based system anywhere.
+    # The same goes for GRUB on a BIOS PC (bios.nix), so NixOS's own GRUB
+    # module, which installs GRUB and rewrites its menu on every rebuild,
+    # stays off.
     loader.grub.enable = false;
 
     initrd.systemd = {
