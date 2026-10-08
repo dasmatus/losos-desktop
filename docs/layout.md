@@ -8,6 +8,7 @@ the Nix store, on its own `/usr` partition, protected by dm-verity, and the
 root partition holds only state: `/etc`'s writable layer, `/var`, the journal.
 
 ```
+BIOS boot    GRUB's core, for a legacy BIOS (x86_64)  image
 ESP          systemd-boot, the UKIs                  image
 usr-verity A dm-verity hash tree for slot A          image
 usr A        the Nix store, erofs                    image, grown on first boot
@@ -17,6 +18,9 @@ root         state only                              first boot, FactoryReset=ye
 home         homed's LUKS images                     first boot, FactoryReset=yes
 swap         RAM-sized, random key each boot         first boot (losos-swap)
 ```
+
+On x86_64, GRUB's boot code is also in the MBR, so a PC without UEFI starts
+the same disk ([Boot loaders](boot-loaders.md)).
 
 That buys two things the pm tree wrote down as limits:
 

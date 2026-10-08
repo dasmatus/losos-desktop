@@ -7,6 +7,7 @@
   imports = [
     ./base.nix
     ./boot.nix
+    ./bios.nix
     ./hardware.nix
     ./allocator.nix
     ./image.nix

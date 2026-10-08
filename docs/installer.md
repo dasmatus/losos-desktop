@@ -8,9 +8,10 @@ and `nixos/modules/installer.nix` evaluates it from the OS's configuration.
 A machine that keeps Windows uses the [Windows installer](windows-installer.md)
 instead, which installs the same release beside it.
 
-It boots by UEFI only: the ISO's appended FAT partition holds the installer's
-UKI as `EFI/BOOT/BOOT<ARCH>.EFI`, with no bootloader in front of it, and the
-initrd mounts the ISO by its volume label and the Nix store from a squashfs
+Under UEFI, the ISO's appended FAT partition holds the installer's UKI as
+`EFI/BOOT/BOOT<ARCH>.EFI`, with no bootloader in front of it. On x86_64 a
+legacy BIOS starts it too, through GRUB, from a disc or a stick
+([Boot loaders](boot-loaders.md)). Either way the initrd mounts the ISO by its volume label and the Nix store from a squashfs
 on it. It carries `wpa_supplicant` and no NetworkManager. networkd runs DHCP
 on every physical wired port, built in or USB, as soon as a cable is in, at
 boot or later, and prefers it over Wi-Fi when both are up; a machine with a
@@ -33,7 +34,8 @@ not list, and the installer names the disk, its size and the source once more
 behind an "Erase and install" button before anything is touched. Then:
 
 1. `systemd-repart --empty=force` lays out the ESP, with systemd-boot and
-   `loader.conf` copied in, and both `/usr` slots at full size, labelled
+   `loader.conf` copied in, on x86_64 a BIOS boot partition for GRUB, and
+   both `/usr` slots at full size, labelled
    `_empty` (sysupdate refuses a disk with only one). These are `disk.nix`'s
    own definitions, so the disk is laid out the way the
    installed system expects to find it.
@@ -41,7 +43,9 @@ behind an "Erase and install" button before anything is touched. Then:
    from the same URL and through the same transfers as `update.nix`, aimed at
    the chosen disk instead of `auto` and at the new ESP, mounted under
    `/run/losos-installer`. With `losos.update.pubring` set, the installer
-   checks `SHA256SUMS.gpg` against it as an update does.
+   checks `SHA256SUMS.gpg` against it as an update does. On x86_64,
+   `losos-grub-bios-install` then writes GRUB into the MBR and the BIOS boot
+   partition, so the disk starts on a legacy BIOS as well.
 3. The machine reboots into the installed system, whose first boot creates
    root, `/home` and swap from `disk.nix`, the path an image written
    with `dd` takes.

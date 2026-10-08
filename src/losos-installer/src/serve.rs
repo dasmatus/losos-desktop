@@ -43,6 +43,8 @@ pub struct Config {
     /// Where a release disk is mounted when one is attached
     /// ([`install::has_release`]).
     pub local_source: Option<PathBuf>,
+    /// [`Plan::bios_boot`].
+    pub bios_boot: Option<PathBuf>,
 }
 
 /// The release disk's directory, when one holding a release is mounted.
@@ -143,7 +145,10 @@ fn failed(message: impl Into<String>) -> Value {
 /// The disks that can be installed onto, the medium's own left out, and the
 /// release disk's: it is being read from, so it is no more a place to install
 /// onto than the medium is.
-fn current_disks(config: &Config) -> Vec<Disk> {
+///
+/// sysfs and mountinfo are read before this returns; only the release disk's
+/// filtering is left to the caller's walk.
+fn current_disks(config: &Config) -> impl Iterator<Item = Disk> + use<> {
     let sys = Path::new("/sys");
     let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
     let medium = disks::backing_disk(&info, sys, &config.medium);
@@ -151,9 +156,9 @@ fn current_disks(config: &Config) -> Vec<Disk> {
         .local_source
         .as_deref()
         .and_then(|dir| disks::backing_disk(&info, sys, &dir.to_string_lossy()));
-    let mut found = disks::list(sys, medium.as_deref());
-    found.retain(|disk| Some(&disk.name) != release.as_ref());
-    found
+    disks::list(sys, medium.as_deref())
+        .into_iter()
+        .filter(move |disk| Some(&disk.name) != release.as_ref())
 }
 
 /// Serves requests from `input` until it closes, writing events to `output`.
@@ -198,7 +203,7 @@ pub fn run(config: &Config, input: impl BufRead, output: impl Write + Send + 'st
                     let _ = events.send(now.clone());
                     said = now;
                 }
-                let _ = events.send(disks_event(&current_disks(config)));
+                let _ = events.send(disks_event(&current_disks(config).collect::<Vec<_>>()));
             }
             Request::Install(_) if busy => {
                 let _ = events.send(failed("An install is already running."));
@@ -206,10 +211,7 @@ pub fn run(config: &Config, input: impl BufRead, output: impl Write + Send + 'st
             Request::Install(disk) => {
                 // Only a disk this backend offered, which the person picked
                 // from the list: never the medium, never a partition.
-                if !current_disks(config)
-                    .iter()
-                    .any(|d| d.path == Path::new(&disk))
-                {
+                if !current_disks(config).any(|d| d.path == Path::new(&disk)) {
                     let _ = events.send(failed(format!(
                         "{disk} is not a disk that can be installed onto."
                     )));
@@ -223,6 +225,7 @@ pub fn run(config: &Config, input: impl BufRead, output: impl Write + Send + 'st
                     work: config.work.clone(),
                     source: config.source.clone(),
                     local: config.local_source.clone(),
+                    bios_boot: config.bios_boot.clone(),
                 };
                 let events = events.clone();
                 installing = Some(thread::spawn(move || install_reporting(&plan, &events)));

@@ -164,7 +164,7 @@
           ours = self.nixosConfigurations."losos-desktop-${archOf system}".pkgs;
         in
         {
-          image = requireProxy build.image;
+          image = requireProxy build.disk;
           installer = requireProxy build.installerIso;
           qcow2 = requireProxy build.qcow2;
           # On arm64 the release also carries the GSI's files, under the
@@ -205,7 +205,7 @@
           # The image carries no Nix (an update is a new /usr, not a switch);
           # this package is for a build host that wants matching Nix.
           nix = ours.nix;
-          default = requireProxy build.image;
+          default = requireProxy build.disk;
         }
         // lib.optionalAttrs (system == "aarch64-linux") {
           # init_boot.img, vbmeta.img and userdata.simg.gz, with SHA256SUMS:
@@ -262,8 +262,16 @@
         # without it refuses rather than running for hours.
         // lib.optionalAttrs (system == "x86_64-linux") {
           boot = pkgs.testers.runNixOSTest (import ./nixos/tests/boot.nix { inherit self; });
+          # The same image on a legacy BIOS, started by GRUB (bios.nix).
+          boot-bios = pkgs.testers.runNixOSTest (import ./nixos/tests/boot-bios.nix { inherit self; });
           installer-boot = pkgs.testers.runNixOSTest (
             import ./nixos/tests/installer-boot.nix { inherit self; }
+          );
+          installer-boot-bios = pkgs.testers.runNixOSTest (
+            import ./nixos/tests/installer-boot.nix {
+              inherit self;
+              bios = true;
+            }
           );
         }
       );

@@ -71,6 +71,13 @@ let
         Label = "_empty";
       };
       inherit (partitions) "22-usr-verity-b" "23-usr-b";
+    }
+    # The BIOS boot partition GRUB's core goes in on a legacy BIOS PC, laid
+    # out as image.nix lays out the image's (bios.nix). First boot has no
+    # definition of it, and leaves it be as it leaves any partition it does
+    # not know.
+    // lib.optionalAttrs (config.image.repart.partitions ? "05-bios-boot") {
+      "05-bios-boot" = config.image.repart.partitions."05-bios-boot".repartConfig;
     };
 
   repartDefinitions = pkgs.linkFarm "losos-installer-repart.d" (
@@ -135,6 +142,13 @@ let
       inherit (cfg.update) baseUrl pubring;
       docsUrl = cfg.docs.url;
       inherit esp repartDefinitions sysupdateTemplates;
+      # Run on the disk once it is installed, so a legacy BIOS PC starts it
+      # too; null where there is no BIOS (aarch64).
+      biosBoot =
+        if config.system.build ? grubBiosInstall then
+          lib.getExe config.system.build.grubBiosInstall
+        else
+          null;
     };
   };
 in

@@ -46,6 +46,11 @@ pub struct Plan {
     /// files they list), used in place of the channel when [`has_release`]
     /// says one is there.
     pub local: Option<PathBuf>,
+    /// A program that makes the disk start on a legacy BIOS PC, run with
+    /// the disk as its argument once the system is on it. The OS passes
+    /// its GRUB installer here on x86_64 (bios.nix); UEFI firmware ignores
+    /// what it writes.
+    pub bios_boot: Option<PathBuf>,
 }
 
 /// Where the release signing key is, as sysupdate itself reads it.
@@ -172,8 +177,14 @@ fn download(plan: &Plan, disk: &str, events: &Sender<Event>) -> Result<(), Strin
         &[&definitions, "update"],
         false,
         events,
-    )
-    .map(|_| ())
+    )?;
+    // After sysupdate, so a disk whose download failed is left with no boot
+    // code that would start GRUB on an empty ESP.
+    if let Some(program) = &plan.bios_boot {
+        let program = program.to_string_lossy().into_owned();
+        command(&program, &[disk], false, events)?;
+    }
+    Ok(())
 }
 
 /// The ESP's device node, from repart's JSON summary of the table it wrote.

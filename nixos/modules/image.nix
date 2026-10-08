@@ -9,7 +9,9 @@
 #
 # What comes out of one configuration:
 #
-#   system.build.image             the OS as a disk: write it to a disk and boot
+#   system.build.image             the disk as systemd-repart makes it
+#   system.build.disk              the OS as a disk: write it to a disk and
+#                                  boot, on UEFI or (x86_64) a legacy BIOS
 #   system.build.releaseArtifacts  what systemd-sysupdate downloads, plus the
 #                                  disk image, the installer ISO
 #                                  (installer.nix) and, on x86_64, the
@@ -217,9 +219,42 @@ in
   # partition UUIDs repart derived from the verity root hash, because that is
   # how the initrd finds /usr from usrhash= on the command line, and
   # sysupdate gives a partition the UUID its source's name carries (@u).
-  system.build.releaseArtifacts =
+  # The image with what a BIOS boot needs added (bios.nix): GRUB in the
+  # MBR and the BIOS boot partition, and the image's own version's kernel,
+  # initrd and command line on the ESP beside its UKI. Added afterwards
+  # rather than given to repart, because the command line carries the
+  # usrhash= repart only reports once /usr is built, and the ESP is made
+  # in that same run; nixpkgs' verity-store module gets the UKI onto the
+  # ESP the same way. Elsewhere this is the repart image as it is.
+  system.build.disk =
     let
       image = config.system.build.image;
+      raw = "${config.image.baseName}.raw";
+    in
+    if config.system.build ? biosBootFiles then
+      pkgs.runCommand "${id}_${version}-disk"
+        {
+          nativeBuildInputs = with pkgs.buildPackages; [
+            jq
+            mtools
+          ];
+        }
+        ''
+          mkdir $out
+          cp ${image}/repart-output.json $out/
+          cp --sparse=always ${image}/${raw} $out/${raw}
+          chmod u+w $out/${raw}
+          esp=$(jq -er '.[] | select(.type=="esp") | .offset' $out/repart-output.json)
+          MTOOLS_SKIP_CHECK=1 mcopy -i "$out/${raw}@@$esp" \
+            ${config.system.build.biosBootFiles}/* ::/EFI/Linux/
+          ${lib.getExe config.system.build.grubBiosInstall} $out/${raw}
+        ''
+    else
+      image;
+
+  system.build.releaseArtifacts =
+    let
+      image = config.system.build.disk;
       raw = "${config.image.baseName}.raw";
       prefix = "${id}_${version}";
     in
@@ -249,6 +284,11 @@ in
         }
 
         cp ${config.system.build.uki}/${ukiFile} ${prefix}_${arch.name}.efi
+        ${lib.optionalString (config.system.build ? biosBootFiles) ''
+          # What GRUB starts this version from on a BIOS PC (bios.nix),
+          # named as sysupdate installs them.
+          cp ${config.system.build.biosBootFiles}/* .
+        ''}
         extract ${arch.usr}
         extract ${arch.usrVerity}
 
@@ -267,6 +307,6 @@ in
     pkgs.runCommand "${id}_${version}.qcow2" { nativeBuildInputs = [ pkgs.buildPackages.qemu-utils ]; }
       ''
         qemu-img convert -f raw -O qcow2 \
-          ${config.system.build.image}/${config.image.baseName}.raw $out
+          ${config.system.build.disk}/${config.image.baseName}.raw $out
       '';
 }
