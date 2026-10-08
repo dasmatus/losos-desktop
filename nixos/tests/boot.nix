@@ -99,6 +99,16 @@
               machine.wait_for_unit(unit)
           machine.fail("systemctl is-active NetworkManager.service")
 
+      with subtest("the image chose drivers from facter's report and kept NVIDIA's unloaded"):
+          # QEMU's display is not an NVIDIA card, so no rule matches and the
+          # NVIDIA modules the image carries stay out (tests/hardware.nix
+          # covers a matching report).
+          machine.succeed("systemctl is-active losos-hardware.service losos-hardware-fallback.service")
+          machine.succeed("grep -q graphics_card /run/losos/hardware/facter.json")
+          machine.succeed("grep -q '\"matched\": \\[\\]' /run/losos/hardware/plan.json")
+          machine.succeed("modinfo -n nvidia")
+          machine.fail("test -d /sys/module/nvidia")
+
       with subtest("a user is a homed LUKS volume"):
           # homed's first-boot wizard runs only while no regular user exists,
           # so nothing the image ships -- derisk-greeter included -- may count

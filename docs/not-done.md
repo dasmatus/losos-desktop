@@ -47,6 +47,13 @@
   System panel to Blueprint; neither applies. The factory reset is reachable
   through `systemctl start factory-reset.target` and the Varlink API, and the
   security report answers on the bus, but neither has a button in Settings.
+- **NVIDIA on real hardware.** The driver choice was tested in a VM with a
+  report that names an RTX 4090 ([Hardware and NVIDIA](drivers.md)); no
+  NVIDIA card has run the image. Untested: the open module taking a card,
+  derisk's compositor on it, explicit sync, suspend and hibernation,
+  VA-API, hardened_malloc under NVIDIA's libraries, and laptops with two
+  GPUs. A machine with an NVIDIA card and another GPU draws on whichever
+  is the boot display; nothing offloads an app to the other.
 - **derisk drives one display.** `derisk display-manager` starts
   `derisk greeter`, derisk's lock screen as the login screen, and after a
   login `derisk session --execute`; each takes the seat from logind and

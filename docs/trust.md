@@ -20,7 +20,7 @@ Everything the flake builds from, besides this repository:
   are rejected.
 - **pm**, the `components/pm` submodule (`github.com/losos-project/pm`) at the
   commit this tree records (`nixos/pkgs/pm.nix`), and **crates.io**, for its,
-  losos-security's and losos-installer's dependencies, each pinned by
+  losos-security's, losos-installer's and losos-hardware's dependencies, each pinned by
   `Cargo.lock` and checked by hash.
 - **Purism's adaptive GTK patches**, copied into
   `nixos/pkgs/patches/gtk3` and `gtk4` from PureOS's packaging
@@ -31,6 +31,13 @@ Everything the flake builds from, besides this repository:
   source. It is prebuilt by the hardware vendors, and nothing can compile it.
   `hardware.nix` ships it because amdgpu and nouveau cannot start current
   GPUs without it.
+- **NVIDIA's driver**, the production branch nixpkgs pins by hash, fetched
+  from `download.nvidia.com`: the userspace libraries and GSP firmware are
+  NVIDIA's binaries, which its licence lets the image and the binary cache
+  redistribute unmodified. They are the image's only unfree package
+  (`nixos/modules/nvidia.nix`), loaded only on a machine with a card the
+  driver supports ([Hardware and NVIDIA](drivers.md)). The open kernel module
+  is built from NVIDIA's MIT/GPL source.
 - **derisk**, the `components/derisk` submodule
   (`github.com/losos-project/derisk`) at the commit this tree records
   (`nixos/pkgs/derisk.nix`), with its crates, mcsapi among them, pinned by its
