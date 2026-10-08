@@ -138,6 +138,13 @@ offered when the GPU's DRM driver supports syncobj eventfds, which NVIDIA's
 does from 560 on: NVIDIA does not do implicit sync, so without it a client's
 frame could be shown before NVIDIA finished drawing it.
 
+Scanout is triple buffered: while one frame waits for its page flip, the
+compositor may draw the next and queue it behind, which the flip after
+shows. It draws on a timer at the display's refresh rate rather than at
+each vblank, so with only one frame allowed past the screen, a tick that
+landed just before a vblank found the flip still pending and that frame was
+dropped. The cost is up to one frame of latency while the GPU keeps ahead.
+
 ## What is not tested
 
 There is no NVIDIA card where this was built. `nixos/tests/hardware.nix`
