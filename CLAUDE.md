@@ -94,6 +94,9 @@ still takes time, so don't start one to check a module edit.
   other as `page.md`, which GitHub, Docusaurus and the wiki all follow.
   Pictures live in `docs/images/` and pages show them as `images/<file>`;
   the diagrams there are hand-written SVG in the OS's dark theme.
+  The site's root is a landing page, `website/src/pages/index.js`, which
+  lists every page from `sidebars.js` (`website/landing-data.js`), and
+  `docs/index.md` is served at `/overview` instead.
 - `tools/nix-cache-push` pushes built store paths into that cache.
 - `tools/nix-fetch-sources` preloads fixed-output inputs in CI; copied outputs
   are hash-checked and can include bootstrap tools as well as source archives.
