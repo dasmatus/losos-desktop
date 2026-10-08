@@ -84,6 +84,7 @@ in
   derisk = callWithMold ./derisk.nix { };
   losos-installer = callWithMold ./losos-installer.nix { };
   losos-security = callWithMold ./losos-security.nix { };
+  losos-hardware = callWithMold ./losos-hardware.nix { };
   # The Windows installer's Linux build, for its tests and for installing
   # into a disk image; the .exe is windows-installer.nix's.
   losos-windows-installer = callWithMold ./losos-windows-installer.nix { };

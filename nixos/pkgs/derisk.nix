@@ -28,7 +28,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "derisk";
-  version = "0.1.0-unstable-2026-10-07";
+  version = "0.1.0-unstable-2026-10-08";
 
   # The components/derisk submodule, at the commit this tree records for it
   # (flake.nix, `self.submodules`). cleanSource drops the submodule's .git
@@ -38,7 +38,7 @@ rustPlatform.buildRustPackage {
     src = lib.cleanSource ../../components/derisk;
   };
 
-  cargoHash = "sha256-VOe8f2nUQA+fqNz68CItaokxSW9t+eXVyh8zci6oFCU=";
+  cargoHash = "sha256-hKOyRNU45EzzxyJT5bV1SwdjIg43tUaWj4CEF+Oo300=";
 
   # derisk and its portal backend, xdg-desktop-portal-derisk. `host` is the
   # compositor; without it the binary has only the headless commands. It is

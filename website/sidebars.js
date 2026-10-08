@@ -15,6 +15,7 @@ module.exports = {
         'systemd',
         'layout',
         'hibernation',
+        'drivers',
         'boot-loaders',
         'installer',
         'windows-installer',

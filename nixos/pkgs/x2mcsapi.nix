@@ -15,7 +15,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "x2mcsapi";
-  version = "0.1.0-unstable-2026-10-05";
+  version = "0.1.0-unstable-2026-10-08";
 
   # The components/mcsapi submodule, at the commit this tree records for it
   # (flake.nix, `self.submodules`). cleanSource drops the submodule's .git

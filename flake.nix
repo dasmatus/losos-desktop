@@ -194,6 +194,7 @@
             pm
             pm-plugins
             losos-installer
+            losos-hardware
             losos-security
             losos-swap
             losos-windows-installer
@@ -238,6 +239,7 @@
           toplevel = self.packages.${system}.toplevel;
           # Run each program's own test suite as part of its build.
           losos-installer = self.packages.${system}.losos-installer;
+          losos-hardware = self.packages.${system}.losos-hardware;
           losos-security = self.packages.${system}.losos-security;
           losos-swap = self.packages.${system}.losos-swap;
           losos-windows-installer = self.packages.${system}.losos-windows-installer;
@@ -262,6 +264,8 @@
         # without it refuses rather than running for hours.
         // lib.optionalAttrs (system == "x86_64-linux") {
           boot = pkgs.testers.runNixOSTest (import ./nixos/tests/boot.nix { inherit self; });
+          # Driver choice from facter's report (hardware.nix, nvidia.nix).
+          hardware = pkgs.testers.runNixOSTest ./nixos/tests/hardware.nix;
           # The same image on a legacy BIOS, started by GRUB (bios.nix).
           boot-bios = pkgs.testers.runNixOSTest (import ./nixos/tests/boot-bios.nix { inherit self; });
           # A laptop with a TPM hibernating and resuming (hibernate.nix).
