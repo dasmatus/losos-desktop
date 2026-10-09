@@ -297,8 +297,11 @@ jobs:
   # hours, so the build has a time budget. Whatever finished goes to the cache
   # whether or not the rest did, and the next run starts from there. A run
   # that ran out of time with nothing failed passes with a warning; a failed
-  # derivation turns it red. Once a build completes, the job checks the flake
-  # and hands the release to `push` as an artifact. It starts after
+  # derivation turns it red. Once a build completes, the job checks the flake,
+  # boots the VM tests, and hands the release to `push` as an artifact. A VM
+  # test that fails to boot only warns: the image is already built, and a
+  # flaky boot under the runner's KVM is no reason to hold the nightly back.
+  # It starts after
   # `prebuild`, from what that compiled, so it is left with assembling the
   # image. A failed `prebuild` does not stop it: the same derivation fails
   # here too, and everything else it builds is kept.
@@ -307,7 +310,7 @@ jobs:
     if: always() && needs.prebuild.result != 'cancelled'
     strategy: *arches
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 355
+    timeout-minutes: &flake-minutes 355
     # packages: write is for the cache push, which has to run here because the
     # store it reads is on this runner. The token reaches only that step, and
     # oras logs out at the end of it. Everything the build compiles runs inside
@@ -319,6 +322,10 @@ jobs:
       packages: write
     env: *nix-env
     steps:
+      # The VM tests get whatever is left of the job's time, and GitHub does
+      # not say when a job started, so the job notes it itself.
+      - name: Note the start time
+        run: date +%s > "$RUNNER_TEMP/job-started"
       - *free-disk
       - *install-nix
       - *checkout
@@ -409,13 +416,83 @@ jobs:
 
       # Formatting is checked by `format`, not here: run after the build, a
       # misplaced space failed a run only once hours of building had finished.
+      #
+      # `nix flake check` would build the VM tests with everything else, and
+      # their failure would fail the job. So it only evaluates here, and the
+      # checks are built in two halves. A check with a `driver` is a NixOS VM
+      # test (runNixOSTest); every other check, and each VM test's driver with
+      # the disks and images it boots, is a build, and fails the job like one.
       - name: Check the flake
+        id: check
         if: steps.build.outputs.complete == 'true'
-        run: nix flake check --impure -L
+        run: |
+          nix flake check --impure --no-build -L
+          system=$(nix eval --impure --raw --expr builtins.currentSystem)
+          nix eval --impure --json ".#checks.$system" \
+            --apply 'cs: builtins.mapAttrs (_: c: if c ? driver then c.outPath else "") cs' \
+            > checks.json
+          jq -r 'to_entries[] | select(.value == "") | .key' checks.json > builds.txt
+          jq -r 'to_entries[] | select(.value != "") | .key' checks.json > vm-tests.txt
+          {
+            sed "s|^|.#checks.$system.|" builds.txt
+            sed "s|^|.#checks.$system.|; s|$|.driver|" vm-tests.txt
+          } | xargs nix build --impure -L --keep-going --no-link
+          echo "system=$system" >> "$GITHUB_OUTPUT"
+
+      # The VM tests boot the image under QEMU (KVM on x86_64; aarch64 has
+      # none). A test that fails, or does not finish in the time the job has
+      # left, is a warning and a line in the job summary, not a red job: the
+      # image passed every other check, and `push` and `publish` still get it.
+      # The step ends with 20 minutes to spare for the release upload below,
+      # because the job running out of time would fail it after all, and a
+      # mistake in the script itself only marks the step.
+      - name: Boot the VM tests
+        if: steps.check.outputs.system != ''
+        continue-on-error: true
+        env:
+          SYSTEM: ${{ steps.check.outputs.system }}
+          JOB_MINUTES: *flake-minutes
+        run: |
+          if [ ! -s vm-tests.txt ]; then
+            echo "$SYSTEM has no VM tests."
+            exit 0
+          fi
+          left=$(( JOB_MINUTES * 60 - ($(date +%s) - $(cat "$RUNNER_TEMP/job-started")) - 20 * 60 ))
+          mapfile -t tests < <(sed "s|^|.#checks.$SYSTEM.|" vm-tests.txt)
+          status=124
+          if [ "$left" -gt 0 ]; then
+            set +e
+            timeout --signal=INT --kill-after=2m "$left" nix build --impure -L --keep-going --no-link "${tests[@]}"
+            status=$?
+            set -e
+          fi
+          failed=0
+          {
+            echo "### VM tests ($SYSTEM)"
+            echo
+            echo "| Test | Result |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          while read -r name; do
+            if [ -e "$(jq -r --arg n "$name" '.[$n]' checks.json)" ]; then
+              result=passed
+            elif [ "$status" = 124 ]; then
+              result="did not finish in the time the job had left"
+              failed=$((failed + 1))
+            else
+              result=failed
+              failed=$((failed + 1))
+            fi
+            echo "| \`checks.$SYSTEM.$name\` | $result |" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$result" != passed ]; then
+              echo "::warning title=VM test $name::checks.$SYSTEM.$name $result. This does not fail the job; its log is above."
+            fi
+          done < vm-tests.txt
+          echo "$failed of $(wc -l < vm-tests.txt) VM test(s) did not pass."
 
       # The release goes to `push` as an artifact, with its architecture and
       # version beside it. Only a completed build whose flake check passed
-      # gets this far, and on x86_64 that check includes the VM boot test.
+      # gets this far; the VM tests above do not decide it.
       - name: Collect the release
         id: collect
         if: github.event_name != 'pull_request' && steps.build.outputs.complete == 'true'
@@ -603,7 +680,7 @@ jobs:
   # installer ISOs and the Windows installer, which are what a person
   # downloads by hand. Only an
   # architecture that finished its build and passed its flake check reached
-  # GHCR, so that is the gate.
+  # GHCR, so that is the gate. A failed VM test is not part of it (`flake`).
   publish:
     needs: [push]
     if: always() && needs.push.result == 'success'

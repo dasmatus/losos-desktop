@@ -140,8 +140,9 @@ request and hands what it compiled to `flake` as an artifact. `flake`
 imports that, fails if any of the plan would still compile, then builds
 `.#release` within a time budget and pushes project-built paths to
 the GHCR cache. When
-a build completes it checks the flake, and outside a pull request hands the
-release to `push` as an artifact. `format` runs `nix fmt -- --ci` on its own
+a build completes it checks the flake, boots the VM tests (a failed one is a
+warning and a line in the job summary, never a red job), and outside a pull
+request hands the release to `push` as an artifact. `format` runs `nix fmt -- --ci` on its own
 in a few minutes, so run `nix fmt` before pushing any `.nix` edit, including
 one made in GitHub's web editor. `push` uploads it to
 GHCR. It is the only job holding `packages: write` beside release files, and

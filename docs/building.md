@@ -22,7 +22,12 @@ The stock nixpkgs closure is substituted from cache.nixos.org when available;
 the image and project-specific packages are built locally unless present in
 the project's cache ([Binary cache](binary-cache.md)). The image is built by `systemd-repart` inside
 the build sandbox; it needs no loop device, no root and no KVM. Only the VM
-test needs KVM.
+tests need KVM.
+
+CI builds every other check first and boots the VM tests last. A VM test
+that fails there is a warning and a line in the run's summary, not a red
+run, so a boot that breaks under the runner's KVM does not hold back the
+nightly. Run `nix flake check` locally to see one fail for real.
 
 `just` has short names for the same commands. `just plugins` builds pm's
 plugin components for a pm installed outside the image ([pm on
