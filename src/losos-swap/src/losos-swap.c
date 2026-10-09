@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -10,7 +11,11 @@
 #include <unistd.h>
 
 #define CONFIG "25-swap.conf"
+#define LABEL "losos-swap"
 #define GRAIN UINT64_C(4096)
+#ifndef SYS_BLOCK
+#define SYS_BLOCK "/sys/class/block"
+#endif
 
 /* Walk by directory descriptors: O_NOFOLLOW on only the last component would
  * still let an ancestor symlink redirect a privileged write. */
@@ -62,7 +67,38 @@ fail:
     }
 }
 
-static int write_config(int dir, uint64_t bytes)
+/* Whether any partition is already named losos-swap. The kernel reads the
+ * GPT names when it scans a disk and lists them in sysfs as PARTNAME=, so
+ * this needs no udev and cannot race the by-partlabel links. */
+static int swap_partition_exists(void)
+{
+    static const char wanted[] = "\nPARTNAME=" LABEL "\n";
+    DIR *block = opendir(SYS_BLOCK);
+    if (!block)
+        return 0;
+    int found = 0;
+    for (struct dirent *entry; !found && (entry = readdir(block));) {
+        char path[512], text[4096 + 2] = "\n";
+        if (entry->d_name[0] == '.')
+            continue;
+        int length = snprintf(path, sizeof(path), "%s/%s/uevent", SYS_BLOCK, entry->d_name);
+        if (length < 0 || (size_t)length >= sizeof(path))
+            continue;
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0)
+            continue;
+        ssize_t got = read(fd, text + 1, sizeof(text) - 2);
+        close(fd);
+        if (got > 0) {
+            text[got + 1] = '\0';
+            found = strstr(text, wanted) != NULL;
+        }
+    }
+    closedir(block);
+    return found;
+}
+
+static int write_config(int dir, uint64_t bytes, int exists)
 {
     char text[256], staging[64] = "";
     int fd = -1, result = -1;
@@ -78,10 +114,22 @@ static int write_config(int dir, uint64_t bytes)
     } else if (errno != ENOENT) {
         return -1;
     }
-    int length = snprintf(text, sizeof(text),
-                          "[Partition]\nType=swap\nLabel=losos-swap\nFormat=swap\n"
-                          "SizeMinBytes=%" PRIu64 "\nSizeMaxBytes=%" PRIu64 "\n",
-                          bytes, bytes);
+    /* The first boot makes swap exactly the size of RAM. Once it exists, RAM
+     * is only a cap: repart never shrinks a partition, so its minimum is the
+     * larger of SizeMinBytes= and its current size, and totalram moves by
+     * about a megabyte from one boot to the next. A minimum of it made swap
+     * need to grow on any later boot that saw more RAM than the first, or
+     * after a RAM upgrade, with root right behind it and no free space, so
+     * repart failed and the boot was never counted good. */
+    int length = exists
+        ? snprintf(text, sizeof(text),
+                   "[Partition]\nType=swap\nLabel=" LABEL "\nFormat=swap\n"
+                   "SizeMaxBytes=%" PRIu64 "\n",
+                   bytes)
+        : snprintf(text, sizeof(text),
+                   "[Partition]\nType=swap\nLabel=" LABEL "\nFormat=swap\n"
+                   "SizeMinBytes=%" PRIu64 "\nSizeMaxBytes=%" PRIu64 "\n",
+                   bytes, bytes);
     if (length < 0 || (size_t)length >= sizeof(text)) {
         errno = EOVERFLOW;
         return -1;
@@ -163,7 +211,7 @@ int main(int argc, char **argv)
         perror("losos-swap: output directory");
         return EXIT_FAILURE;
     }
-    int result = write_config(dir, bytes);
+    int result = write_config(dir, bytes, swap_partition_exists());
     if (result < 0)
         perror("losos-swap: write " CONFIG);
     int close_result = close(dir);
