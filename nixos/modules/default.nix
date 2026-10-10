@@ -7,7 +7,9 @@
   imports = [
     ./base.nix
     ./boot.nix
+    ./grub.nix
     ./bios.nix
+    ./splash.nix
     ./hardware.nix
     ./nvidia.nix
     ./libvirt.nix

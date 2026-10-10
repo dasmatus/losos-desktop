@@ -36,7 +36,8 @@ let
   # here reads the same as its original in /etc/sysupdate.d.
   sysupdateFormat = pkgs.formats.ini { listToValue = toString; };
 
-  # systemd-boot and loader.conf, as image.nix puts them on the image's ESP.
+  # GRUB and grubenv, as grub.nix puts them on the image's ESP, and on
+  # x86_64 nothing more: BIOS GRUB lives in the BIOS boot partition.
   # The UKI is not in this set (repart-verity-store.nix adds it later), which
   # is as it should be: sysupdate installs the UKI, counted, like any update.
   espFiles = lib.mapAttrsToList (

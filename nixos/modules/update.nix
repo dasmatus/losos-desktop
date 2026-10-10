@@ -6,14 +6,14 @@
 # nor /home. There is no nixos-rebuild here and no Nix on the machine to run
 # one with.
 #
-# Rollback needs no failure detection. systemd-boot offers the newest UKI;
-# a UKI installed by sysupdate carries a boot counter in its file name;
-# systemd-bless-boot removes the counter once boot-complete.target is reached;
-# an entry that never gets blessed runs out of tries and systemd-boot falls
-# back to the older one by itself. The older UKI's usrhash still names the
-# older /usr, which is still there. On a BIOS PC, GRUB does the same from
-# grubenv, and losos-grub-bless leaves the names as systemd-boot would
-# (bios.nix, which also adds the transfers GRUB starts a version from).
+# Rollback needs no failure detection. GRUB offers the newest UKI; a UKI
+# installed by sysupdate carries a boot counter in its file name, which GRUB
+# counts down in grubenv; losos-grub-bless settles the name once
+# boot-complete.target is reached; an entry that never gets blessed runs out
+# of tries and GRUB falls back to the older one by itself (grub.nix). The
+# older UKI's usrhash still names the older /usr, which is still there. A
+# BIOS PC boots the same way, from the kernel and initrd bios.nix's
+# transfers put beside each UKI.
 { config, lib, ... }:
 
 let

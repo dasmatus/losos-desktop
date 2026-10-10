@@ -1,8 +1,9 @@
 # How it boots. Every stage is systemd, as in docs/boot.md:
 #
-#   firmware -> systemd-boot -> UKI (systemd-stub) -> kernel
+#   firmware -> GRUB (grub.nix) -> UKI (systemd-stub) -> kernel
 #     (a legacy BIOS: MBR -> GRUB -> the UKI's kernel and initrd, bios.nix)
-#     -> systemd in the initrd: repart, veritysetup, gpt-auto root
+#     -> systemd in the initrd, under Plymouth's splash (splash.nix):
+#        repart, veritysetup, gpt-auto root
 #     -> switch-root -> systemd: sysusers, tmpfiles, homed, networkd ...
 #
 # What NixOS changes is where the operating system lives. In the pm tree it was
@@ -19,10 +20,10 @@
 
 {
   boot = {
-    # There is no bootloader to install. systemd-boot is copied into the ESP
-    # when the image is assembled (image.nix), and nothing on the running
-    # system ever rewrites it -- the same as an image-based system anywhere.
-    # The same goes for GRUB on a BIOS PC (bios.nix), so NixOS's own GRUB
+    # There is no bootloader to install. GRUB is copied into the ESP, and on
+    # a BIOS PC into the BIOS boot partition, when the image is assembled
+    # (grub.nix, bios.nix), and nothing on the running system ever rewrites
+    # it -- the same as an image-based system anywhere. So NixOS's own GRUB
     # module, which installs GRUB and rewrites its menu on every rebuild,
     # stays off.
     loader.grub.enable = false;
@@ -50,10 +51,11 @@
     uki.tries = null;
   };
 
-  # bless-boot marks a counted entry good once boot-complete.target is reached,
-  # and boot-check-no-failures is what makes reaching it mean something. NixOS
-  # carries bless-boot, and systemd-bless-boot-generator pulls it in whenever
-  # the boot loader reports a boot counter, so it is no longer wanted by hand.
+  # losos-grub-bless (grub.nix) marks a counted entry good once
+  # boot-complete.target is reached, and boot-check-no-failures is what makes
+  # reaching it mean something. (systemd-bless-boot does the same for a disk
+  # that still starts systemd-boot: systemd-bless-boot-generator pulls it in
+  # whenever the boot loader reports a boot counter, which GRUB never does.)
   # The check has to be named. Upstream's unit is RequiredBy= the target, and
   # NixOS ignores [Install] sections, so that is set here too.
   systemd.additionalUpstreamSystemUnits = [

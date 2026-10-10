@@ -10,7 +10,7 @@ Every other machine works as before: a desktop, a BIOS PC or a laptop without
 a TPM suspends when the lid closes, and logind tells derisk it cannot
 hibernate.
 
-![Every boot, losos-hibernate-swap formats swap as LUKS2 with a new random key, seals it to the TPM's PCRs 4, 7 and 12 and forgets it; hibernating, systemd-sleep asks systemd-boot for the same UKI once and writes the image to the encrypted swap; resuming, the same UKI boots, the TPM unseals the key, and the kernel restores the image](images/hibernation.svg)
+![Every boot, losos-hibernate-swap formats swap as LUKS2 with a new random key, seals it to the TPM's PCRs 4, 7 and 12 and forgets it; hibernating, systemd-sleep asks GRUB for the same UKI once and writes the image to the encrypted swap; resuming, the same UKI boots, the TPM unseals the key, and the kernel restores the image](images/hibernation.svg)
 
 ## Which machines
 
@@ -26,7 +26,7 @@ activated. A machine hibernates when both of these hold:
 - **systemd-stub measured the UKI into a TPM.** That is the variable
   `ConditionSecurity=measured-uki` reads. It means the machine has a TPM to
   seal the key to, and that it booted by UEFI, which systemd-sleep needs to
-  record where the image is. A BIOS PC that boots with GRUB has neither.
+  record where the image is. A PC that boots by legacy BIOS has neither.
 
 ## The swap key
 
@@ -46,9 +46,11 @@ outlives the power, and a laptop's swap gets one, sealed to the TPM:
 2. **Hibernate.** systemd-sleep writes the image to `/dev/mapper/swap` and
    records its location in the `HibernateLocation` EFI variable. The
    partition is the disk's only swap partition, so systemd marks it
-   `autoSwap`. A sleep hook asks systemd-boot to start the UKI that is
-   running once more (`bootctl set-oneshot @current`), because sysupdate may
-   have installed a newer one since this boot.
+   `autoSwap`. A sleep hook asks GRUB to start the version that is running
+   once more (`losos_oneshot` in grubenv, [Boot loader](boot-loaders.md#boot-counting)),
+   because sysupdate may have installed a newer one since this boot. On a
+   disk installed before GRUB, which still starts systemd-boot, it asks that
+   with `bootctl set-oneshot @current` instead.
 3. **Resume.** In the initrd, `systemd-hibernate-resume-generator` reads the
    variable, opens `/dev/disk/by-designator/swap-luks` with the key the TPM
    unseals, and the kernel restores the image. That is all systemd's own; the
@@ -82,11 +84,11 @@ hibernated.
   Secure Boot database, for instance) or PCR 4 between hibernating
   and resuming leaves the TPM unwilling to unseal. The machine waits two
   minutes for the image, boots afresh, and the hibernated session is lost.
-- **Choosing another boot entry on resume.** systemd-boot starts the UKI that
+- **Choosing another boot entry on resume.** GRUB starts the UKI that
   hibernated unless someone picks a different one in its menu. A different
   one gets no key, as above.
 - **BIOS PCs and laptops without a TPM** keep the per-boot key and do not
-  hibernate. GRUB has no way to tell the kernel where an image is, and
+  hibernate. A BIOS has no EFI variable to record where an image is, and
   without a TPM the key would have to be on disk next to the image or typed
   in at every resume.
 - **Phones.** The Halium image has its own power handling and no swap

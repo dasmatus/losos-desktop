@@ -1,12 +1,11 @@
-//! The firmware boot entry for systemd-boot.
+//! The firmware boot entry for GRUB.
 //!
 //! An image of LosOS's own boots without one, from the removable-media path
-//! `\EFI\BOOT\BOOTX64.EFI` (image.nix). On a Windows disk that path is
-//! Windows' own fallback, so systemd-boot goes beside it at
-//! `\EFI\systemd\systemd-bootx64.efi`, and the firmware is told about it the
-//! way efibootmgr tells it: a `Boot####` variable holding an
-//! `EFI_LOAD_OPTION`, first in `BootOrder`. systemd-boot then lists Windows
-//! Boot Manager beside LosOS by itself.
+//! `\EFI\BOOT\BOOTX64.EFI` (grub.nix). On a Windows disk that path is
+//! Windows' own fallback, so GRUB goes beside it at `\EFI\losos\grubx64.efi`,
+//! and the firmware is told about it the way efibootmgr tells it: a
+//! `Boot####` variable holding an `EFI_LOAD_OPTION`, first in `BootOrder`.
+//! GRUB's menu then lists Windows Boot Manager beside LosOS by itself.
 //!
 //! This module only builds and reads the bytes (UEFI 2.10, 3.1.3 and 10.3);
 //! windows.rs reads and writes the variables.

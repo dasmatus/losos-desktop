@@ -120,15 +120,6 @@ let
   ];
 
   id = config.system.image.id;
-  systemdBoot = "${config.systemd.package}/lib/systemd/boot/efi/systemd-boot${arch.efi}.efi";
-
-  # systemd-boot offers the newest entry by version, so no default is named on
-  # an installed system: after an update the newest UKI is the one to try, and
-  # boot counting (update.nix) falls back if it never gets blessed.
-  loaderConf = pkgs.writeText "loader.conf" ''
-    timeout 3
-    editor no
-  '';
 in
 {
   imports = [ repartModule ];
@@ -167,14 +158,9 @@ in
     mkfsOptions.erofs = [ "-b4096" ];
 
     partitions = {
+      # GRUB and grubenv go in from grub.nix, and the UKI from nixpkgs'
+      # verity-store module.
       ${partitionIds.esp} = {
-        contents = {
-          # The removable-media path, which firmware boots with no boot entry
-          # registered -- so this image needs no efibootmgr and no install step.
-          "/EFI/BOOT/BOOT${lib.toUpper arch.efi}.EFI".source = systemdBoot;
-          "/EFI/systemd/systemd-boot${arch.efi}.efi".source = systemdBoot;
-          "/loader/loader.conf".source = loaderConf;
-        };
         repartConfig = {
           Type = "esp";
           Format = "vfat";

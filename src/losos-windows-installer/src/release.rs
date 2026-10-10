@@ -34,7 +34,7 @@ pub struct Arch {
     pub verity_type: &'static str,
     /// Root, which first boot makes: only `--uninstall` needs to know it.
     pub root_type: &'static str,
-    /// The EFI machine type systemd-boot is named after.
+    /// The EFI machine type GRUB's file on the ESP is named after.
     pub efi: &'static str,
 }
 

@@ -1,0 +1,166 @@
+# The boot screen, as LosOS's own starts: the salmon in the middle of the
+# dark ground, the system's name under it, and a line under that which
+# grows as the boot gets on.
+#
+# splash.nix puts the palette (ground, ink, muted, accent; each with .r .g
+# .b) and `name` ("LosOS Desktop", or "LosOS Desktop installer") above this
+# file.
+#
+# The caption follows Plymouth's mode: "<name> is starting" while it boots,
+# "is restarting" or "is shutting down" at the end, "is updating" for
+# anything else. A password or a question takes the caption's place until it
+# is answered, and a message goes under the line.
+
+Window.SetBackgroundTopColor(ground.r, ground.g, ground.b);
+Window.SetBackgroundBottomColor(ground.r, ground.g, ground.b);
+
+screen.x = Window.GetX();
+screen.y = Window.GetY();
+screen.w = Window.GetWidth();
+screen.h = Window.GetHeight();
+
+# Type follows the screen height, so the text takes the same share of a
+# 768-line laptop and of a television.
+size = Math.Int(Math.Max(screen.h / 54, 11));
+
+fun font (weight, scale)
+{
+  return "DejaVu Sans " + weight + Math.Int(size * scale);
+}
+
+fun centred (width)
+{
+  return Math.Int(screen.x + (screen.w - width) / 2);
+}
+
+# ── The salmon ──────────────────────────────────────────────────────────────
+
+logo.original = Image("logo.png");
+logo.h = Math.Int(screen.h * 0.2);
+logo.w = Math.Int(logo.original.GetWidth() * logo.h / logo.original.GetHeight());
+logo.sprite = Sprite(logo.original.Scale(logo.w, logo.h));
+# In the middle of the screen, with the caption and the line under it
+# counted in.
+logo.y = Math.Int(screen.y + (screen.h - logo.h - 4 * size) / 2);
+logo.sprite.SetPosition(centred(logo.w), logo.y, 1);
+
+# ── The caption, and what takes its place ───────────────────────────────────
+
+caption.sprite = Sprite();
+caption.y = logo.y + logo.h + 2 * size;
+caption.h = 0;
+
+fun set_caption (text)
+{
+  local.image = Image.Text(text, ink.r, ink.g, ink.b, 1, font("Bold ", 1.2));
+  caption.sprite.SetImage(image);
+  caption.sprite.SetPosition(centred(image.GetWidth()), caption.y, 2);
+  global.caption.h = image.GetHeight();
+}
+
+# A password's bullets or a question's answer, where the line is.
+entry.sprite = Sprite();
+
+fun set_entry (text)
+{
+  local.image = Image.Text(text, accent.r, accent.g, accent.b, 1, font("Bold ", 1.1));
+  entry.sprite.SetImage(image);
+  entry.sprite.SetPosition(centred(image.GetWidth()), caption.y + caption.h + size, 2);
+  entry.sprite.SetOpacity(1);
+}
+
+# ── The line ────────────────────────────────────────────────────────────────
+
+bar.image = Image("accent.png");
+bar.sprite = Sprite();
+bar.width = Math.Int(Math.Min(logo.w * 1.2, screen.w - 2 * size));
+bar.height = Math.Max(3, Math.Int(size / 5));
+bar.drawn = 0;
+bar.shown = 0;
+
+# Plymouth reports progress many times a second; the line is redrawn only
+# when it has grown by a pixel.
+fun draw_bar (fraction)
+{
+  local.w = Math.Max(1, Math.Int(bar.width * fraction));
+  if (w != bar.drawn)
+    {
+      bar.sprite.SetImage(bar.image.Scale(w, bar.height));
+      global.bar.drawn = w;
+    }
+  bar.sprite.SetPosition(centred(bar.width), caption.y + caption.h + size, 2);
+  bar.sprite.SetOpacity(bar.shown);
+}
+
+# ── A message ───────────────────────────────────────────────────────────────
+
+message.sprite = Sprite();
+
+fun message_callback (text)
+{
+  local.image = Image.Text(text, muted.r, muted.g, muted.b, 1, font("", 0.9));
+  message.sprite.SetImage(image);
+  message.sprite.SetPosition(centred(image.GetWidth()), caption.y + caption.h + 3 * size, 2);
+  message.sprite.SetOpacity(1);
+}
+
+fun hide_message_callback (text)
+{
+  message.sprite.SetOpacity(0);
+}
+
+# ── Plymouth's calls ────────────────────────────────────────────────────────
+
+mode = Plymouth.GetMode();
+if (mode == "boot")
+  {
+    title = name + " is starting";
+    bar.shown = 1;
+  }
+else if (mode == "shutdown")
+  title = name + " is shutting down";
+else if (mode == "reboot")
+  title = name + " is restarting";
+else
+  title = name + " is updating";
+set_caption(title);
+progress = 0;
+
+fun progress_callback (duration, fraction)
+{
+  global.progress = fraction;
+  draw_bar(fraction);
+}
+
+fun password_callback (prompt, bullets)
+{
+  local.dots = "";
+  for (local.i = 0; i < bullets; i++)
+    dots = dots + "•";
+  if (!prompt)
+    prompt = "Password";
+  set_caption(prompt);
+  bar.sprite.SetOpacity(0);
+  set_entry(dots + "_");
+}
+
+fun question_callback (prompt, answer)
+{
+  set_caption(prompt);
+  bar.sprite.SetOpacity(0);
+  set_entry(answer + "_");
+}
+
+fun normal_callback ()
+{
+  set_caption(title);
+  entry.sprite.SetOpacity(0);
+  draw_bar(progress);
+}
+
+Plymouth.SetBootProgressFunction(progress_callback);
+Plymouth.SetDisplayPasswordFunction(password_callback);
+Plymouth.SetDisplayQuestionFunction(question_callback);
+Plymouth.SetDisplayNormalFunction(normal_callback);
+Plymouth.SetDisplayMessageFunction(message_callback);
+Plymouth.SetHideMessageFunction(hide_message_callback);

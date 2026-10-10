@@ -1,13 +1,18 @@
 # The installer medium: an ISO 9660 filesystem holding the live system's Nix
-# store as one squashfs, and an appended FAT partition holding its UKI as the
-# removable-media boot path.
+# store as one squashfs and its UKI, and an appended FAT partition holding
+# GRUB as the removable-media boot path.
 #
 # Written to a stick, the ISO reads as a GPT disk with that FAT partition as
 # its ESP; burnt to a disc, El Torito points the firmware at the same
-# partition. UEFI firmware starts the UKI directly, with no boot loader in
-# front: there is one entry and nothing to choose. nixpkgs' iso-image.nix is
-# not used because it is built around GRUB and syslinux, and around a Nix
-# that registers the store at boot, none of which is here.
+# partition. UEFI firmware starts GRUB, which shows the installed system's
+# theme with one entry and chainloads the UKI from the ISO 9660 filesystem.
+# nixpkgs' iso-image.nix is not used because it is built around a GRUB menu
+# generated per kernel and syslinux, and around a Nix that registers the
+# store at boot, none of which is here.
+#
+# It used to start the UKI directly, with no boot loader in front. GRUB is
+# there now so the medium starts as the installed system does, under the
+# same salmon, from the menu on to Plymouth (modules/splash.nix).
 #
 # On x86_64 a legacy BIOS PC starts it too, with GRUB, because the OS it
 # installs starts on one (modules/bios.nix): GRUB's hybrid MBR on a stick,
@@ -37,8 +42,71 @@ let
     comp = "zstd -Xcompression-level 19";
   };
 
-  # Sized from its contents as nixpkgs sizes its own EFI image: a tenth more
-  # for FAT's own overhead, rounded up to a whole MiB.
+  # The installer's GRUB menu, the same on both firmwares and drawn with the
+  # installed system's theme (nixos/branding, grub-image.nix), which here
+  # names it "LosOS Desktop installer". Its one entry finds the medium by
+  # its label rather than guessing which drive GRUB was started from, a
+  # CD or a disk. UEFI GRUB chainloads the UKI from the medium, so
+  # systemd-stub starts it as it would from the ESP; BIOS GRUB starts the
+  # UKI's own kernel and initrd with the UKI's command line, kept beside it
+  # in boot/.
+  art = import ../branding {
+    inherit pkgs;
+    name = config.system.nixos.distroName;
+  };
+  menu = pkgs.writeText "losos-installer-grub.cfg" ''
+    set timeout=3
+    set timeout_style=menu
+    search --no-floppy --set=root --label ${volumeID}
+    if [ "$grub_platform" = efi ]; then
+      menuentry "Install LosOS Desktop" {
+        chainloader /boot/installer.efi
+      }
+    else
+      menuentry "Install LosOS Desktop" {
+        linux /boot/linux ${config.boot.uki.settings.UKI.Cmdline}
+        initrd /boot/initrd
+      }
+    fi
+  '';
+  # What the menu uses on either firmware, beside each one's disk drivers
+  # and loader.
+  modules = [
+    "iso9660"
+    "part_gpt"
+    "part_msdos"
+    "search"
+    "search_label"
+    "regexp"
+    "normal"
+    "memdisk"
+    "tar"
+    "configfile"
+    "test"
+    "echo"
+    "serial"
+    "terminal"
+  ];
+
+  efi = import ../modules/grub-image.nix {
+    inherit pkgs menu art;
+    format = if pkgs.stdenv.hostPlatform.isx86_64 then "x86_64-efi" else "arm64-efi";
+    output = "grub.efi";
+    early = "normal (memdisk)/grub.cfg";
+    modules =
+      modules
+      ++ [
+        "fat"
+        "chain"
+      ]
+      # The framebuffer of firmware that predates GOP, which only x86 has.
+      ++ lib.optional pkgs.stdenv.hostPlatform.isx86_64 "efi_uga";
+  };
+
+  # GRUB alone, as the removable-media boot path: the UKI it starts is on
+  # the ISO 9660 filesystem with the rest of the medium. Sized from its
+  # contents as nixpkgs sizes its own EFI image: a tenth more for FAT's own
+  # overhead, rounded up to a whole MiB.
   esp =
     pkgs.runCommand "losos-installer-esp.img"
       {
@@ -48,57 +116,32 @@ let
         ];
       }
       ''
-        size=$(du --block-size=1 --apparent-size ${config.system.build.uki}/${ukiFile} | cut -f1)
+        size=$(du --block-size=1 --apparent-size ${efi}/grub.efi | cut -f1)
         size=$(( (size * 110 / 100 / 1048576 + 1) * 1048576 ))
         truncate --size=$size $out
         mkfs.vfat --invariant -i 4c4f534f -n LOSOS-EFI $out
         mmd -i $out ::/EFI ::/EFI/BOOT
-        mcopy -i $out ${config.system.build.uki}/${ukiFile} ::/EFI/BOOT/BOOT${lib.toUpper efiArch}.EFI
+        mcopy -i $out ${efi}/grub.efi ::/EFI/BOOT/BOOT${lib.toUpper efiArch}.EFI
         fsck.vfat -n $out
       '';
 
-  # GRUB for a legacy BIOS, as one El Torito image with its modules and menu
-  # inside, so it reads nothing of its own from the medium. The same image
-  # starts from a disc, and from a stick through boot_hybrid.img in the MBR,
-  # which xorriso points at it (--grub2-boot-info). Either way $root starts
-  # as the drive GRUB was loaded from, a CD or a disk, so the menu finds the
-  # medium by its label rather than guessing.
-  bios = lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 (
-    let
-      grubDir = "${pkgs.grub2}/lib/grub/i386-pc";
-      menu = pkgs.writeText "losos-installer-grub.cfg" ''
-        set timeout=3
-        if serial --unit=0 --speed=115200; then
-          terminal_input --append serial
-          terminal_output --append serial
-        fi
-        search --no-floppy --set=root --label ${volumeID}
-        menuentry "Install LosOS Desktop" {
-          linux /boot/linux ${config.boot.uki.settings.UKI.Cmdline}
-          initrd /boot/initrd
-        }
-      '';
-    in
-    {
-      image =
-        pkgs.runCommand "losos-installer-eltorito"
-          {
-            nativeBuildInputs = [ pkgs.buildPackages.grub2 ];
-          }
-          ''
-            grub-script-check ${menu}
-            mkdir memdisk $out
-            cp ${menu} memdisk/grub.cfg
-            tar -C memdisk -cf memdisk.tar grub.cfg
-            echo 'normal (memdisk)/grub.cfg' > early.cfg
-            grub-mkimage -O i386-pc-eltorito -d ${grubDir} -m memdisk.tar -c early.cfg -p / \
-              -o $out/eltorito.img \
-              biosdisk iso9660 part_gpt part_msdos search search_label linux normal \
-              memdisk tar configfile test echo serial terminal
-          '';
-      mbr = "${grubDir}/boot_hybrid.img";
-    }
-  );
+  # GRUB for a legacy BIOS, as one El Torito image with its modules, menu
+  # and theme inside, so it reads nothing of its own from the medium. The
+  # same image starts from a disc, and from a stick through boot_hybrid.img
+  # in the MBR, which xorriso points at it (--grub2-boot-info).
+  bios = lib.optionalAttrs pkgs.stdenv.hostPlatform.isx86_64 {
+    image = import ../modules/grub-image.nix {
+      inherit pkgs menu art;
+      format = "i386-pc-eltorito";
+      output = "eltorito.img";
+      early = "normal (memdisk)/grub.cfg";
+      modules = modules ++ [
+        "biosdisk"
+        "linux"
+      ];
+    };
+    mbr = "${pkgs.grub2}/lib/grub/i386-pc/boot_hybrid.img";
+  };
 in
 {
   assertions = [
@@ -188,6 +231,7 @@ in
           -graft-points \
           -output $out \
           nix-store.squashfs=${squashfs} \
+          boot/installer.efi=${config.system.build.uki}/${ukiFile} \
           ${lib.optionalString (bios != { }) ''
             boot/eltorito.img=${bios.image}/eltorito.img \
             boot/linux=${config.boot.uki.settings.UKI.Linux} \

@@ -8,10 +8,12 @@ and `nixos/modules/installer.nix` evaluates it from the OS's configuration.
 A machine that keeps Windows uses the [Windows installer](windows-installer.md)
 instead, which installs the same release beside it.
 
-Under UEFI, the ISO's appended FAT partition holds the installer's UKI as
-`EFI/BOOT/BOOT<ARCH>.EFI`, with no bootloader in front of it. On x86_64 a
-legacy BIOS starts it too, through GRUB, from a disc or a stick
-([Boot loaders](boot-loaders.md)). Either way the initrd mounts the ISO by its volume label and the Nix store from a squashfs
+Under UEFI, the ISO's appended FAT partition holds GRUB as
+`EFI/BOOT/BOOT<ARCH>.EFI`, which chainloads the installer's UKI from the ISO
+9660 filesystem. On x86_64 a legacy BIOS starts it too, through GRUB, from a
+disc or a stick. Either way GRUB's menu and the Plymouth splash after it look
+as they do on an installed system, and say "LosOS Desktop installer"
+([Boot loader and boot screen](boot-loaders.md)). Either way the initrd mounts the ISO by its volume label and the Nix store from a squashfs
 on it. It carries `wpa_supplicant` and no NetworkManager. networkd runs DHCP
 on every physical wired port, built in or USB, as soon as a cable is in, at
 boot or later, and prefers it over Wi-Fi when both are up; a machine with a
@@ -35,8 +37,8 @@ disks, leaving out the one the ISO booted from and refusing any disk it did
 not list, and the installer names the disk, its size and the source once more
 behind an "Erase and install" button before anything is touched. Then:
 
-1. `systemd-repart --empty=force` lays out the ESP, with systemd-boot and
-   `loader.conf` copied in, on x86_64 a BIOS boot partition for GRUB, and
+1. `systemd-repart --empty=force` lays out the ESP, with GRUB and an empty
+   `grubenv` copied in, on x86_64 a BIOS boot partition for GRUB, and
    both `/usr` slots at full size, labelled
    `_empty` (sysupdate refuses a disk with only one). These are `disk.nix`'s
    own definitions, so the disk is laid out the way the

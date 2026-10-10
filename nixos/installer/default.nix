@@ -46,6 +46,9 @@ in
   imports = [
     "${modulesPath}/profiles/minimal.nix"
     ./iso.nix
+    # The installed system's boot screen, which reads "LosOS Desktop
+    # installer is starting" here.
+    ../modules/splash.nix
   ];
 
   system.stateVersion = "26.05";
@@ -60,18 +63,14 @@ in
   };
 
   boot = {
-    # The medium boots its UKI directly (iso.nix); there is no boot loader to
-    # configure and no disk of its own to put one on.
+    # GRUB on the medium starts the UKI (iso.nix), with its menu built into
+    # its own image; NixOS's GRUB module, which installs one on a disk and
+    # writes its menu there, has no disk here to do that on.
     loader.grub.enable = false;
     initrd.systemd.enable = true;
-
-    # Errors only, so the kernel and systemd do not write over the console
-    # before the installer takes the screen.
-    kernelParams = [
-      "quiet"
-      "loglevel=3"
-      "systemd.show_status=error"
-    ];
+    # How quiet the boot is, so nothing writes over the splash before the
+    # installer takes the screen, is splash.nix's, as on the installed
+    # system.
   };
 
   # Every storage controller and USB host in the initrd, so the medium is found
@@ -204,10 +203,13 @@ in
   systemd.services.derisk-installer = {
     description = "LosOS Desktop installer";
     wantedBy = [ "graphical.target" ];
+    # After Plymouth has let go of the display, as the login screen is on
+    # the installed system (desktop.nix).
     after = [
       "systemd-user-sessions.service"
       "systemd-logind.service"
       "systemd-vconsole-setup.service"
+      "plymouth-quit.service"
     ];
     conflicts = [ "getty@tty1.service" ];
 
@@ -216,7 +218,7 @@ in
       sysupdateBin
       pkgs.coreutils
       pkgs.util-linux
-      # repart formats the ESP and copies systemd-boot into it with these.
+      # repart formats the ESP and copies GRUB into it with these.
       pkgs.dosfstools
       pkgs.mtools
     ]

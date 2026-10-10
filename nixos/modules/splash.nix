@@ -1,0 +1,131 @@
+# The boot screen: Plymouth, with a theme (nixos/branding/splash.script)
+# that draws the salmon LosOS boots behind on the dark ground, the system's
+# name under it and a line that grows as the boot gets on. Imported by the
+# PC image (default.nix) and by the installer's live system, which then
+# reads "LosOS Desktop installer is starting" (docs/boot-loaders.md).
+#
+# The whole start is one picture: GRUB's menu on the same ground with the
+# same salmon (grub.nix), then the UKI's own splash, which systemd-stub
+# shows while the kernel and initrd load, then Plymouth from the initrd on,
+# until the login screen or the installer takes the display. Plymouth comes
+# back at shutdown and says the machine is restarting or shutting down.
+#
+# Plymouth draws on the display it finds in its first seconds, which on a
+# UEFI PC is the firmware's framebuffer, in the mode GRUB left. A BIOS
+# machine hands GRUB's graphics mode on to the kernel for the same reason
+# (grub.cfg). Without either, Plymouth runs in text mode. Esc shows the boot
+# log, and Esc again hides it.
+#
+# Halium phones boot through Android's boot loader and draw nothing until
+# the compositor starts, so nixos/halium does not import this.
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+
+let
+  plymouth = config.boot.plymouth.package;
+  name = config.system.nixos.distroName;
+
+  art = import ../branding { inherit pkgs name; };
+  inherit (art.palette)
+    ground
+    ink
+    muted
+    accent
+    ;
+
+  # The theme's colours as the 0..1 fractions Plymouth's script wants.
+  colour =
+    var: hex:
+    lib.concatMapStrings
+      (c: "${var}.${c.n} = ${toString ((lib.fromHexString (builtins.substring c.i 2 hex)) / 255.0)};\n")
+      [
+        {
+          n = "r";
+          i = 1;
+        }
+        {
+          n = "g";
+          i = 3;
+        }
+        {
+          n = "b";
+          i = 5;
+        }
+      ];
+
+  theme =
+    pkgs.runCommand "losos-plymouth-theme" { nativeBuildInputs = [ pkgs.buildPackages.imagemagick ]; }
+      ''
+        dir=$out/share/plymouth/themes/losos
+        mkdir -p $dir
+        cp ${art}/logo.png $dir/logo.png
+        magick -size 8x8 xc:'${accent}' PNG24:$dir/accent.png
+        cat > $dir/losos.script <<'EOF'
+        ${colour "ground" ground}${colour "ink" ink}${colour "muted" muted}${colour "accent" accent}name = "${name}";
+        EOF
+        cat ${../branding/splash.script} >> $dir/losos.script
+        cat > $dir/losos.plymouth <<EOF
+        [Plymouth Theme]
+        Name=LosOS
+        Description=The salmon, the system's name and how far the boot has got
+        ModuleName=script
+
+        [script]
+        ImageDir=$dir
+        ScriptFile=$dir/losos.script
+        EOF
+      '';
+
+  # The theme asks for DejaVu Sans and DejaVu Sans Bold by name. The NixOS
+  # module copies one font file into the initrd; this folder has both, and
+  # the running system carries it at the same path, because plymouthd moves
+  # into the real root with the rest of the boot and draws from there until
+  # the login screen.
+  fonts = pkgs.runCommand "losos-plymouth-fonts" { } ''
+    mkdir -p $out
+    cp ${pkgs.dejavu_fonts}/share/fonts/truetype/DejaVuSans{,-Bold}.ttf $out
+  '';
+in
+{
+  boot.plymouth = {
+    enable = true;
+    theme = "losos";
+    themePackages = [ theme ];
+    logo = "${art}/logo.png";
+  };
+
+  boot.initrd.systemd.contents."/etc/plymouth/fonts".source = lib.mkForce fonts;
+  environment.etc."plymouth/fonts".source = fonts;
+
+  # The salmon again while the kernel loads, from the UKI's .splash section,
+  # so the screen does not go black between GRUB and Plymouth.
+  boot.uki.settings.UKI.Splash = "${art}/splash.bmp";
+
+  # Errors only, so the kernel and systemd do not write over the splash.
+  # Every message is still in the journal and behind Esc.
+  boot.consoleLogLevel = lib.mkDefault 3;
+  boot.initrd.verbose = false;
+  boot.kernelParams = [
+    "udev.log_level=3"
+    # systemd's "[  OK  ] Started ..." lines only when a unit fails or the
+    # boot stalls, so nothing scrolls past before Plymouth takes the screen.
+    "rd.systemd.show_status=auto"
+    "systemd.show_status=auto"
+    # A serial console on the command line (a VM test's, say) would
+    # otherwise turn the screen's splash into the text log.
+    "plymouth.ignore-serial-consoles"
+  ];
+
+  # The last frame stays on the screen when Plymouth lets go of it, until
+  # the login screen or the installer draws its first (desktop.nix and
+  # the installer order themselves after this), rather than a moment of
+  # black console between the two.
+  systemd.services.plymouth-quit.serviceConfig.ExecStart = [
+    ""
+    "-${plymouth}/bin/plymouth quit --retain-splash"
+  ];
+}

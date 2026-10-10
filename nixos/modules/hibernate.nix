@@ -14,7 +14,7 @@
 #   sleep    systemd-sleep writes the image to /dev/mapper/swap and records
 #            where it is in the HibernateLocation EFI variable, with
 #            autoSwap set because the partition is the disk's swap partition.
-#            The hook below asks systemd-boot to boot the same UKI next time.
+#            The hook below asks GRUB to boot the same UKI next time.
 #   resume   systemd-hibernate-resume-generator in the initrd reads the
 #            variable, unseals the key from the TPM to open
 #            /dev/disk/by-designator/swap-luks, and the kernel reads the image.
@@ -42,6 +42,7 @@ let
       pkgs.cryptsetup
       pkgs.util-linux
       systemd
+      config.system.build.grub.grubenv
     ];
     text = ''
       # Whether this machine hibernates: a laptop, tablet or convertible,
@@ -153,15 +154,26 @@ let
           # operation. A resume must start the kernel that hibernated: Linux
           # refuses an image from another one, and the key is sealed to its
           # UKI. sysupdate may have installed a newer UKI since this boot,
-          # and systemd-boot boots the newest, so ask for this one, once.
+          # and GRUB boots the newest, so ask for this version, once
+          # (grub.cfg's losos_oneshot). A disk installed before GRUB still
+          # starts systemd-boot, which takes the same request as an EFI
+          # variable.
           case "''${2-}" in
             hibernate | hybrid-sleep | suspend-then-hibernate) ;;
             *) exit 0 ;;
           esac
-          if [ "''${3-}" = pre ]; then
-            bootctl set-oneshot @current
+          if losos-grubenv systemd-boot; then
+            if [ "''${3-}" = pre ]; then
+              bootctl set-oneshot @current
+            else
+              bootctl set-oneshot ""
+            fi
+          elif [ "''${3-}" = pre ]; then
+            # shellcheck source=/dev/null
+            version=$(. /etc/os-release && echo "$IMAGE_VERSION")
+            losos-grubenv set losos_oneshot "$version"
           else
-            bootctl set-oneshot ""
+            losos-grubenv unset losos_oneshot
           fi
           ;;
         *)

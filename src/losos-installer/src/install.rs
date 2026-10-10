@@ -1,7 +1,7 @@
 //! The install itself: systemd-repart lays out the disk, systemd-sysupdate
 //! fills it.
 //!
-//! repart creates the ESP, with systemd-boot and loader.conf copied in, and
+//! repart creates the ESP, with GRUB and its grubenv copied in, and
 //! both slots' /usr partitions, empty and labelled `_empty`. That label is
 //! what sysupdate looks for when it needs a partition to write a version
 //! into, so the install that follows is an ordinary update: sysupdate reads

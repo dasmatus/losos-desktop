@@ -313,7 +313,7 @@ pub fn bitlocker(drive: &str) -> BitLocker {
 }
 
 /// Suspends BitLocker's TPM protector until Windows has started `reboots`
-/// times. The firmware now starts systemd-boot, which starts Windows' boot
+/// times. The firmware now starts GRUB, which starts Windows' boot
 /// manager, so the TPM measures a different chain than the one BitLocker
 /// sealed its key to; while suspended the key is readable, and when the
 /// count runs out BitLocker seals it again to the chain it then boots
@@ -658,8 +658,8 @@ impl MountedEsp {
             drive: drive.clone(),
         };
         // mountvol mounts the ESP Windows booted from; it has to be the one
-        // on the disk LosOS goes on, since that is where systemd-boot looks
-        // for its entries.
+        // on the disk LosOS goes on, since that is where GRUB looks for
+        // LosOS and for Windows' boot manager.
         let extent = volume_extent(&drive)?;
         if extent.DiskNumber != disk || extent.StartingOffset as u64 != esp_offset {
             bail!(

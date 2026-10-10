@@ -41,23 +41,22 @@
       # So the shell stops before the image is written, and the resumed
       # system reports what the test checks on the serial console instead.
       powerManagement.powerDownCommands = "${config.systemd.package}/bin/systemctl --no-block stop backdoor.service";
-      powerManagement.resumeCommands =
-        let
-          oneShot = "/sys/firmware/efi/efivars/LoaderEntryOneShot-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f";
-        in
-        ''
-          PATH=${
-            lib.makeBinPath [
-              pkgs.coreutils
-              config.systemd.package
-            ]
-          }
-          if test -e ${oneShot}; then oneshot=set; else oneshot=spent; fi
-          echo "hibernate-test: boot $(cat /proc/sys/kernel/random/boot_id)," \
-            "$(cat /run/hibernate-test/marker)," \
-            "pid $(systemctl show -P MainPID hibernate-test-sleeper.service)," \
-            "one-shot entry $oneshot" >/dev/ttyS0
-        '';
+      powerManagement.resumeCommands = ''
+        PATH=${
+          lib.makeBinPath [
+            pkgs.coreutils
+            pkgs.gnugrep
+            config.systemd.package
+          ]
+        }
+        # GRUB's request to start this version once, in grubenv (grub.cfg).
+        env="$(bootctl --print-esp-path)/EFI/losos/grubenv"
+        if grep -q '^losos_oneshot=.' "$env"; then oneshot=set; else oneshot=spent; fi
+        echo "hibernate-test: boot $(cat /proc/sys/kernel/random/boot_id)," \
+          "$(cat /run/hibernate-test/marker)," \
+          "pid $(systemctl show -P MainPID hibernate-test-sleeper.service)," \
+          "one-shot entry $oneshot" >/dev/ttyS0
+      '';
 
       virtualisation = {
         directBoot.enable = false;
@@ -152,7 +151,7 @@
           machine.wait_for_shutdown()
           machine.start()
           # The same boot, with a file and a process that only ever lived in
-          # RAM, and systemd-boot's request to start this UKI once spent.
+          # RAM, and GRUB's request to start this version once spent.
           machine.wait_for_console_text(
               re.escape(f"hibernate-test: boot {boot_id}, only in RAM, pid {sleeper}, one-shot entry spent")
           )
