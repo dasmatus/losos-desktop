@@ -110,13 +110,15 @@
 - **Wi-Fi after setup.** First-boot setup joins a network through
   `wpa_supplicant`, which saves it, but nothing in the session lists or
   joins networks afterwards: derisk's Settings has no Wi-Fi page yet.
-- **systemd-boot updates.** `systemd-boot-update.service` copies a new
-  bootloader from `/usr/lib/systemd/boot`, which NixOS does not have. The
-  bootloader on the ESP is the one the image shipped. The same goes for GRUB
-  on a BIOS PC: an update never rewrites the MBR or the BIOS boot partition.
+- **Boot loader updates.** The GRUB on the ESP, and on a BIOS PC in the MBR
+  and the BIOS boot partition, is the one the image or the installer put
+  there; an update never rewrites it, so a new menu or theme reaches only
+  new installs. A disk installed while UEFI still booted with systemd-boot
+  keeps systemd-boot until it is installed again
+  ([Boot loader](boot-loaders.md)).
 - **Two LosOS disks in one BIOS PC.** A BIOS boot finds root by its
   partition label, `root-x86-64`, as no EFI variable names the disk
-  ([Boot loaders](boot-loaders.md)). With two LosOS disks in one machine,
+  ([Boot loader](boot-loaders.md)). With two LosOS disks in one machine,
   the kernel may mount the other disk's root.
 - **sysext.** Extensions merge into `/usr`, which here holds little but the
   Nix store, so an extension can add a program and cannot replace one.

@@ -53,10 +53,13 @@ in
     wantedBy = [ "graphical.target" ];
     # VT1 is the display manager's, as it was gdm's: no getty there.
     conflicts = [ "getty@tty1.service" ];
+    # After Plymouth has let go of the display (splash.nix), which leaves
+    # its last frame there for the greeter to draw over.
     after = [
       "systemd-user-sessions.service"
       "getty@tty1.service"
       "systemd-logind.service"
+      "plymouth-quit.service"
     ];
     wants = [ "systemd-user-sessions.service" ];
     serviceConfig = {

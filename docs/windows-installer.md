@@ -40,30 +40,31 @@ without), it:
    typed, flagged read-only and given the UUIDs the release's file names
    carry, exactly as sysupdate would write them, because that is how the
    initrd finds `/usr` from `usrhash=`.
-8. Copies systemd-boot to `\EFI\systemd\` on Windows' EFI system partition,
-   with `loader.conf` if there is none, and adds a firmware boot entry for
-   it at the front of the boot order. The entry is Windows Boot Manager's
+8. Copies GRUB to `\EFI\losos\` on Windows' EFI system partition, with an
+   empty `grubenv` beside it, and adds a firmware boot entry for it at the
+   front of the boot order. The entry is Windows Boot Manager's
    own with the file swapped, so it points at the same disk the same way.
 9. Offers to restart.
 
 If any step after the shrink fails, it removes what it added and gives C:
 its space back.
 
-At the next start systemd-boot offers LosOS, from the XBOOTLDR partition,
-and Windows Boot Manager, which it finds on the ESP by itself. LosOS's first
+At the next start GRUB offers LosOS, from the XBOOTLDR partition, and
+Windows Boot Manager, which it finds on the ESP by itself
+([Boot loader](boot-loaders.md#grubs-menu)). LosOS's first
 boot then does what it does after `dd`: `disk.nix` creates slot B, root,
 `/home` and swap in the rest of the space, and first-boot setup asks for an
 account. Windows' partitions are never touched again.
 
 `--uninstall` takes it back: it deletes the partitions it finds behind C:
 whose types are LosOS's, the files on the ESP it recorded in
-`\loader\losos-windows-installer.txt`, and the boot entry, then grows C:
+`\EFI\losos\losos-windows-installer.txt`, and the boot entry, then grows C:
 into the space.
 
 ## The layout
 
 ```
-ESP                  Windows' own, ~100M: Windows Boot Manager, systemd-boot
+ESP                  Windows' own, ~100M: Windows Boot Manager, GRUB
 MSR                  Windows' own
 C:                   shrunk
 LosOS boot           XBOOTLDR, 512M: the UKIs              installer
@@ -75,12 +76,11 @@ root, home, swap                                           first boot
 Recovery             Windows' own, left where it was
 ```
 
-![The disk before, after the installer and after the first boot: C: shrinks; the installer adds LosOS boot, verity A and usr A and puts systemd-boot on Windows' ESP; the first boot fills the rest with slot B, root, home and swap; Recovery stays where it was](images/windows-installer.svg)
+![The disk before, after the installer and after the first boot: C: shrinks; the installer adds LosOS boot, verity A and usr A and puts GRUB on Windows' ESP; the first boot fills the rest with slot B, root, home and swap; Recovery stays where it was](images/windows-installer.svg)
 
 Windows makes its ESP 100 MB, with its own partitions right behind it, so
 it cannot grow and has no room for two UKIs of about 45 MB each. The UKIs
-therefore go on an XBOOTLDR partition, which systemd-boot reads beside the
-ESP, and `update.nix` writes them to `$BOOT`, which is that partition where
+therefore go on an XBOOTLDR partition, which GRUB reads beside the ESP, and `update.nix` writes them to `$BOOT`, which is that partition where
 there is one and the ESP otherwise. `disk.nix` matches whatever ESP the disk
 has and no longer asks for 512 MB of it: with that minimum, repart could not
 grow Windows' ESP and refused the whole disk on first boot, so the system
@@ -89,7 +89,7 @@ installed beside Windows.
 
 ## Secure Boot, BitLocker, fast startup
 
-- **Secure Boot** must be off. Neither systemd-boot nor the UKI is signed
+- **Secure Boot** must be off. Neither GRUB nor the UKI is signed
   ([What is not done](not-done.md)), so firmware with Secure Boot on would
   refuse to start them, and a shim signed by Microsoft would need a key this
   project does not have. The installer says so and stops, before changing
@@ -98,7 +98,7 @@ installed beside Windows.
   a boot manager in front of Windows' changes that chain. So the installer
   suspends protection on C: (`DisableKeyProtectors`) until Windows has
   started twice, which lets BitLocker reseal itself to the new chain the
-  first time Windows comes up through systemd-boot. It still tells the user
+  first time Windows comes up through GRUB. It still tells the user
   to have the recovery key at hand. A drive that is encrypting or
   decrypting is refused, because it cannot be shrunk safely.
 - **Fast startup** hibernates Windows' kernel instead of shutting it down,
@@ -116,9 +116,10 @@ bytes of the firmware boot entry. With `--image DISK` it installs into a
 disk image laid out like a Windows disk through `sfdisk` instead of Windows'
 disk IOCTLs, leaving out the firmware entry. That is how the install was
 checked: into a 64 GB image with a 100 MB ESP, an MSR, a C: and a recovery
-partition, which then booted under QEMU into systemd-boot's menu with LosOS
-and Windows Boot Manager, ran first boot, and left C: and recovery
-byte-for-byte as they were.
+partition, which then booted under QEMU into the boot loader's menu with
+LosOS and Windows Boot Manager, ran first boot, and left C: and recovery
+byte-for-byte as they were. That check was made when the loader was still
+systemd-boot; with GRUB it has not been run again.
 
 What only a Windows machine can show is everything `windows.rs` does:
 shrinking C:, writing the partition table through

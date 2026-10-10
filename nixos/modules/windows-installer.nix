@@ -3,9 +3,9 @@
 #
 # Like installer.nix, this is the OS's half: the program is built from this
 # configuration's own channel URL, release key, image id, /usr slot size, and
-# the systemd-boot and loader.conf image.nix puts on an ESP, so it installs
-# exactly what an update of this OS would fetch, into a slot of the size
-# first boot expects. A release carries it beside the ISO (image.nix).
+# the GRUB and grubenv grub.nix puts on an ESP, so it installs exactly what
+# an update of this OS would fetch, into a slot of the size first boot
+# expects. A release carries it beside the ISO (image.nix).
 #
 # x86_64 only. Windows on arm64 runs on Snapdragon laptops this OS has no
 # kernel configuration for, so an aarch64 build would install a system that
@@ -31,7 +31,7 @@ lib.mkIf (cfg.arch.name == "x86_64") {
         imageId = config.system.image.id;
         arch = cfg.arch.name;
         inherit (cfg) usrSize;
-        systemdBoot = espContents."/EFI/systemd/systemd-boot${cfg.arch.efi}.efi".source;
-        loaderConf = espContents."/loader/loader.conf".source;
+        loader = espContents."/EFI/losos/grub${cfg.arch.efi}.efi".source;
+        grubenv = espContents."/EFI/losos/grubenv".source;
       };
 }

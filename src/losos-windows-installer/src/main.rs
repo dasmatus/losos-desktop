@@ -2,8 +2,8 @@
 //!
 //! Run on Windows, it checks the machine can dual-boot, asks how much space
 //! to give LosOS, shrinks C: by that much, writes the newest signed release
-//! into the space, and adds systemd-boot, which then offers LosOS and
-//! Windows at every start. `--uninstall` takes all of that back.
+//! into the space, and adds GRUB, which then offers LosOS and Windows at
+//! every start. `--uninstall` takes all of that back.
 //!
 //! On Linux it does the same install into a disk image laid out like a
 //! Windows disk (`--image`), which is how it is tested.
@@ -23,10 +23,15 @@ use losos_windows_installer::release::{self, Arch, Release, Source};
 const USAGE: &str = "\
 usage: losos-windows-installer [--size GB] [--release DIR] [--channel URL] [--dry-run] [--yes]
        losos-windows-installer --uninstall [--yes]
-       losos-windows-installer --image DISK --release DIR [--systemd-boot FILE] [--pubring FILE] [--ram GB] [--yes]";
+       losos-windows-installer --image DISK --release DIR [--loader FILE] [--pubring FILE] [--ram GB] [--yes]";
 
-/// The loader.conf image.nix writes, for a build that was not given it.
-const LOADER_CONF: &str = "timeout 3\neditor no\n";
+/// An empty grubenv, as grub.nix puts one on an ESP, for a build that was
+/// not given it: GRUB's signature line padded with `#` to 1024 bytes.
+fn empty_grubenv() -> Vec<u8> {
+    let mut env = b"# GRUB Environment Block\n".to_vec();
+    env.resize(1024, b'#');
+    env
+}
 
 #[derive(Default)]
 struct Options {
@@ -37,7 +42,7 @@ struct Options {
     yes: bool,
     uninstall: bool,
     image: Option<PathBuf>,
-    systemd_boot: Option<PathBuf>,
+    loader: Option<PathBuf>,
     pubring: Option<PathBuf>,
     ram: Option<u64>,
 }
@@ -60,7 +65,7 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Options> {
             "--release" => o.release = Some(value()?.into()),
             "--channel" => o.channel = Some(value()?),
             "--image" => o.image = Some(value()?.into()),
-            "--systemd-boot" => o.systemd_boot = Some(value()?.into()),
+            "--loader" => o.loader = Some(value()?.into()),
             "--pubring" => o.pubring = Some(value()?.into()),
             "--ram" => o.ram = Some(gb(value()?)?),
             "--dry-run" => o.dry_run = true,
@@ -123,8 +128,8 @@ fn ask(question: &str) -> Result<String> {
 struct Settings {
     arch: Arch,
     keyring: Option<Vec<u8>>,
-    systemd_boot: Vec<u8>,
-    loader_conf: String,
+    loader: Vec<u8>,
+    grubenv: Vec<u8>,
     source: Source,
 }
 
@@ -136,18 +141,13 @@ fn settings(o: &Options) -> Result<Settings> {
         Some(p) => Some(read(p)?),
         None => config::PUBRING.map(<[u8]>::to_vec),
     };
-    let systemd_boot = match &o.systemd_boot {
+    let loader = match &o.loader {
         Some(p) => read(p)?,
-        None => config::SYSTEMD_BOOT.map(<[u8]>::to_vec).ok_or_else(|| {
-            miette!(
-                help = USAGE,
-                "this build carries no systemd-boot; pass --systemd-boot"
-            )
-        })?,
+        None => config::LOADER
+            .map(<[u8]>::to_vec)
+            .ok_or_else(|| miette!(help = USAGE, "this build carries no GRUB; pass --loader"))?,
     };
-    let loader_conf = config::LOADER_CONF
-        .map(|b| String::from_utf8_lossy(b).into_owned())
-        .unwrap_or_else(|| LOADER_CONF.into());
+    let grubenv = config::GRUBENV.map_or_else(empty_grubenv, <[u8]>::to_vec);
     let source = match (&o.release, &o.channel, config::UPDATE_URL) {
         (Some(dir), _, _) => Source::Directory(dir.clone()),
         (None, Some(url), _) => Source::Channel(url.clone()),
@@ -160,8 +160,8 @@ fn settings(o: &Options) -> Result<Settings> {
     Ok(Settings {
         arch,
         keyring,
-        systemd_boot,
-        loader_conf,
+        loader,
+        grubenv,
         source,
     })
 }
@@ -239,8 +239,8 @@ fn image_install(o: &Options) -> Result<()> {
     let mut console = Console::default();
     let files = install::fetch_files(&s.source, &release, &cache, &mut console)?;
     let boot = Boot {
-        systemd_boot: &s.systemd_boot,
-        loader_conf: &s.loader_conf,
+        loader: &s.loader,
+        grubenv: &s.grubenv,
     };
     if let Err(e) = install::run(
         &mut image,
@@ -396,7 +396,7 @@ mod platform {
             release.version,
             size_text(shrink + behind.len())
         );
-        println!("  - add systemd-boot to the EFI system partition and make it start first,");
+        println!("  - add GRUB to the EFI system partition and make it start first,");
         println!("    so every start offers LosOS and Windows");
         if machine.fast_startup {
             println!("  - turn Windows' fast startup off");
@@ -457,8 +457,8 @@ mod platform {
             )?;
             let mut target = WindowsTarget::new(Disk::open(disk.number)?, &table)?;
             let boot = Boot {
-                systemd_boot: &s.systemd_boot,
-                loader_conf: &s.loader_conf,
+                loader: &s.loader,
+                grubenv: &s.grubenv,
             };
             install::run(
                 &mut target,
@@ -550,7 +550,7 @@ mod platform {
         let esp = table
             .esp()
             .ok_or_else(|| miette!("the disk Windows is on has no EFI system partition"))?;
-        println!("This will remove systemd-boot and LosOS's boot entry, and delete");
+        println!("This will remove GRUB and LosOS's boot entry, and delete");
         println!(
             "{} partitions ({}) behind {drive}, giving their space back to it.",
             ours.len(),
@@ -568,7 +568,7 @@ mod platform {
         console.step("Removing the boot entry");
         let loader = format!("\\{}", install::loader_path(&s.arch).replace('/', "\\"));
         win::remove_boot_entry(&loader)?;
-        console.step("Removing systemd-boot from the EFI system partition");
+        console.step("Removing GRUB from the EFI system partition");
         win::remove_esp_files(disk.number, esp.StartingOffset as u64)?;
         if !ours.is_empty() {
             console.step("Deleting LosOS's partitions");

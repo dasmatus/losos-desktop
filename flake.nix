@@ -307,8 +307,8 @@
                 qemu-img create -f qcow2 -F qcow2 -b ${config.system.build.qcow2} "$disk" 40G
               fi
               # The firmware's variable store is per machine and writable:
-              # systemd-boot records its boot counting and the loader's
-              # partition UUID there.
+              # GRUB records which loader started and from which
+              # partition there.
               if [ ! -e "$vars" ]; then
                 install -m 0644 ${pkgs.OVMF.variables} "$vars"
               fi

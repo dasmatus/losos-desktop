@@ -10,15 +10,19 @@ use crate::fat;
 use crate::layout::Plan;
 use crate::release::{Arch, Release};
 
-/// Where systemd-boot goes on the ESP, beside Windows' own boot manager
-/// rather than over the removable-media path, which is Windows' fallback.
+/// Where GRUB goes on the ESP, beside Windows' own boot manager rather than
+/// over the removable-media path, which is Windows' fallback. grub.nix puts
+/// the same file at the same path on an ESP of LosOS's own.
 pub fn loader_path(arch: &Arch) -> String {
-    format!("EFI/systemd/systemd-boot{}.efi", arch.efi)
+    format!("EFI/losos/grub{}.efi", arch.efi)
 }
+
+/// GRUB's boot counter (grub.cfg), beside it.
+pub const GRUBENV: &str = "EFI/losos/grubenv";
 
 /// The ESP's record of the files this program put there, so `--uninstall`
 /// removes those and nothing it found already there.
-pub const MARKER: &str = "loader/losos-windows-installer.txt";
+pub const MARKER: &str = "EFI/losos/losos-windows-installer.txt";
 
 pub struct EspFile<'a> {
     pub path: String,
@@ -49,8 +53,10 @@ pub struct Files {
 }
 
 pub struct Boot<'a> {
-    pub systemd_boot: &'a [u8],
-    pub loader_conf: &'a str,
+    /// GRUB, with its menu and theme inside.
+    pub loader: &'a [u8],
+    /// An empty grubenv.
+    pub grubenv: &'a [u8],
 }
 
 /// Steps as the person sees them.
@@ -101,19 +107,19 @@ pub fn run(
         &[(uki.as_str(), files.uki.as_path())],
     )?;
 
-    report.step("Adding systemd-boot to the EFI system partition");
+    report.step("Adding GRUB to the EFI system partition");
     let loader = loader_path(arch);
     let mut created = target.put_esp(&[
         EspFile {
             path: loader.clone(),
-            bytes: boot.systemd_boot,
+            bytes: boot.loader,
             replace: true,
         },
-        // Another systemd-boot user's settings, if there is one, are theirs.
+        // Empty, so no trial an earlier install left goes on.
         EspFile {
-            path: "loader/loader.conf".into(),
-            bytes: boot.loader_conf.as_bytes(),
-            replace: false,
+            path: GRUBENV.into(),
+            bytes: boot.grubenv,
+            replace: true,
         },
     ])?;
     created.push(MARKER.to_owned());

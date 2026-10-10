@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 360" width="920" height="360" role="img">
 <title>How a laptop hibernates and resumes</title>
-<desc>Three steps left to right. Every boot: losos-hibernate-swap formats the swap partition as LUKS2 with a new random key, seals the key to the TPM's PCRs 4, 7 and 12, and forgets it. Hibernating: systemd-sleep asks systemd-boot to boot the same UKI once, writes the image to the encrypted swap and records where it is in the HibernateLocation EFI variable. Resuming: the same UKI boots, the initrd's resume generator reads the variable, the TPM unseals the key because PCRs 4, 7 and 12 match, and the kernel restores the image. A different boot chain gets no key, and the machine boots afresh.</desc>
+<desc>Three steps left to right. Every boot: losos-hibernate-swap formats the swap partition as LUKS2 with a new random key, seals the key to the TPM's PCRs 4, 7 and 12, and forgets it. Hibernating: systemd-sleep asks GRUB to boot the same UKI once, writes the image to the encrypted swap and records where it is in the HibernateLocation EFI variable. Resuming: the same UKI boots, the initrd's resume generator reads the variable, the TPM unseals the key because PCRs 4, 7 and 12 match, and the kernel restores the image. A different boot chain gets no key, and the machine boots afresh.</desc>
 <style>
 text { font-family: Inter, "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 14px; fill: #e5e7eb; }
 .t { font-weight: 600; font-size: 17px; }

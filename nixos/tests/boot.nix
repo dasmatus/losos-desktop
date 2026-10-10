@@ -1,4 +1,4 @@
-# Boot the real image -- UEFI, systemd-boot, the UKI, a disk first boot has to
+# Boot the real image -- UEFI, GRUB, the UKI, a disk first boot has to
 # lay out -- and check that each systemd piece this OS is built on is doing its
 # job, not merely installed.
 #
@@ -81,6 +81,19 @@
           machine.succeed("sfdisk --json /dev/vda | grep -c '\"name\": \"_empty\"' | grep -qx 2")
           machine.succeed("swapon --show=NAME --noheadings | grep -q dm-")
 
+      with subtest("GRUB chainloaded the UKI and named the disk it came from"):
+          # bli's LoaderInfo, and the LoaderDevicePartUUID gpt-auto found root
+          # and the ESP by (grub.nix).
+          loader = machine.succeed(
+              "tail -c +5 /sys/firmware/efi/efivars/LoaderInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f | tr -d '\\0'"
+          )
+          assert loader.startswith("GRUB"), loader
+          machine.succeed("grep -q 'usrhash=' /proc/cmdline")
+          esp = machine.succeed("bootctl --print-esp-path").strip()
+          machine.succeed(f"test -f {esp}/EFI/Linux/losos-desktop_1.efi")
+          machine.succeed(f"test -f {esp}/EFI/losos/grubenv")
+          machine.succeed("systemctl is-active losos-grub-bless.service")
+
       with subtest("/usr is dm-verity and the store lives on it"):
           assert "ACTIVE" in machine.succeed("dmsetup info --target verity usr")
           machine.succeed("df --output=source /nix/store | tail -n1 | grep -qx /dev/mapper/usr")
@@ -145,5 +158,20 @@
               "busctl call io.losos.Security1 /io/losos/Security1 "
               "org.freedesktop.DBus.Introspectable Introspect"
           )
+
+      with subtest("A counted UKI is blessed once it boots under UEFI GRUB"):
+          # As boot-bios.nix checks it under a BIOS: the name sysupdate gives
+          # a new UKI (update.nix), counted down in grubenv and settled by
+          # losos-grub-bless.
+          machine.succeed(
+              f"mv {esp}/EFI/Linux/losos-desktop_1.efi '{esp}/EFI/Linux/losos-desktop_1+3-0.efi'"
+          )
+          machine.shutdown()
+          machine.start()
+          machine.wait_for_unit("multi-user.target")
+          machine.wait_for_unit("losos-grub-bless.service")
+          machine.succeed(f"test -f {esp}/EFI/Linux/losos-desktop_1.efi")
+          machine.fail(f"ls {esp}/EFI/Linux/ | grep -q '+'")
+          machine.fail(f"grep -q '^losos_' {esp}/EFI/losos/grubenv")
     '';
 }

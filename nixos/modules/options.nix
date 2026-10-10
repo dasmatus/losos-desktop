@@ -178,8 +178,8 @@ in
     .${hostPlatform.parsed.cpu.name}
       or (throw "losos: unsupported architecture ${hostPlatform.parsed.cpu.name}")
     // {
-      # systemd-boot and the stub are named after the EFI machine type, which
-      # nixpkgs already knows: x64, aa64.
+      # GRUB's file names on the ESP and the stub are named after the EFI
+      # machine type, which nixpkgs already knows: x64, aa64.
       efi = hostPlatform.efiArch;
     };
 }
